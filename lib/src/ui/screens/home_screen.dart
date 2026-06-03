@@ -210,8 +210,10 @@ class _BulkFoldersCard extends StatelessWidget {
               children: <Widget>[
                 const Icon(Icons.folder_copy_rounded),
                 const SizedBox(width: 12),
-                Text('Bulk folders → many characters at once',
-                    style: Theme.of(context).textTheme.titleMedium),
+                Expanded(
+                  child: Text('Bulk folders → many characters at once',
+                      style: Theme.of(context).textTheme.titleMedium),
+                ),
               ],
             ),
             const SizedBox(height: 8),
