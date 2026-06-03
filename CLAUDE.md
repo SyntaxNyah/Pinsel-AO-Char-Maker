@@ -63,7 +63,8 @@ After pulling, run `flutter pub get` (CI does this automatically).
 lib/src/
   core/        AO data model (constants, ini, emote, character, frame effects,
                validator, history)
-  discovery/   folder → character (scanner, builder, organizer, bulk rename)
+  discovery/   folder → character (scanner, builder, organizer, bulk rename,
+               bulk folders → many characters)
   imaging/     codecs, colour ops, region edit, sprite edit (crop/trim/bg),
                compositor, buttons, bulk, webp, **sprite sheet ripper**
   animation/   clip, easing, recipe engine, keyframe timeline, lipsync
@@ -164,6 +165,17 @@ The central model.
 - `soundGuesses` map (name substring → sfx).
 - `class CharacterBuilder` — `.build(scan,{config})` → `Character` (names,
   preanim detection, sound guesses, preferred-first ordering).
+
+### discovery/bulk_folders.dart  ← parent folder → many characters
+- `class FolderCharacter(name)` — `.files` maps inner path (within the character
+  folder) → the original picked source key.
+- `class BulkFolders` — `static split(paths,{fallbackName})` → `List<FolderCharacter>`:
+  groups a flat list of picker paths into one character per top-level sub-folder.
+  Strips a leading **wrapper** dir (one shared by all files that holds *only*
+  sub-folders — the web upload prepends the picked folder's name; native doesn't),
+  then groups by next segment. A char folder (loose sprites in it) is NOT stripped;
+  nested `anim/…` stays inside its character; a loose folder with no sub-folders
+  collapses to one character. Drives `AppState.bulkBuildCharacters`.
 
 ### discovery/organizer.dart
 - `typedef ButtonRenderer = Future<Uint8List?> Function(bytes, ext, size,
@@ -416,8 +428,16 @@ The central model.
   **sprite-sheet ripping** (`loadSheet`/`exportSheetCells`), **AO2 theme** state +
   export (`theme`, `importThemeFiles`, `newTheme`, `randomizeTheme`,
   `setThemeImage`, `touchTheme`, `exportTheme`) + rebindable Arrange nudge keys
-  (`nudgeKeys`/`setNudgeKey`/`resetNudgeKeys`), mixer save, export zip/ini. Read
-  it before adding a screen.
+  (`nudgeKeys`/`setNudgeKey`/`resetNudgeKeys`), mixer save, export zip/ini, and
+  **bulkBuildCharacters** (parent folder → many characters in one `.zip` — groups
+  via `BulkFolders.split`, builds/organises each in a throwaway workspace using
+  the studio settings, never touching the open project). Read it before adding a
+  screen.
+  - **Export plumbing is shared**: `buildOutput` and `bulkBuildCharacters` both go
+    through `_studioOrganizer()` (button/icon renderers capturing the current
+    offsets+overlays) and `_studioConfig(targetCharDir:)` (size/framing/zoom/icon
+    settings), so single + bulk export always render buttons identically.
+    `_buildConfigNamed(name)` clones `buildConfig` with the sub-folder name.
   - **Recolour/edit write back in place** via `_writeSpriteInPlace(rel,image)`:
     re-encodes in the file's own format (WebP via the encoder, APNG/PNG/GIF
     otherwise) and only changes the path/extension on a fallback. `applyPipeline`
@@ -469,9 +489,12 @@ The central model.
     to the model + commit on blur/submit; the preview is a cached `_SpritePreview`
     keyed on `rel`+`spriteRevision` (was: a 1024px re-encode on every keystroke).
   - `button_studio`: **Button & Icon Studio** — framing (Head/face default vs Full
-    body), size, face zoom, crop **Move X/Y** offsets, and **overlays** (a
-    KFO-style border on top + a background) for **both** buttons and the
-    char_icon. Each overlay slot offers **Presets** (a grouped grid picker over
+    body), size, face zoom (0.25–4×), crop **Move X/Y** offsets (±100%), and
+    **overlays** (a KFO-style border on top + a background) for **both** buttons
+    and the char_icon. Every numeric setting is a `_ValueSlider` (a slider + a
+    **typeable value box**, kept in sync: drag, or type an exact value committed
+    on Enter/blur and clamped to range) — replaces the old slider-only helpers.
+    Each overlay slot offers **Presets** (a grouped grid picker over
     `OverlayPresets`, cached thumbnails in `_overlayThumbCache`), **Build…** (the
     `overlay_builder.dart` editor — style + colour-wheel + thickness/radius/inset,
     live preview, "start from" any preset), and **Import…** (your own PNG). The

@@ -90,6 +90,11 @@ count. A spinner there means it's working.
   kept. Works on **every** platform, including the website (it uses a folder
   upload there). If the folder already has a `char.ini`, Pinsel loads it as-is
   (nothing is lost); otherwise it auto-builds one.
+- **Bulk folders → characters** — point at a **parent** folder of per-character
+  sub-folders and build **all of them at once** into one `.zip` (each sub-folder
+  → `Name/char.ini` + sprites + `emotions/` + `char_icon.png`). Great for making
+  10 characters in one click; uses your current Button Studio settings and leaves
+  your open project alone. See [Auto-build → Bulk folders](AUTO_BUILD.md).
 
 **Update an existing character** (these appear once a project is loaded)
 - **Add sprites** / **Add sprite folder** — drop *more* images into the
@@ -289,13 +294,20 @@ By default Pinsel frames the character's **head / face** — AO buttons show
 *expressions*, so a full-body button looks weird and tiny. Toggle **Head / face**
 ↔ **Full body** for both the button and the icon.
 
-- **Face zoom** (head mode) — tighter or looser around the face.
+- **Face zoom** (head mode) — tighter or looser around the face (**0.25–4×**;
+  >1 zooms in, <1 pulls back to head-and-shoulders).
 - **Move X / Y** — nudge the crop if the auto-detected face is off (e.g. an
-  off-centre or tilted head).
+  off-centre or tilted head). The full **±100 %** range lets you shift the crop a
+  whole crop-width/height, so you can reach any part of the sprite.
 - **Size** — buttons default **128 px** (24–512); the **char_icon** defaults to
   **40 px** and is customisable **40–128**. Output is **lossless PNG**, crisply
   **downscaled** from the full-res sprite and **never upscaled**, so a bigger
   size is only as sharp as your source art (no blurry enlargement).
+
+> **Slider *or* exact value.** Every setting (size, zoom, move X/Y) is a slider
+> with a **typeable box** next to it — drag for a quick adjust, or type an exact
+> number (it commits on Enter / when you click away, clamped to the valid range).
+> Dragging the slider updates the box live.
 
 ### Borders & backgrounds (KFO-style)
 Want a frame around your buttons like other makers? Under **Overlays**, each slot

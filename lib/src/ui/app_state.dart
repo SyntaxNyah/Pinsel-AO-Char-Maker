@@ -11,6 +11,7 @@ import '../core/character.dart';
 import '../core/emote.dart';
 import '../core/history.dart';
 import '../core/validator.dart';
+import '../discovery/bulk_folders.dart';
 import '../discovery/bulk_rename.dart';
 import '../discovery/character_builder.dart';
 import '../discovery/organizer.dart';
@@ -1320,38 +1321,36 @@ class AppState extends ChangeNotifier {
   // Export
   // ---------------------------------------------------------------------------
 
-  /// Organise into a tidy character folder (with auto buttons + ini) and return
-  /// the resulting in-memory workspace.
-  Future<MemoryWorkspace> buildOutput() async {
-    final MemoryWorkspace out = MemoryWorkspace();
-    if (character == null || scan == null) return out;
-    // Closures capture the studio's offsets + overlays; buttons and the icon
-    // get their own so each can carry a different (or no) border.
-    final Organizer organizer = Organizer(
-      buttonRenderer: (Uint8List b, String e, int s, CropFraming f, double z) =>
-          ButtonMaker.renderAutoOverlaid(b, e, s,
-              framing: f,
-              zoom: z,
-              offsetX: buttonOffsetX,
-              offsetY: buttonOffsetY,
-              background: buttonBg.image,
-              foreground: buttonFg.image),
-      iconRenderer: (Uint8List b, String e, int s, CropFraming f, double z) =>
-          ButtonMaker.renderAutoOverlaid(b, e, s,
-              framing: f,
-              zoom: z,
-              offsetX: iconOffsetX,
-              offsetY: iconOffsetY,
-              background: iconBg.image,
-              foreground: iconFg.image),
-    );
-    await organizer.organize(
-      character: character!,
-      scan: scan!,
-      source: workspace,
-      target: out,
-      config: OrganizeConfig(
-        targetCharDir: character!.options.name,
+  /// An [Organizer] wired to the studio's offsets + overlays. Buttons and the
+  /// icon get their own renderer so each can carry a different (or no) border.
+  /// Shared by single export ([buildOutput]) and [bulkBuildCharacters].
+  Organizer _studioOrganizer() => Organizer(
+        buttonRenderer:
+            (Uint8List b, String e, int s, CropFraming f, double z) =>
+                ButtonMaker.renderAutoOverlaid(b, e, s,
+                    framing: f,
+                    zoom: z,
+                    offsetX: buttonOffsetX,
+                    offsetY: buttonOffsetY,
+                    background: buttonBg.image,
+                    foreground: buttonFg.image),
+        iconRenderer:
+            (Uint8List b, String e, int s, CropFraming f, double z) =>
+                ButtonMaker.renderAutoOverlaid(b, e, s,
+                    framing: f,
+                    zoom: z,
+                    offsetX: iconOffsetX,
+                    offsetY: iconOffsetY,
+                    background: iconBg.image,
+                    foreground: iconFg.image),
+      );
+
+  /// The current button/char_icon studio settings as an [OrganizeConfig] for a
+  /// character folder named [targetCharDir]. A fresh folder is built, so missing
+  /// buttons/icon are always generated with these settings; any button or
+  /// char_icon the user imported (or saved) is copied in first and kept as-is.
+  OrganizeConfig _studioConfig({required String targetCharDir}) => OrganizeConfig(
+        targetCharDir: targetCharDir,
         generateButtons: generateButtons,
         buttonSize: buttonSize,
         buttonFraming: buttonFraming,
@@ -1361,13 +1360,115 @@ class AppState extends ChangeNotifier {
         iconFraming: iconFraming,
         iconZoom: iconZoom,
         iconSourceEmote: iconSourceEmote,
-        // Export builds a fresh folder, so missing buttons/icon are always
-        // generated with the studio settings; any button/char_icon the user
-        // imported (or saved here) is copied in first and kept as-is.
-      ),
+      );
+
+  /// [buildConfig] with its [BuildConfig.name] overridden (the rest of the
+  /// auto-build heuristics are kept) — used to name each bulk-built character
+  /// after its sub-folder.
+  BuildConfig _buildConfigNamed(String name) => BuildConfig(
+        name: name,
+        showname: buildConfig.showname,
+        side: buildConfig.side,
+        blips: buildConfig.blips,
+        chat: buildConfig.chat,
+        scaling: buildConfig.scaling,
+        defaultDeskMod: buildConfig.defaultDeskMod,
+        treatBareAsPreanim: buildConfig.treatBareAsPreanim,
+        guessSounds: buildConfig.guessSounds,
+        preferredFirstNames: buildConfig.preferredFirstNames,
+      );
+
+  /// Organise into a tidy character folder (with auto buttons + ini) and return
+  /// the resulting in-memory workspace.
+  Future<MemoryWorkspace> buildOutput() async {
+    final MemoryWorkspace out = MemoryWorkspace();
+    if (character == null || scan == null) return out;
+    await _studioOrganizer().organize(
+      character: character!,
+      scan: scan!,
+      source: workspace,
+      target: out,
+      config: _studioConfig(targetCharDir: character!.options.name),
       onProgress: (int d, int t, String l) => _progress(d, t, l),
     );
     return out;
+  }
+
+  /// **Bulk-build many characters from one parent folder.** Each top-level
+  /// sub-folder of [files] becomes its own AO-ready character (auto ini, copied
+  /// sprites, and buttons + char_icon using the current Button Studio settings),
+  /// and they're all packed into a single `.zip` ready to drop into AO's
+  /// `characters/`. This is the "5 folders of sprites → 5 characters in one
+  /// click" workflow.
+  ///
+  /// A sub-folder that already contains a `char.ini` is honoured (parsed, not
+  /// rebuilt); otherwise the auto-builder runs with the current [buildConfig],
+  /// naming the character after the sub-folder. Sub-folders with no sprites (and
+  /// no ini) are skipped. The current project is left untouched — bulk runs in
+  /// throwaway in-memory workspaces. Returns the number of characters built.
+  Future<int> bulkBuildCharacters(List<PickedFile> files) async {
+    if (files.isEmpty) return 0;
+    final Map<String, Uint8List> all = <String, Uint8List>{
+      for (final PickedFile f in files) f.name: f.bytes,
+    };
+    final List<FolderCharacter> chars = BulkFolders.split(all.keys);
+    if (chars.isEmpty) {
+      _setBusy(false, 'No folders found to build.');
+      return 0;
+    }
+    _setBusy(true, 'Bulk-building ${chars.length} character(s)…');
+
+    final Organizer organizer = _studioOrganizer();
+    final MemoryWorkspace out = MemoryWorkspace();
+    int built = 0;
+    for (final FolderCharacter fc in chars) {
+      // A throwaway workspace holding just this character's sprites.
+      final MemoryWorkspace src = MemoryWorkspace();
+      fc.files.forEach((String inner, String key) {
+        final Uint8List? bytes = all[key];
+        if (bytes != null) src.put(inner, bytes);
+      });
+      final List<String> innerFiles = await src.listFiles();
+      final ScanResult charScan = _scanner.fromPaths(innerFiles);
+
+      // Honour an existing char.ini in the sub-folder; else auto-build.
+      final String? iniRel = innerFiles.firstWhereOrNull(
+          (String f) => p.basename(f).toLowerCase() == CharFolder.iniName);
+      if (iniRel == null && charScan.groups.isEmpty) continue; // nothing usable
+      final Character builtChar = iniRel != null
+          ? Character.parse(await src.readString(iniRel))
+          : const CharacterBuilder().build(charScan, config: _buildConfigNamed(fc.name));
+
+      await organizer.organize(
+        character: builtChar,
+        scan: charScan,
+        source: src,
+        target: out,
+        config: _studioConfig(targetCharDir: fc.name),
+        onProgress: (int d, int t, String l) =>
+            _progress(built + 1, chars.length, 'Building ${fc.name}'),
+      );
+      built++;
+      _progress(built, chars.length, 'Built ${fc.name}');
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    if (built == 0) {
+      _setBusy(false, 'No character sub-folders with sprites found.');
+      return 0;
+    }
+
+    // One zip with every character folder.
+    final Archive archive = Archive();
+    out.snapshot.forEach((String rel, Uint8List bytes) {
+      archive.addFile(ArchiveFile(rel, bytes.length, bytes));
+    });
+    final List<int>? zip = ZipEncoder().encode(archive);
+    _setBusy(false, 'Bulk-built $built character(s) into one .zip.');
+    if (zip != null) {
+      await saveBytes('characters.zip', Uint8List.fromList(zip));
+    }
+    return built;
   }
 
   /// Build the character and download/save it as a `.zip` ready to drop into AO.

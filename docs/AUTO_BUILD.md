@@ -67,3 +67,44 @@ Everything the auto-builder does is editable afterwards in the **Emotes** screen
 (rename, reorder via drag, change sprite/preanim/modifier/desk/sound, add/delete),
 and the **Button Studio** lets you drop in custom buttons. Re-run the builder any
 time with **Regenerate** (it re-reads the sprites with your current options).
+
+## Bulk folders → many characters at once
+
+Building one character is great; building **ten in one click** is the bulk path.
+Home → **Bulk folders → characters** points the same pipeline at a **parent**
+folder whose sub-folders each hold one character's sprites:
+
+```
+MyCast/            ← pick this folder
+  Phoenix/         → a character
+    (a)normal.png
+    (b)normal.png
+  Edgeworth/       → a character
+    (a)smug.png
+  …
+```
+
+Each sub-folder runs through scan → build → organise on its own, and the results
+are packed into a single `characters.zip`:
+
+```
+characters.zip
+  Phoenix/   char.ini · char_icon.png · emotions/button1_off.png · …
+  Edgeworth/ char.ini · char_icon.png · emotions/…
+  …
+```
+
+Unzip it into AO's `characters/` and every character is ready. Notes:
+- Buttons + the char_icon use your **current Button & Icon Studio** settings
+  (framing, size, zoom, offsets, overlays), so style them once and they apply to
+  the whole batch.
+- A sub-folder that already contains a `char.ini` is **honoured** (loaded
+  losslessly), not rebuilt; otherwise the auto-builder runs and names the
+  character after the sub-folder.
+- Sub-folders with no usable sprites (and no ini) are skipped.
+- Your currently open project is **left untouched** — bulk runs in throwaway
+  in-memory workspaces.
+- Platform-agnostic: the web folder upload prepends the picked folder's name,
+  which `BulkFolders.split` strips automatically, so the same parent folder
+  behaves identically on desktop and web. A folder of loose sprites with no
+  sub-folders collapses to a single character.

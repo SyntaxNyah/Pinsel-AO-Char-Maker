@@ -65,6 +65,26 @@ class HomeScreen extends StatelessWidget {
     ]);
   }
 
+  /// Bulk-build many characters from one **parent** folder: each sub-folder of
+  /// sprites becomes its own AO-ready character folder (char.ini, sprites,
+  /// emotions/ buttons, char_icon), all packed into a single .zip. Uses the
+  /// current Button & Icon Studio settings.
+  Future<void> _bulkFolders(BuildContext context) async {
+    final AppState app = context.read<AppState>();
+    final List<PickedFolderFile>? files = await pickFolderFiles();
+    if (files == null || files.isEmpty) return;
+    final int n = await app.bulkBuildCharacters(<PickedFile>[
+      for (final PickedFolderFile f in files) PickedFile(f.name, f.bytes),
+    ]);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(n > 0
+            ? 'Built $n character(s) into one .zip — unzip into AO\'s characters/.'
+            : 'No character sub-folders with sprites found in that folder.'),
+      ));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppState app = context.watch<AppState>();
@@ -97,6 +117,11 @@ class HomeScreen extends StatelessWidget {
               onPressed: () => _importFolder(context),
               icon: const Icon(Icons.folder_open_rounded),
               label: const Text('Import folder'),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: () => _bulkFolders(context),
+              icon: const Icon(Icons.folder_copy_rounded),
+              label: const Text('Bulk folders → characters'),
             ),
             if (app.hasProject) ...<Widget>[
               FilledButton.tonalIcon(
@@ -133,6 +158,9 @@ class HomeScreen extends StatelessWidget {
           ),
         const SizedBox(height: 20),
 
+        const _BulkFoldersCard(),
+        const SizedBox(height: 12),
+
         _AutoBuildCard(app: app),
         const SizedBox(height: 12),
         if (app.hasProject) _ValidatorCard(app: app),
@@ -161,6 +189,69 @@ class HomeScreen extends StatelessWidget {
         const SizedBox(height: 12),
         const CreditsCard(),
       ],
+    );
+  }
+}
+
+/// Explains the "Bulk folders → characters" workflow and the folder layout it
+/// expects (a parent folder of per-character sub-folders).
+class _BulkFoldersCard extends StatelessWidget {
+  const _BulkFoldersCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Icon(Icons.folder_copy_rounded),
+                const SizedBox(width: 12),
+                Text('Bulk folders → many characters at once',
+                    style: Theme.of(context).textTheme.titleMedium),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Make 10+ characters in one click: point “Bulk folders → '
+              'characters” at a parent folder where each sub-folder holds one '
+              'character\'s sprites. Every sub-folder is turned into a finished '
+              'character folder and they\'re all packed into one .zip.',
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.black26,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'MyCast/            ← pick this folder\n'
+                '  Phoenix/         → character\n'
+                '    (a)normal.png\n'
+                '    (b)normal.png\n'
+                '  Edgeworth/       → character\n'
+                '    (a)smug.png\n'
+                '\n'
+                'gives →  characters.zip\n'
+                '  Phoenix/char.ini · char_icon.png · emotions/button1_off.png · …\n'
+                '  Edgeworth/char.ini · char_icon.png · emotions/… ',
+                style: TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Buttons + char_icon use your current Button & Icon Studio '
+              'settings. A sub-folder that already has a char.ini is kept as-is. '
+              'Your open project isn\'t touched.',
+              style: TextStyle(fontSize: 12, color: Colors.white60),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

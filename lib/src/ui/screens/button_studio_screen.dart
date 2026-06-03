@@ -90,9 +90,11 @@ class _ButtonStudioScreenState extends State<ButtonStudioScreen> {
         const Text(
           'Buttons and the char_icon are generated on export. Choose how they '
           'frame each sprite — Head / face (default) shows the expression, Full '
-          'body squares the whole sprite. Output is lossless PNG, crisply '
-          'downscaled from the full-res sprite (never upscaled), so bigger sizes '
-          'just mean "as sharp as the source allows".',
+          'body squares the whole sprite. Drag a slider for a quick adjust, or '
+          'type an exact value in the box beside it (size, zoom, and ±100% '
+          'move X/Y). Output is lossless PNG, crisply downscaled from the '
+          'full-res sprite (never upscaled), so bigger sizes just mean "as sharp '
+          'as the source allows".',
         ),
         const SizedBox(height: 16),
 
@@ -174,60 +176,122 @@ Widget _previewBox(ValueNotifier<Uint8List?> preview, String caption) {
   );
 }
 
-Widget _sizeSlider({
-  required String label,
-  required int value,
-  required int min,
-  required int max,
-  required ValueChanged<int> onChanged,
-}) {
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: <Widget>[
-      Text('$label: $value px'),
-      Slider(
-        value: value.toDouble().clamp(min.toDouble(), max.toDouble()),
-        min: min.toDouble(),
-        max: max.toDouble(),
-        divisions: max - min,
-        label: '$value',
-        onChanged: (double v) => onChanged(v.round()),
-      ),
-    ],
-  );
+/// A slider paired with a **typeable value box** — so any setting can be
+/// dragged for a quick adjust or typed for an exact value. The field commits on
+/// Enter/blur (clamped to [min]..[max]); dragging the slider updates the field
+/// live (unless you're editing it). Works for ints (`decimals: 0`) and decimals.
+class _ValueSlider extends StatefulWidget {
+  const _ValueSlider({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+    this.divisions,
+    this.decimals = 0,
+    this.suffix = '',
+  });
+
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final ValueChanged<double> onChanged;
+  final int? divisions;
+  final int decimals;
+  final String suffix;
+
+  @override
+  State<_ValueSlider> createState() => _ValueSliderState();
 }
 
-Widget _zoomSlider(double value, ValueChanged<double> onChanged) {
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: <Widget>[
-      Text('Face zoom: ${value.toStringAsFixed(2)}×  '
-          '${value > 1 ? '(tighter)' : value < 1 ? '(looser)' : ''}'),
-      Slider(
-        value: value.clamp(0.5, 2.0),
-        min: 0.5,
-        max: 2.0,
-        onChanged: onChanged,
-      ),
-    ],
-  );
-}
+class _ValueSliderState extends State<_ValueSlider> {
+  late final TextEditingController _ctrl =
+      TextEditingController(text: _fmt(widget.value));
+  final FocusNode _focus = FocusNode();
 
-/// Nudge the crop (−50%..+50% of the crop square) to re-centre the framing.
-Widget _offsetSlider(String label, double value, ValueChanged<double> onChanged) {
-  final int pct = (value * 100).round();
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: <Widget>[
-      Text('$label: ${pct >= 0 ? '+' : ''}$pct%'),
-      Slider(
-        value: value.clamp(-0.5, 0.5),
-        min: -0.5,
-        max: 0.5,
-        onChanged: onChanged,
+  String _fmt(double v) =>
+      widget.decimals == 0 ? v.round().toString() : v.toStringAsFixed(widget.decimals);
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (!_focus.hasFocus) _commit();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _ValueSlider old) {
+    super.didUpdateWidget(old);
+    // Reflect slider / external changes in the field unless it's being edited.
+    if (!_focus.hasFocus && _fmt(widget.value) != _ctrl.text) {
+      _ctrl.text = _fmt(widget.value);
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _commit() {
+    final double? parsed = double.tryParse(_ctrl.text.trim());
+    if (parsed == null) {
+      _ctrl.text = _fmt(widget.value); // revert garbage
+      return;
+    }
+    final double clamped = parsed.clamp(widget.min, widget.max);
+    _ctrl.text = _fmt(clamped);
+    if (clamped != widget.value) widget.onChanged(clamped);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final double v = widget.value.clamp(widget.min, widget.max);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(widget.label),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Slider(
+                  value: v,
+                  min: widget.min,
+                  max: widget.max,
+                  divisions: widget.divisions,
+                  label: '${_fmt(v)}${widget.suffix}',
+                  onChanged: widget.onChanged,
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 68,
+                child: TextField(
+                  controller: _ctrl,
+                  focusNode: _focus,
+                  textAlign: TextAlign.right,
+                  keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true, signed: true),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    suffixText:
+                        widget.suffix.trim().isEmpty ? null : widget.suffix.trim(),
+                  ),
+                  onSubmitted: (_) => _commit(),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
-    ],
-  );
+    );
+  }
 }
 
 /// Import / pick-preset / clear one overlay slot (a border laid on top, or a
@@ -498,29 +562,56 @@ class _BtnCardState extends State<_BtnCard> {
                         widget.onChanged();
                       }),
                       const SizedBox(height: 12),
-                      _sizeSlider(
+                      _ValueSlider(
                         label: 'Button size (default 128)',
-                        value: app.buttonSize,
-                        min: CharFolder.minButtonSize,
-                        max: CharFolder.maxButtonSize,
-                        onChanged: (int v) {
-                          setState(() => app.buttonSize = v);
+                        value: app.buttonSize.toDouble(),
+                        min: CharFolder.minButtonSize.toDouble(),
+                        max: CharFolder.maxButtonSize.toDouble(),
+                        divisions: CharFolder.maxButtonSize - CharFolder.minButtonSize,
+                        suffix: ' px',
+                        onChanged: (double v) {
+                          setState(() => app.buttonSize = v.round());
                           widget.onChanged();
                         },
                       ),
                       if (app.buttonFraming == CropFraming.head)
-                        _zoomSlider(app.buttonZoom, (double v) {
-                          setState(() => app.buttonZoom = v);
+                        _ValueSlider(
+                          label: 'Face zoom (1.00× default · >1 tighter)',
+                          value: app.buttonZoom,
+                          min: 0.25,
+                          max: 4.0,
+                          divisions: 75,
+                          decimals: 2,
+                          suffix: '×',
+                          onChanged: (double v) {
+                            setState(() => app.buttonZoom = v);
+                            widget.onChanged();
+                          },
+                        ),
+                      _ValueSlider(
+                        label: 'Move X',
+                        value: app.buttonOffsetX * 100,
+                        min: -100,
+                        max: 100,
+                        divisions: 200,
+                        suffix: '%',
+                        onChanged: (double v) {
+                          setState(() => app.buttonOffsetX = v / 100);
                           widget.onChanged();
-                        }),
-                      _offsetSlider('Move X', app.buttonOffsetX, (double v) {
-                        setState(() => app.buttonOffsetX = v);
-                        widget.onChanged();
-                      }),
-                      _offsetSlider('Move Y', app.buttonOffsetY, (double v) {
-                        setState(() => app.buttonOffsetY = v);
-                        widget.onChanged();
-                      }),
+                        },
+                      ),
+                      _ValueSlider(
+                        label: 'Move Y',
+                        value: app.buttonOffsetY * 100,
+                        min: -100,
+                        max: 100,
+                        divisions: 200,
+                        suffix: '%',
+                        onChanged: (double v) {
+                          setState(() => app.buttonOffsetY = v / 100);
+                          widget.onChanged();
+                        },
+                      ),
                       const SizedBox(height: 8),
                       const Text('Overlays (KFO-style borders)',
                           style: TextStyle(fontWeight: FontWeight.w600)),
@@ -607,29 +698,56 @@ class _IconCardState extends State<_IconCard> {
                         widget.onChanged();
                       }),
                       const SizedBox(height: 12),
-                      _sizeSlider(
+                      _ValueSlider(
                         label: 'Icon size (default 40 · AO range 40–128)',
-                        value: app.iconSize,
-                        min: CharFolder.minIconSize,
-                        max: CharFolder.maxIconSize,
-                        onChanged: (int v) {
-                          setState(() => app.iconSize = v);
+                        value: app.iconSize.toDouble(),
+                        min: CharFolder.minIconSize.toDouble(),
+                        max: CharFolder.maxIconSize.toDouble(),
+                        divisions: CharFolder.maxIconSize - CharFolder.minIconSize,
+                        suffix: ' px',
+                        onChanged: (double v) {
+                          setState(() => app.iconSize = v.round());
                           widget.onChanged();
                         },
                       ),
                       if (app.iconFraming == CropFraming.head)
-                        _zoomSlider(app.iconZoom, (double v) {
-                          setState(() => app.iconZoom = v);
+                        _ValueSlider(
+                          label: 'Face zoom (1.00× default · >1 tighter)',
+                          value: app.iconZoom,
+                          min: 0.25,
+                          max: 4.0,
+                          divisions: 75,
+                          decimals: 2,
+                          suffix: '×',
+                          onChanged: (double v) {
+                            setState(() => app.iconZoom = v);
+                            widget.onChanged();
+                          },
+                        ),
+                      _ValueSlider(
+                        label: 'Move X',
+                        value: app.iconOffsetX * 100,
+                        min: -100,
+                        max: 100,
+                        divisions: 200,
+                        suffix: '%',
+                        onChanged: (double v) {
+                          setState(() => app.iconOffsetX = v / 100);
                           widget.onChanged();
-                        }),
-                      _offsetSlider('Move X', app.iconOffsetX, (double v) {
-                        setState(() => app.iconOffsetX = v);
-                        widget.onChanged();
-                      }),
-                      _offsetSlider('Move Y', app.iconOffsetY, (double v) {
-                        setState(() => app.iconOffsetY = v);
-                        widget.onChanged();
-                      }),
+                        },
+                      ),
+                      _ValueSlider(
+                        label: 'Move Y',
+                        value: app.iconOffsetY * 100,
+                        min: -100,
+                        max: 100,
+                        divisions: 200,
+                        suffix: '%',
+                        onChanged: (double v) {
+                          setState(() => app.iconOffsetY = v / 100);
+                          widget.onChanged();
+                        },
+                      ),
                       const SizedBox(height: 8),
                       const Text('Overlays (KFO-style borders)',
                           style: TextStyle(fontWeight: FontWeight.w600)),
