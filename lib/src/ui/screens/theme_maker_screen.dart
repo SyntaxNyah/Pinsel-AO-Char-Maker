@@ -34,10 +34,10 @@ class _ThemeMakerScreenState extends State<ThemeMakerScreen> {
   void _bump() => setState(() => _rev++);
 
   Future<void> _import() async {
-    final List<PickedFolderFile>? files = await pickFolderFiles();
-    if (files == null || files.isEmpty || !mounted) return;
+    final PickedFolder? picked = await pickFolderFiles();
+    if (picked == null || picked.files.isEmpty || !mounted) return;
     await context.read<AppState>().importThemeFiles(<String, Uint8List>{
-      for (final PickedFolderFile f in files) f.name: f.bytes,
+      for (final PickedFolderFile f in picked.files) f.name: f.bytes,
     });
     if (mounted) _bump();
   }

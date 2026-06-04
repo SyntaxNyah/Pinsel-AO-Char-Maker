@@ -59,6 +59,9 @@ class MemoryWorkspace implements Workspace {
 
   Map<String, Uint8List> get snapshot => Map<String, Uint8List>.unmodifiable(_files);
 
+  /// Drop every file (used to start a project fresh / reset).
+  void clear() => _files.clear();
+
   @override
   Future<List<String>> listFiles({bool recursive = true}) async {
     final List<String> keys = _files.keys.toList();

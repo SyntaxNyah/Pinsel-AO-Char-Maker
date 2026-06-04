@@ -124,6 +124,7 @@ class _HomeShellState extends State<HomeShell> {
                       onImport: () => _importFolder(context),
                       onShortcuts: () => _showShortcuts(context),
                       onAbout: () => showAboutCreditsDialog(context),
+                      onReset: () => _resetProject(context),
                     ),
                     const Divider(height: 1),
                     Expanded(
@@ -198,11 +199,37 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _importFolder(BuildContext context) async {
     final AppState app = context.read<AppState>();
-    final List<PickedFolderFile>? files = await pickFolderFiles();
-    if (files == null || files.isEmpty) return;
+    final PickedFolder? picked = await pickFolderFiles();
+    if (picked == null || picked.files.isEmpty) return;
+    // Fresh import — name the character after the picked folder.
     await app.importFiles(<PickedFile>[
-      for (final PickedFolderFile f in files) PickedFile(f.name, f.bytes),
-    ]);
+      for (final PickedFolderFile f in picked.files) PickedFile(f.name, f.bytes),
+    ], projectName: picked.folderName);
+  }
+
+  /// Confirm, then wipe the project back to empty (also on the Home screen's
+  /// "Start over"). Destructive, so it asks first.
+  Future<void> _resetProject(BuildContext context) async {
+    final AppState app = context.read<AppState>();
+    final bool? go = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        title: const Text('Start over?'),
+        content: const Text(
+            'Clear the current character, all imported sprites and edits, and '
+            'reset to an empty project? Your Button/Studio settings are kept. '
+            'This can\'t be undone.'),
+        actions: <Widget>[
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Reset')),
+        ],
+      ),
+    );
+    if (go == true) app.resetProject();
   }
 
   void _showShortcuts(BuildContext context) {
@@ -257,11 +284,15 @@ class _HomeShellState extends State<HomeShell> {
 /// every slider drag).
 class _TopBar extends StatelessWidget {
   const _TopBar(
-      {required this.onImport, required this.onShortcuts, required this.onAbout});
+      {required this.onImport,
+      required this.onShortcuts,
+      required this.onAbout,
+      required this.onReset});
 
   final VoidCallback onImport;
   final VoidCallback onShortcuts;
   final VoidCallback onAbout;
+  final VoidCallback onReset;
 
   @override
   Widget build(BuildContext context) {
@@ -302,6 +333,11 @@ class _TopBar extends StatelessWidget {
                   tooltip: 'Export char.ini (Ctrl+E)',
                   onPressed: hasProject ? () => app.exportIni() : null,
                   icon: const Icon(Icons.description_outlined),
+                ),
+                IconButton(
+                  tooltip: 'Start over (reset project)',
+                  onPressed: hasProject ? onReset : null,
+                  icon: const Icon(Icons.restart_alt_rounded),
                 ),
                 const Spacer(),
                 IconButton(

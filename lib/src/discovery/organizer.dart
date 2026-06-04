@@ -228,6 +228,13 @@ class Organizer {
           await target.writeBytes(job.targetRel, png);
         }
         tick('Button ${job.emoteIndex + 1}');
+        // Yield to the event loop between buttons. Each button render
+        // (decode + face-detect + encode) is synchronous CPU work on the UI
+        // isolate; with a big cast (e.g. 100 emotes) doing them back-to-back
+        // blocks the thread long enough that the OS marks the app "not
+        // responding" and the user force-closes it (looks like a crash). One
+        // yield per button keeps the message pump + progress bar alive.
+        await Future<void>.delayed(Duration.zero);
       }
 
       // char_icon.png for the character-select screen.

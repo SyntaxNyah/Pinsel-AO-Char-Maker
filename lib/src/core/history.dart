@@ -24,6 +24,13 @@ class EditHistory {
     _redo.clear();
   }
 
+  /// Forget all history (used when the project is reset).
+  void clear() {
+    _current = null;
+    _undo.clear();
+    _redo.clear();
+  }
+
   /// Record a new state after an edit.
   void push(Character c) {
     final String snap = c.serialize();

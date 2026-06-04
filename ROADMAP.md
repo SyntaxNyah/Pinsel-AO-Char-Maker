@@ -17,6 +17,8 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ✅ Organizer (folders, file copy/move, auto buttons, ini)
 - ✅ Auto `char_icon.png` generation (head/face framing, size 40–128, choose the
   source emote, optional border/background overlay)
+- ✅ **⚡ One-click character** (`autoMagicExport`) — folder/project → convert to
+  WebP → ini + buttons + char_icon → exported `.zip`, in one action
 - ⬜ Auto `credits.txt` scaffolding
 
 ## Imaging & colour
@@ -40,8 +42,11 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   without libwebpmux) — and the fallback now **reports why** (no more silent APNG)
 - ✅ Bulk "animate all sprites" — one effect stack baked onto every sprite at
   once, each saved as an animated WebP `(b)` talk sprite (`bulkAnimateAll`),
-  rendered+encoded **off the UI isolate** (`compute`) so it stays responsive,
-  while staying **lossless** (no quality loss)
+  rendered+encoded **off the UI isolate** (`compute`) and **across all CPU cores**
+  (`mapParallel`), while staying **lossless** (no quality loss)
+- ✅ **Multi-core baking** — `imaging/parallel.dart` windowed scheduler runs up to
+  `maxConcurrency` (`min(cores,8)`) encode jobs at once; "Use all CPU cores"
+  toggle on Home (see docs/PERFORMANCE.md)
 - ✅ Update an existing character — **Add sprites / Add sprite folder**
   (`addSprites`) appends an emote per *new* sprite group without touching the
   existing ini, emotes or edits
@@ -57,7 +62,10 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   `.zip` export for `base/themes/`
 - ✅ `scripts/build_all.ps1` bundles the libwebp DLLs into local Windows builds
   too (best-effort via vcpkg), so a locally-built app gets working animated WebP
-- ⬜ GPU fragment-shader real-time path (CPU preview works now)
+- 🟡 GPU real-time preview — ✅ exact colour-**matrix** path on the compositor
+  (`ColorMatrix`/`liveColorMatrix`; brightness/contrast/exposure/invert/grayscale/
+  sepia/temperature/tint/solid/opacity), with a CPU fallback for HSV/curve/spatial
+  ops; ⬜ fragment-shader path to cover the non-linear ops too
 - ⬜ Palette-swap (exact indexed remap) op
 - ✅ Outline / drop-shadow / glow image ops (spatial ops that draw into the halo)
 
@@ -67,7 +75,10 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   fps, reverse, ping-pong, canvas alignment)
 - ✅ Region-targeted animation (wave a hand, spin a limb)
 - ✅ Manual keyframe timeline
-- ✅ Lip-sync (two-state, multi-viseme, rough auto)
+- ✅ Lip-sync / **talking mouths** — the **Mouth** tab fakes a natural, looping
+  talking `(b)` from ONE drawing (`LipSync.talk`, face-placed adjustable mouth box
+  + live preview), plus two-state/multi-viseme for real mouth art; **all-sprites**
+  variant baked across cores (`bulkMouthTalkAll`) — see docs/LIPSYNC.md
 - ⬜ Onion-skinning + scrubbable timeline UI
 - ⬜ Per-frame SFX/realization/screenshake authoring UI (model supports it)
 

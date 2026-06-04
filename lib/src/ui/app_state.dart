@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../animation/anim_clip.dart';
 import '../animation/anim_engine.dart';
+import '../animation/lipsync.dart';
 import '../core/ao_constants.dart';
 import '../core/character.dart';
 import '../core/emote.dart';
@@ -19,11 +20,14 @@ import '../discovery/sprite_scanner.dart';
 import '../imaging/bulk_processor.dart';
 import '../imaging/button_maker.dart';
 import '../imaging/codecs.dart';
+import '../imaging/color_matrix.dart';
 import '../imaging/color_ops.dart';
 import '../imaging/overlay_presets.dart';
+import '../imaging/parallel.dart';
 import '../imaging/sprite_edit.dart';
 import '../imaging/sprite_sheet.dart';
 import '../imaging/webp_codec.dart';
+import '../platform/cpu.dart';
 import '../platform/save_file.dart';
 import '../platform/workspace.dart';
 import '../theme/ao2_theme.dart';
@@ -100,6 +104,33 @@ class AppState extends ChangeNotifier {
   /// without rebuilding on unrelated changes like typing an emote name.
   int spriteRevision = 0;
 
+  // ---- Performance ("advanced" capabilities) --------------------------------
+
+  /// Spread heavy bulk baking (animate-all, mouth-all, recolour-all, convert)
+  /// across all CPU cores. When off, work is done one job at a time (the old
+  /// behaviour) — useful if you want to keep the machine free for other apps.
+  bool useAllCores = true;
+
+  /// Logical CPU cores detected on this device.
+  int get cpuCores => cpuCount;
+
+  /// How many render/encode jobs to keep in flight during bulk operations.
+  /// Capped so we never spawn an unreasonable number of background isolates
+  /// (each `compute` is one isolate); 1 when multi-core is disabled.
+  int get maxConcurrency => useAllCores ? cpuCount.clamp(1, 8) : 1;
+
+  /// Toggle multi-core baking.
+  void setUseAllCores(bool v) {
+    useAllCores = v;
+    notifyListeners();
+  }
+
+  /// The GPU-preview colour matrix for [pipeline], or `null` when it isn't an
+  /// exact linear transform (the UI then uses the CPU preview). See
+  /// [ColorMatrix]. Exposed here so screens don't reach into `imaging/` directly.
+  List<double>? liveColorMatrix(List<ColorOp> pipeline) =>
+      ColorMatrix.tryBuild(pipeline);
+
   // ---- Button & char-icon generation settings (drive the export + studio) ----
   // Public so the Button Studio can tune them with zero rebuild overhead; the
   // export (`buildOutput`) reads them on demand.
@@ -172,13 +203,53 @@ class AppState extends ChangeNotifier {
   // Importing
   // ---------------------------------------------------------------------------
 
-  Future<void> importFiles(List<PickedFile> files) async {
+  /// Import [files] as a **fresh** project: the previous project is cleared
+  /// first, so "Import" truly starts over (use [addSprites] to *grow* the
+  /// current character instead — the old code accumulated onto the previous
+  /// import). When [projectName] is given (the picked folder's name) the
+  /// auto-built character is named after it instead of the generic "newchar".
+  Future<void> importFiles(List<PickedFile> files, {String? projectName}) async {
     _setBusy(true, 'Importing ${files.length} files…');
+    _clearWorkspaceFiles();
     for (final PickedFile f in files) {
       workspace.put(f.name, f.bytes);
     }
+    final String? clean = _cleanProjectName(projectName);
+    if (clean != null) buildConfig = _buildConfigNamed(clean);
     await _rebuild();
     _setBusy(false, 'Imported ${files.length} files.');
+  }
+
+  /// Drop the working project's files + mixer parts (shared by a fresh
+  /// [importFiles] and [resetProject]).
+  void _clearWorkspaceFiles() {
+    workspace.clear();
+    mixSources.clear();
+  }
+
+  /// Sanitise a picked folder name into a usable character/folder name, or null
+  /// if there's nothing usable.
+  String? _cleanProjectName(String? raw) {
+    if (raw == null) return null;
+    final String s =
+        raw.trim().replaceAll(RegExp(r'[\\/:*?"<>|]+'), '_').trim();
+    return s.isEmpty ? null : s;
+  }
+
+  /// **Start over**: wipe the entire project (sprites, character, history,
+  /// previews, mixer parts) back to a clean slate. Studio/build *settings* are
+  /// kept — only project data is cleared.
+  void resetProject() {
+    workspace.clear();
+    mixSources.clear();
+    history.clear();
+    character = null;
+    scan = null;
+    selectedEmote = -1;
+    livePipeline.clear();
+    ripperSheetBytes = null;
+    _invalidateImageCaches();
+    _setBusy(false, 'Project reset — import sprites to begin.');
   }
 
   /// Pull every file from an external workspace (e.g. a real directory) into the
@@ -316,6 +387,23 @@ class AppState extends ChangeNotifier {
     selectedEmote = character!.emotes.isEmpty
         ? -1
         : index.clamp(0, character!.emotes.length - 1);
+    commitEdit();
+  }
+
+  /// Delete several emotes at once (multi-select). Removes high index → low so
+  /// earlier removals don't shift the rest; records a single undo step.
+  void deleteEmotes(Set<int> indices) {
+    if (character == null || indices.isEmpty) return;
+    final List<int> sorted = indices.toList()
+      ..sort((int a, int b) => b.compareTo(a));
+    for (final int i in sorted) {
+      if (i >= 0 && i < character!.emotes.length) {
+        character!.emotes.removeAt(i);
+      }
+    }
+    selectedEmote = character!.emotes.isEmpty
+        ? -1
+        : selectedEmote.clamp(0, character!.emotes.length - 1);
     commitEdit();
   }
 
@@ -927,59 +1015,65 @@ class AppState extends ChangeNotifier {
     final List<Map<String, dynamic>> recipeJson =
         recipes.map((AnimRecipe r) => r.toJson()).toList();
 
+    // Gather one job per renderable sprite group (sequential, cheap reads).
+    final List<SpriteGroup> jobGroups = <SpriteGroup>[];
+    final List<_AnimJob> jobs = <_AnimJob>[];
+    for (final SpriteGroup g in groups) {
+      final String? rel = g.representative?.relPath;
+      if (rel == null || !await workspace.exists(rel)) continue;
+      jobGroups.add(g);
+      jobs.add(_AnimJob(
+        bytes: await workspace.readBytes(rel),
+        ext: p.extension(rel).replaceFirst('.', ''),
+        recipes: recipeJson,
+        frames: frames,
+        fps: fps,
+        lossless: lossless,
+        quality: quality,
+      ));
+    }
+
+    // Render + encode each on a background isolate, up to [maxConcurrency] at
+    // once — true multi-core baking (the old version was one-sprite-at-a-time).
+    // `compute` runs inline on web; falls back inline on error so the bake still
+    // completes. Order is preserved so results line up with [jobGroups].
+    final List<({Uint8List bytes, String ext, String? webpError})> results =
+        await mapParallel<_AnimJob,
+            ({Uint8List bytes, String ext, String? webpError})>(
+      jobs,
+      _computeAnim,
+      concurrency: maxConcurrency,
+      onProgress: (int d, int t) => _progress(d, t, 'Animate all'),
+    );
+
     int ok = 0;
     int webp = 0;
     String? lastError;
-    int done = 0;
-    for (final SpriteGroup g in groups) {
-      final String? rel = g.representative?.relPath;
-      if (rel != null && await workspace.exists(rel)) {
-        final _AnimJob job = _AnimJob(
-          bytes: await workspace.readBytes(rel),
-          ext: p.extension(rel).replaceFirst('.', ''),
-          recipes: recipeJson,
-          frames: frames,
-          fps: fps,
-          lossless: lossless,
-          quality: quality,
-        );
-        // Render + encode on a background isolate so the UI thread stays free
-        // (the old version baked every sprite on the main thread and froze).
-        // `compute` runs inline on web; if it ever throws, fall back to inline
-        // so the bake still completes.
-        ({Uint8List bytes, String ext, String? webpError}) r;
-        try {
-          r = await compute(_bulkAnimateWorker, job);
-        } catch (_) {
-          r = await _bulkAnimateWorker(job);
-        }
-        if (r.bytes.isNotEmpty && r.ext != 'none') {
-          final String outRel = '$prefix${g.base}.${r.ext}';
-          // Replace an existing same-state sprite for this base (different ext)
-          // so we don't leave two talk sprites for one pose.
-          final SpriteFile? existing = switch (prefix) {
-            SpritePrefix.idle => g.idle,
-            SpritePrefix.talk => g.talk,
-            SpritePrefix.post => g.post,
-            _ => null,
-          };
-          if (existing != null &&
-              existing.relPath != outRel &&
-              await workspace.exists(existing.relPath)) {
-            await workspace.delete(existing.relPath);
-          }
-          await workspace.writeBytes(outRel, r.bytes);
-          ok++;
-          if (r.ext == 'webp') {
-            webp++;
-          } else {
-            lastError = r.webpError;
-          }
-        }
+    for (int i = 0; i < jobGroups.length; i++) {
+      final SpriteGroup g = jobGroups[i];
+      final ({Uint8List bytes, String ext, String? webpError}) r = results[i];
+      if (r.bytes.isEmpty || r.ext == 'none') continue;
+      final String outRel = '$prefix${g.base}.${r.ext}';
+      // Replace an existing same-state sprite for this base (different ext) so
+      // we don't leave two talk sprites for one pose.
+      final SpriteFile? existing = switch (prefix) {
+        SpritePrefix.idle => g.idle,
+        SpritePrefix.talk => g.talk,
+        SpritePrefix.post => g.post,
+        _ => null,
+      };
+      if (existing != null &&
+          existing.relPath != outRel &&
+          await workspace.exists(existing.relPath)) {
+        await workspace.delete(existing.relPath);
       }
-      // `await compute` already yields to the event loop, so the progress bar
-      // repaints between sprites without an explicit delay.
-      _progress(++done, groups.length, 'Animate all');
+      await workspace.writeBytes(outRel, r.bytes);
+      ok++;
+      if (r.ext == 'webp') {
+        webp++;
+      } else {
+        lastError = r.webpError;
+      }
     }
 
     _invalidateImageCaches();
@@ -992,6 +1086,274 @@ class AppState extends ChangeNotifier {
                 '(${lastError ?? 'native WebP unavailable'})';
     _setBusy(false, 'Animated $note.');
     return ok;
+  }
+
+  /// `compute` the effect-stack render for one sprite, falling back inline if
+  /// the isolate handoff fails (and always inline on web).
+  Future<({Uint8List bytes, String ext, String? webpError})> _computeAnim(
+      _AnimJob job) async {
+    try {
+      return await compute(_bulkAnimateWorker, job);
+    } catch (_) {
+      return await _bulkAnimateWorker(job);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mouth / lip-sync animation — fake a talking (b) sprite from one drawing
+  // ---------------------------------------------------------------------------
+
+  /// The face-derived default mouth box for sprite [rel], as fractions (so it
+  /// survives previews/resizes). Used to seed the Mouth tab so most sprites need
+  /// no adjustment. Returns null if the sprite can't be decoded.
+  Future<MouthRegion?> defaultMouthRegionFor(String rel) async {
+    final img.Image? base = await decodeFirstFrame(rel);
+    if (base == null) return null;
+    return MouthRegion.defaultFor(base);
+  }
+
+  /// Width÷height of the **selected** sprite's first frame (for drawing the
+  /// adjustable mouth box at the right aspect). Null if nothing is selected.
+  Future<double?> currentSpriteAspect() async {
+    final Emote? e = current;
+    if (e == null) return null;
+    final String? rel = spriteRelFor(e);
+    if (rel == null) return null;
+    final img.Image? im = await decodeFirstFrame(rel);
+    if (im == null || im.height == 0) return null;
+    return im.width / im.height;
+  }
+
+  /// Preview the talking-mouth animation for the **selected** sprite: decode →
+  /// drop the jaw inside [mouth] with a speech-like cadence → return downscaled
+  /// PNG frames the Animation Studio loops. The mouth box is in fractions so it
+  /// maps onto the downscaled preview unchanged.
+  Future<List<Uint8List>> previewMouthTalk(
+    MouthRegion mouth, {
+    int frames = 8,
+    int fps = 10,
+    double openAmount = LipSync.defaultOpenAmount,
+    int maxEdge = 360,
+  }) async {
+    final Emote? e = current;
+    if (e == null) return const <Uint8List>[];
+    final String? rel = spriteRelFor(e);
+    if (rel == null) return const <Uint8List>[];
+    final img.Image? decoded = await decodeFirstFrame(rel);
+    if (decoded == null) return const <Uint8List>[];
+    // Downscale for a snappy preview; `talk` clones internally so the cached
+    // decode is never mutated even when `_fitEdge` returns it unchanged.
+    final img.Image base = _fitEdge(decoded, maxEdge);
+    final AnimClip clip = LipSync.talk(base,
+        mouth: mouth.toPixels(base.width, base.height),
+        frames: frames,
+        fps: fps,
+        openAmount: openAmount);
+    return clip.frames.map((AnimFrame f) => Codecs.encodePng(f.image)).toList();
+  }
+
+  /// Bake the talking-mouth animation for the **selected** sprite at full
+  /// resolution and save it under [prefix] (talk `(b)` by default) — both into
+  /// the project (so it's exported) and as a download. WebP, APNG fallback.
+  Future<String?> saveMouthTalk(
+    MouthRegion mouth, {
+    int frames = 8,
+    int fps = 10,
+    double openAmount = LipSync.defaultOpenAmount,
+    String prefix = SpritePrefix.talk,
+    bool lossless = true,
+    int quality = 95,
+  }) async {
+    final Emote? e = current;
+    if (e == null) return null;
+    final String? rel = spriteRelFor(e);
+    if (rel == null) return null;
+    final img.Image? base = await decodeFirstFrame(rel);
+    if (base == null) return null;
+    _setBusy(true, 'Rendering mouth animation…');
+    final AnimClip clip = LipSync.talk(base,
+        mouth: mouth.toPixels(base.width, base.height),
+        frames: frames,
+        fps: fps,
+        openAmount: openAmount);
+    final ({Uint8List bytes, String ext, String? webpError}) r =
+        await clip.encodePreferWebp(lossless: lossless, quality: quality);
+
+    final String spriteName = e.sprite.isEmpty ? 'anim' : e.sprite;
+    final String outRel = '$prefix$spriteName.${r.ext}';
+    await _replaceStateSprite(e.sprite, prefix, outRel);
+    await workspace.writeBytes(outRel, r.bytes);
+    _invalidateImageCaches();
+    scan = _scanner.fromPaths(await _projectFiles());
+    _setBusy(false, 'Saved $outRel as ${_animNote(r.ext, r.webpError)}.');
+    return saveBytes(outRel, r.bytes);
+  }
+
+  /// **Give every sprite a talking mouth at once.** Each sprite's mouth box is
+  /// auto-placed from its own face, then a talking `(b)` animation is baked and
+  /// saved (WebP, APNG fallback). Rendering + encoding run across all CPU cores
+  /// (see [maxConcurrency]). Returns how many sprites were animated.
+  Future<int> bulkMouthTalkAll({
+    int frames = 8,
+    int fps = 10,
+    double openAmount = LipSync.defaultOpenAmount,
+    String prefix = SpritePrefix.talk,
+    bool lossless = true,
+    int quality = 95,
+  }) async {
+    if (scan == null) return 0;
+    final List<SpriteGroup> groups = scan!.groups.toList();
+    if (groups.isEmpty) return 0;
+    _setBusy(true, 'Adding talking mouths to ${groups.length} sprites…');
+
+    final List<SpriteGroup> jobGroups = <SpriteGroup>[];
+    final List<_MouthJob> jobs = <_MouthJob>[];
+    for (final SpriteGroup g in groups) {
+      final String? rel = g.representative?.relPath;
+      if (rel == null || !await workspace.exists(rel)) continue;
+      jobGroups.add(g);
+      jobs.add(_MouthJob(
+        bytes: await workspace.readBytes(rel),
+        ext: p.extension(rel).replaceFirst('.', ''),
+        frames: frames,
+        fps: fps,
+        openAmount: openAmount,
+        lossless: lossless,
+        quality: quality,
+      ));
+    }
+
+    final List<({Uint8List bytes, String ext, String? webpError})> results =
+        await mapParallel<_MouthJob,
+            ({Uint8List bytes, String ext, String? webpError})>(
+      jobs,
+      _computeMouth,
+      concurrency: maxConcurrency,
+      onProgress: (int d, int t) => _progress(d, t, 'Mouth animate all'),
+    );
+
+    int ok = 0;
+    int webp = 0;
+    String? lastError;
+    for (int i = 0; i < jobGroups.length; i++) {
+      final SpriteGroup g = jobGroups[i];
+      final ({Uint8List bytes, String ext, String? webpError}) r = results[i];
+      if (r.bytes.isEmpty || r.ext == 'none') continue;
+      final String outRel = '$prefix${g.base}.${r.ext}';
+      await _replaceStateSprite(g.base, prefix, outRel);
+      await workspace.writeBytes(outRel, r.bytes);
+      ok++;
+      if (r.ext == 'webp') {
+        webp++;
+      } else {
+        lastError = r.webpError;
+      }
+    }
+
+    _invalidateImageCaches();
+    scan = _scanner.fromPaths(await _projectFiles());
+    final String note = ok == 0
+        ? 'no sprites to animate'
+        : webp == ok
+            ? '$ok sprite(s) as animated WebP'
+            : '$ok sprite(s) — $webp WebP, ${ok - webp} APNG '
+                '(${lastError ?? 'native WebP unavailable'})';
+    _setBusy(false, 'Added talking mouths to $note.');
+    return ok;
+  }
+
+  /// `compute` the mouth render for one sprite, falling back inline on failure.
+  Future<({Uint8List bytes, String ext, String? webpError})> _computeMouth(
+      _MouthJob job) async {
+    try {
+      return await compute(_mouthWorker, job);
+    } catch (_) {
+      return await _mouthWorker(job);
+    }
+  }
+
+  /// Delete the existing sprite of state [prefix] for [base] when it differs
+  /// from [outRel] (avoids leaving e.g. a stale `(b)foo.png` next to a fresh
+  /// `(b)foo.webp`). No-op if the group/file isn't found.
+  Future<void> _replaceStateSprite(
+      String base, String prefix, String outRel) async {
+    final SpriteGroup? g =
+        scan?.groups.firstWhereOrNull((SpriteGroup g) => g.base == base);
+    if (g == null) return;
+    final SpriteFile? existing = switch (prefix) {
+      SpritePrefix.idle => g.idle,
+      SpritePrefix.talk => g.talk,
+      SpritePrefix.post => g.post,
+      _ => null,
+    };
+    if (existing != null &&
+        existing.relPath != outRel &&
+        await workspace.exists(existing.relPath)) {
+      await workspace.delete(existing.relPath);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // One-click "auto-magic" — sprites → finished, exported character
+  // ---------------------------------------------------------------------------
+
+  /// **Do everything, in one click.** Optionally convert every sprite to WebP
+  /// (lossless, AO's default here), then build the finished character — auto
+  /// `char.ini`, `emotions/` buttons and `char_icon.png` using the current
+  /// Button & Icon Studio settings — and download it as a ready-to-drop `.zip`.
+  ///
+  /// This is the "I just dropped in sprites, now give me a working character"
+  /// shortcut: it ties together convert → ini → buttons → icon → export so the
+  /// user doesn't have to visit each screen. The character's emotes/edits are
+  /// preserved (sprite fields store base names, so png→webp keeps them valid);
+  /// nothing is rebuilt from scratch. Returns the saved `.zip` path, or null.
+  Future<String?> autoMagicExport({bool convertToWebp = true}) async {
+    if (character == null || scan == null) {
+      _setBusy(false, 'Import some sprites first (Home).');
+      return null;
+    }
+    _setBusy(true, 'One-click: finishing your character…');
+
+    int converted = 0;
+    int convertFail = 0;
+    if (convertToWebp) {
+      final List<String> targets = <String>[
+        for (final SpriteGroup g in scan!.groups)
+          for (final SpriteFile f in <SpriteFile?>[
+            g.idle,
+            g.talk,
+            g.post,
+            ...g.statics
+          ].whereType<SpriteFile>())
+            f.relPath,
+      ];
+      // Lossless so quality is preserved; delete the original so the export is
+      // clean WebP. We refresh `scan` afterwards WITHOUT rebuilding the
+      // character, so emote edits survive (base names are unchanged).
+      final List<BulkResult> res = await BulkProcessor(workspace).run(
+        files: targets,
+        output: OutputFormat.webp,
+        webpLossless: true,
+        deleteOriginalOnConvert: true,
+        onProgress: (int d, int t, String l) => _progress(d, t, 'To WebP'),
+      );
+      converted = res.where((BulkResult r) => r.ok).length;
+      convertFail = res.length - converted;
+      _invalidateImageCaches();
+      scan = _scanner.fromPaths(await _projectFiles());
+    }
+
+    // exportZip rebuilds the output folder (ini + buttons + icon) and downloads.
+    final String? path = await exportZip();
+    final String convNote = convertToWebp
+        ? ' · $converted→WebP${convertFail > 0 ? " ($convertFail kept as-is)" : ""}'
+        : '';
+    _setBusy(
+        false,
+        path == null
+            ? 'One-click finished$convNote.'
+            : 'Done! Exported your character .zip$convNote.');
+    return path;
   }
 
   // ---------------------------------------------------------------------------
@@ -1421,40 +1783,61 @@ class AppState extends ChangeNotifier {
     final Organizer organizer = _studioOrganizer();
     final MemoryWorkspace out = MemoryWorkspace();
     int built = 0;
+    int skipped = 0; // sub-folders with no sprites/ini
+    int failed = 0; // sub-folders that threw while building
+    String? lastError;
     for (final FolderCharacter fc in chars) {
-      // A throwaway workspace holding just this character's sprites.
-      final MemoryWorkspace src = MemoryWorkspace();
-      fc.files.forEach((String inner, String key) {
-        final Uint8List? bytes = all[key];
-        if (bytes != null) src.put(inner, bytes);
-      });
-      final List<String> innerFiles = await src.listFiles();
-      final ScanResult charScan = _scanner.fromPaths(innerFiles);
+      // Each character is isolated: a bad sprite or a malformed sub-folder must
+      // NOT abort the whole batch (the old code had no try/catch, so a single
+      // odd folder silently killed every character + the .zip).
+      try {
+        // A throwaway workspace holding just this character's sprites.
+        final MemoryWorkspace src = MemoryWorkspace();
+        fc.files.forEach((String inner, String key) {
+          final Uint8List? bytes = all[key];
+          if (bytes != null) src.put(Workspace.norm(inner), bytes);
+        });
+        final List<String> innerFiles = await src.listFiles();
+        final ScanResult charScan = _scanner.fromPaths(innerFiles);
 
-      // Honour an existing char.ini in the sub-folder; else auto-build.
-      final String? iniRel = innerFiles.firstWhereOrNull(
-          (String f) => p.basename(f).toLowerCase() == CharFolder.iniName);
-      if (iniRel == null && charScan.groups.isEmpty) continue; // nothing usable
-      final Character builtChar = iniRel != null
-          ? Character.parse(await src.readString(iniRel))
-          : const CharacterBuilder().build(charScan, config: _buildConfigNamed(fc.name));
+        // Honour an existing char.ini in the sub-folder; else auto-build.
+        final String? iniRel = innerFiles.firstWhereOrNull(
+            (String f) => p.basename(f).toLowerCase() == CharFolder.iniName);
+        if (iniRel == null && charScan.groups.isEmpty) {
+          skipped++; // nothing usable in this sub-folder
+          _progress(built + skipped + failed, chars.length, 'Skipped ${fc.name}');
+          continue;
+        }
+        final Character builtChar = iniRel != null
+            ? Character.parse(await src.readString(iniRel))
+            : const CharacterBuilder()
+                .build(charScan, config: _buildConfigNamed(fc.name));
 
-      await organizer.organize(
-        character: builtChar,
-        scan: charScan,
-        source: src,
-        target: out,
-        config: _studioConfig(targetCharDir: fc.name),
-        onProgress: (int d, int t, String l) =>
-            _progress(built + 1, chars.length, 'Building ${fc.name}'),
-      );
-      built++;
-      _progress(built, chars.length, 'Built ${fc.name}');
+        await organizer.organize(
+          character: builtChar,
+          scan: charScan,
+          source: src,
+          target: out,
+          config: _studioConfig(targetCharDir: fc.name),
+          onProgress: (int d, int t, String l) =>
+              _progress(built + 1, chars.length, 'Building ${fc.name}'),
+        );
+        built++;
+        _progress(built, chars.length, 'Built ${fc.name}');
+      } catch (e) {
+        failed++;
+        lastError = '${fc.name}: $e';
+      }
       await Future<void>.delayed(Duration.zero);
     }
 
     if (built == 0) {
-      _setBusy(false, 'No character sub-folders with sprites found.');
+      // Be specific so an empty result is diagnosable, not a black box.
+      final String why = failed > 0
+          ? '$failed folder(s) failed to build (${lastError ?? 'unknown error'})'
+          : 'detected ${chars.length} folder(s) but none had sprites or a char.ini'
+              ' — make sure each character\'s sprites are *inside* its sub-folder';
+      _setBusy(false, 'Bulk build produced nothing: $why.');
       return 0;
     }
 
@@ -1464,7 +1847,14 @@ class AppState extends ChangeNotifier {
       archive.addFile(ArchiveFile(rel, bytes.length, bytes));
     });
     final List<int>? zip = ZipEncoder().encode(archive);
-    _setBusy(false, 'Bulk-built $built character(s) into one .zip.');
+    final String extra = <String>[
+      if (skipped > 0) '$skipped skipped (empty)',
+      if (failed > 0) '$failed failed',
+    ].join(', ');
+    _setBusy(
+        false,
+        'Bulk-built $built/${chars.length} character(s) into one .zip'
+        '${extra.isEmpty ? '' : ' — $extra'}.');
     if (zip != null) {
       await saveBytes('characters.zip', Uint8List.fromList(zip));
     }
@@ -1563,5 +1953,40 @@ Future<({Uint8List bytes, String ext, String? webpError})> _bulkAnimateWorker(
       job.recipes.map(AnimRecipe.fromJson).toList();
   final AnimClip clip =
       AnimEngine.render(base, recipes, frames: job.frames, fps: job.fps);
+  return clip.encodePreferWebp(lossless: job.lossless, quality: job.quality);
+}
+
+/// Sendable job for [_mouthWorker]: one sprite's talking-mouth parameters. The
+/// mouth box is auto-placed from each sprite's own face inside the worker.
+class _MouthJob {
+  const _MouthJob({
+    required this.bytes,
+    required this.ext,
+    required this.frames,
+    required this.fps,
+    required this.openAmount,
+    required this.lossless,
+    required this.quality,
+  });
+  final Uint8List bytes;
+  final String ext;
+  final int frames;
+  final int fps;
+  final double openAmount;
+  final bool lossless;
+  final int quality;
+}
+
+/// Off-main-isolate worker for [AppState.bulkMouthTalkAll]: decode → fake a
+/// talking mouth (face-derived region) → encode WebP (APNG fallback). Top-level
+/// so `compute` can call it.
+Future<({Uint8List bytes, String ext, String? webpError})> _mouthWorker(
+    _MouthJob job) async {
+  final img.Image? base = Codecs.decodeFirstFrame(job.bytes, ext: job.ext);
+  if (base == null) {
+    return (bytes: Uint8List(0), ext: 'none', webpError: 'could not decode sprite');
+  }
+  final AnimClip clip = LipSync.talk(base,
+      frames: job.frames, fps: job.fps, openAmount: job.openAmount);
   return clip.encodePreferWebp(lossless: job.lossless, quality: job.quality);
 }

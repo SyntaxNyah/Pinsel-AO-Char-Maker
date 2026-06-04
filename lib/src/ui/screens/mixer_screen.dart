@@ -327,10 +327,10 @@ class _MixerScreenState extends State<MixerScreen> {
   }
 
   Future<void> _loadPartsFolder(AppState app) async {
-    final List<PickedFolderFile>? files = await pickFolderFiles();
-    if (files == null || files.isEmpty) return;
+    final PickedFolder? picked = await pickFolderFiles();
+    if (picked == null || picked.files.isEmpty) return;
     await app.importMixParts(<PickedFile>[
-      for (final PickedFolderFile f in files) PickedFile(f.name, f.bytes),
+      for (final PickedFolderFile f in picked.files) PickedFile(f.name, f.bytes),
     ]);
     if (app.mixSources.isEmpty) return;
     final String label = app.mixSources.last.label;

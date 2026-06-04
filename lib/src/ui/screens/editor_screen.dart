@@ -32,15 +32,69 @@ class EditorScreen extends StatelessWidget {
   }
 }
 
-class _EmoteList extends StatelessWidget {
+/// The emote list. Supports **multi-select** (tick the boxes → delete many at
+/// once) and **auto-scrolls** to the selected emote when you move with the
+/// keyboard (Ctrl+↑/↓), so navigating a 100-emote cast isn't blind.
+class _EmoteList extends StatefulWidget {
   const _EmoteList();
 
   @override
+  State<_EmoteList> createState() => _EmoteListState();
+}
+
+class _EmoteListState extends State<_EmoteList> {
+  /// Indices ticked for multi-select (transient: cleared after a bulk delete).
+  final Set<int> _selected = <int>{};
+  final ScrollController _scroll = ScrollController();
+  int _lastSelected = -1;
+
+  /// Approximate dense-row height, only used to scroll a keyboard-selected
+  /// (possibly off-screen) emote into view.
+  static const double _rowExtent = 56;
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _toggle(int i) => setState(() {
+        if (!_selected.remove(i)) _selected.add(i);
+      });
+
+  void _scrollToSelected(int i) {
+    if (!_scroll.hasClients || i < 0) return;
+    final ScrollPosition pos = _scroll.position;
+    final double rowTop = i * _rowExtent;
+    // Only scroll when the row is off-screen, so tapping a visible row (which
+    // also changes the selection) doesn't make the list jump.
+    if (rowTop >= pos.pixels &&
+        rowTop + _rowExtent <= pos.pixels + pos.viewportDimension) {
+      return;
+    }
+    _scroll.animateTo(
+      (rowTop - 96).clamp(0.0, pos.maxScrollExtent), // a little context above
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // The list is cheap, so a Consumer (rebuild on commit/selection) is fine.
     return Consumer<AppState>(
       builder: (BuildContext context, AppState app, _) {
         final List<Emote> emotes = app.character?.emotes ?? <Emote>[];
+        // Drop any ticked indices that no longer exist (after a delete/reset).
+        _selected.removeWhere((int i) => i >= emotes.length);
+        // Auto-scroll to the selected emote when it changes externally
+        // (keyboard nav). Scheduled post-frame — can't scroll during build.
+        if (app.selectedEmote != _lastSelected) {
+          _lastSelected = app.selectedEmote;
+          final int target = app.selectedEmote;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _scrollToSelected(target);
+          });
+        }
         return Column(
           children: <Widget>[
             Padding(
@@ -67,8 +121,10 @@ class _EmoteList extends StatelessWidget {
                 ],
               ),
             ),
+            if (emotes.isNotEmpty) _selectionBar(app, emotes.length),
             Expanded(
               child: ReorderableListView.builder(
+                scrollController: _scroll,
                 itemCount: emotes.length,
                 onReorder: (int from, int to) =>
                     app.moveEmote(from, to > from ? to - 1 : to),
@@ -78,13 +134,24 @@ class _EmoteList extends StatelessWidget {
                     key: ValueKey<int>(i),
                     selected: i == app.selectedEmote,
                     dense: true,
-                    leading: CircleAvatar(radius: 12, child: Text('${i + 1}')),
+                    leading: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Checkbox(
+                          value: _selected.contains(i),
+                          visualDensity: VisualDensity.compact,
+                          onChanged: (_) => _toggle(i),
+                        ),
+                        CircleAvatar(radius: 12, child: Text('${i + 1}')),
+                      ],
+                    ),
                     title: Text(e.comment,
                         maxLines: 1, overflow: TextOverflow.ellipsis),
                     subtitle: Text(e.sprite,
                         maxLines: 1, overflow: TextOverflow.ellipsis),
                     trailing: IconButton(
                       icon: const Icon(Icons.delete_outline, size: 18),
+                      tooltip: 'Delete',
                       onPressed: () => app.deleteEmote(i),
                     ),
                     onTap: () => app.selectEmote(i),
@@ -95,6 +162,49 @@ class _EmoteList extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  /// A compact bar to select-all / clear / delete the ticked emotes. Always
+  /// shown (with a hint) so multi-select is discoverable; the actions light up
+  /// once something is ticked.
+  Widget _selectionBar(AppState app, int count) {
+    final bool any = _selected.isNotEmpty;
+    return Material(
+      color: any ? Theme.of(context).colorScheme.surfaceContainerHighest : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                any ? '${_selected.length} selected' : 'Tick to select',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+            TextButton(
+              onPressed: _selected.length == count
+                  ? () => setState(_selected.clear)
+                  : () => setState(() {
+                        _selected
+                          ..clear()
+                          ..addAll(List<int>.generate(count, (int i) => i));
+                      }),
+              child: Text(_selected.length == count ? 'None' : 'All'),
+            ),
+            TextButton.icon(
+              onPressed: any
+                  ? () {
+                      app.deleteEmotes(_selected);
+                      setState(_selected.clear);
+                    }
+                  : null,
+              icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+              label: Text('Delete${any ? ' (${_selected.length})' : ''}'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

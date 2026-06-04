@@ -10,28 +10,38 @@ class CheckerImage extends StatelessWidget {
     required this.bytes,
     this.fit = BoxFit.contain,
     this.cell = 10,
+    this.colorFilter,
   });
 
   final Uint8List? bytes;
   final BoxFit fit;
   final double cell;
 
+  /// Optional GPU [ColorFilter] applied to the **image only** (never the
+  /// checker backdrop). Powers the Colour Lab's live, compositor-side preview of
+  /// matrix-representable adjustments — see `imaging/color_matrix.dart`.
+  final ColorFilter? colorFilter;
+
   @override
   Widget build(BuildContext context) {
+    Widget? image = bytes == null
+        ? null
+        : Image.memory(
+            bytes!,
+            fit: fit,
+            gaplessPlayback: true,
+            // Smooth scaling so previews don't look pixelated (this is just
+            // how the preview is displayed; the sprite data is untouched).
+            filterQuality: FilterQuality.medium,
+            errorBuilder: (_, __, ___) =>
+                const Center(child: Icon(Icons.broken_image_outlined)),
+          );
+    if (image != null && colorFilter != null) {
+      image = ColorFiltered(colorFilter: colorFilter!, child: image);
+    }
     return CustomPaint(
       painter: _CheckerPainter(cell: cell),
-      child: bytes == null
-          ? const SizedBox.expand()
-          : Image.memory(
-              bytes!,
-              fit: fit,
-              gaplessPlayback: true,
-              // Smooth scaling so previews don't look pixelated (this is just
-              // how the preview is displayed; the sprite data is untouched).
-              filterQuality: FilterQuality.medium,
-              errorBuilder: (_, __, ___) =>
-                  const Center(child: Icon(Icons.broken_image_outlined)),
-            ),
+      child: image ?? const SizedBox.expand(),
     );
   }
 }

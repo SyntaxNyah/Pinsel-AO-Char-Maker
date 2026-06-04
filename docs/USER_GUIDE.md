@@ -83,13 +83,27 @@ count. A spinner there means it's working.
 
 ## 4. Home — import & export
 
+**⚡ One-Click: folder → finished character** (the big button up top)
+- Pick a folder of sprites and get a **ready-to-drop `.zip`** with no other
+  steps: it imports, writes the `char.ini`, converts every sprite to **WebP**,
+  generates the emote **buttons** + **char_icon**, and downloads the packaged
+  character. This is the whole pipeline in one action — see
+  [ONE_CLICK.md](ONE_CLICK.md).
+- Once a project is loaded, **Finish & export everything** does the same for what
+  you've got open (after you've recoloured / animated / added talking mouths),
+  without re-importing.
+
 **Import your art**
 - **Import sprite files** — pick one or many images (webp, png, gif, apng, jpg,
   bmp, …). Works everywhere, including the website.
 - **Import folder** — pick a whole folder (recursively); sub-folder structure is
   kept. Works on **every** platform, including the website (it uses a folder
   upload there). If the folder already has a `char.ini`, Pinsel loads it as-is
-  (nothing is lost); otherwise it auto-builds one.
+  (nothing is lost); otherwise it auto-builds one — and **names the character
+  after the folder** (no more "newchar"). **Import starts a fresh project**: the
+  previous character/sprites are cleared first, so importing a second folder
+  won't bring the old one's emotes back. (To *grow* a character instead, use
+  **Add sprites / Add sprite folder**; to wipe everything, use **Start over**.)
 - **Bulk folders → characters** — point at a **parent** folder of per-character
   sub-folders and build **all of them at once** into one `.zip` (each sub-folder
   → `Name/char.ini` + sprites + `emotions/` + `char_icon.png`). Great for making
@@ -120,7 +134,14 @@ them and press **Regenerate from sprites**):
 **Export**
 - **Export .zip** — builds the full character folder (with `char.ini` *and*
   auto-generated buttons) and downloads/saves a `.zip`.
-- **Export char.ini** — just the text file.
+- **Export char.ini** — just the text file. It always reflects what's in the
+  **Character** tab right now; if an exported file looks out of date, check
+  you're opening the one you just saved (not an older copy in another folder).
+
+**Start over** — wipes the whole project (character, sprites, edits) back to
+empty so you can begin a new one. It's on Home (once a project is loaded) and as
+the **↻** button in the top toolbar; it asks first and keeps your Button/Studio
+settings.
 
 **Validation card** — shows errors/warnings (e.g. "No sprite file found for X")
 with a plain-language fix for each. Green = all good. 🎉
@@ -167,6 +188,12 @@ There's an **Export char.ini** button right here, too.
 - **↶ / ↷** undo / redo any change.
 - The **trash** icon on a row deletes that emote.
 - **Click** a row to select and edit it.
+- **Multi-select / bulk delete** — tick the **checkboxes** on the rows you want
+  (or **All** in the bar above the list), then **Delete (N)** to remove them all
+  at once (one undo step). Great for trimming a big imported cast.
+- **Keyboard navigation** — `Ctrl/⌘ + ↑ / ↓` moves to the previous/next emote and
+  the list **auto-scrolls** to it (so you can step through 100 emotes without
+  losing the selected one off-screen).
 
 **Right panel (preview + settings)**
 - The big preview shows the selected sprite. **Scroll / pinch to zoom**, **drag
@@ -195,6 +222,9 @@ flattening his shading).
    sprite).
 2. In **Colour Lab**, drag the sliders — the preview updates live:
    - **Hue** (shift colours), **Saturation**, **Brightness**, **Contrast**.
+   - Tonal adjustments (brightness/contrast and many presets) preview **on the
+     GPU**, instantly — you'll see a small **GPU live preview** badge. Other ops
+     fall back to the regular preview. Either way **Apply** bakes the same result.
 3. Tap **Preset** chips (there are hundreds — "Make it Pink", "Vaporwave",
    "CRT", "Sepia", "Teal & Orange", …) and **Gradient map** chips (Fire, Ice,
    Rainbow, …). New **Effects** presets add outlines and depth: "Outline",
@@ -224,11 +254,13 @@ For recolouring **just part** of a sprite (only the clothes/hair), see
 ## 7. Animate — make sprites move
 
 Anyone can animate here. AO sprites are just animated images, so the result
-works natively. The **Animate** tab has two modes (toggle at the top):
+works natively. The **Animate** tab has three modes (toggle at the top):
 
 - **Effects** — one-click procedural motion/effects (below).
+- **Mouth** — a **talking mouth** faked from one drawing (jump to
+  [Mouth](#7a-mouth)).
 - **Frames** — classic **frame-by-frame**: pick existing sprites *as frames* and
-  stitch them into one animation (jump to [Frame-by-frame](#7a-frame-by-frame)).
+  stitch them into one animation (jump to [Frame-by-frame](#7b-frame-by-frame)).
 
 ### Effects mode
 
@@ -257,7 +289,29 @@ works natively. The **Animate** tab has two modes (toggle at the top):
    (it's a bulk write), renders each sprite **in the background** so the app
    stays responsive, and reports how many came out WebP vs APNG.
 
-<a name="7a-frame-by-frame"></a>
+<a name="7a-mouth"></a>
+### Mouth mode (talking lip-sync, no extra art)
+
+Make a character's mouth **move while they talk** from a *single* drawing — no
+mouth shapes to draw. Switch **Animate → Mouth**:
+
+1. Select an emote (Emotes tab). Its sprite loads with a **pink mouth box**
+   already placed on the face, and the preview **loops, talking**.
+2. **Drag the box onto the lips** using the sliders:
+   - **Mouth X / Mouth Y** — move it. **Width / Height** — resize it.
+   - **Open amount** — how far the jaw drops (subtle ↔ wide).
+   - **Frames / Speed** — length and pace of the talk loop.
+   - **Auto-place on face** re-centres the box if you lose it.
+3. Watch the preview until it looks right, then **Save as (b) talk** (or the moon
+   icon for **(a) idle**). Saved as **animated WebP** (APNG fallback), added to
+   your project *and* downloaded.
+4. **Talking mouth on ALL sprites** gives your *whole cast* a face-placed talking
+   mouth in one click (baked across all CPU cores).
+
+Already drew real mouth shapes? You can feed a closed+open sprite or several
+visemes instead — see [LIPSYNC.md](LIPSYNC.md).
+
+<a name="7b-frame-by-frame"></a>
 ### Frames mode (frame-by-frame)
 
 Already have the frames drawn? Switch **Animate → Frames** and assemble them:
@@ -278,8 +332,9 @@ Already have the frames drawn? Switch **Animate → Frames** and assemble them:
    icon for **(a) idle**). It's added to your project *and* downloaded as
    **animated WebP** (APNG fallback). You need **at least 2 frames** to save.
 
-**Move just a hand/limb, lip-sync, or hand-author keyframes** are supported too —
-see [ANIMATION.md](ANIMATION.md) (regions, `LipSync`, the keyframe `Timeline`).
+**Move just a hand/limb or hand-author keyframes** are supported too — see
+[ANIMATION.md](ANIMATION.md) (regions, the keyframe `Timeline`). For talking
+mouths see [Mouth mode](#7a-mouth) above and [LIPSYNC.md](LIPSYNC.md).
 
 ---
 
@@ -508,12 +563,19 @@ Full details: **[THEME_MAKER.md](THEME_MAKER.md)**.
 
 ## 13. Common workflows
 
-**Make a character from a folder of images**
-Home → Import → (check the Validation card) → Export .zip. That's the whole job.
+**Make a character from a folder of images (the fastest way)**
+Home → **⚡ One-Click: folder → finished character**. Done — WebP sprites, ini,
+buttons and char_icon, packaged. (Manual route: Import → check Validation →
+Export .zip.)
 
 **Make a recoloured OC variant**
 Import the base → Colour Lab → "Make it `<colour>`" or sliders → **All sprites**
 → change the **Character name** on Home → Export .zip.
+
+**Give a character a talking mouth (no extra art)**
+Select the emote → **Animate → Mouth** → drag the pink box onto the lips (watch
+the preview talk) → **Save as (b) talk**. Do the whole cast at once with **Talking
+mouth on ALL sprites**. → Export.
 
 **Add a talking animation to a static sprite**
 Select the emote → Animate → preset like "Idle Breathe" (save as **(a)**) and/or

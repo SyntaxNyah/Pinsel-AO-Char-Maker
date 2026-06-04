@@ -20,13 +20,21 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
 ## ✨ What it does
 
 ### Automate everything (optional)
+- **⚡ One-click character.** The headline shortcut: pick a folder and get a
+  ready-to-drop `.zip` — auto `char.ini`, sprites converted to **WebP**, emote
+  **buttons** + **char_icon**, all in one go. (Already have a project open?
+  **Finish & export everything** does the same without re-importing.)
+  ([docs](docs/ONE_CLICK.md))
 - **Folder → character.** Scans a folder of images, detects `(a)`/`(b)`/`(c)`
   idle/talk/post sprites, static sprites, sub-folder sprites, preanimations, and
-  animation formats — then writes a correct `char.ini` for you.
+  animation formats — then writes a correct `char.ini`, **named after the folder**.
+  **Import starts fresh** (it clears the previous project — no more old emotes
+  sneaking back in), and **Start over** wipes everything when you want a clean slate.
 - **Update an existing character.** Already have a character (or one you
   imported)? **Add sprites / Add sprite folder** drops new images straight in and
   turns each new sprite into a new emote — keeping your existing `char.ini`,
-  emotes and edits. Grow a character instead of rebuilding it.
+  emotes and edits. Grow a character instead of rebuilding it. Trim a big cast
+  fast with **multi-select** in the Emotes tab (tick rows → delete many at once).
 - **Auto folders + file moving.** Builds the character folder, an `emotions/`
   folder, and lays everything out the way AO expects.
 - **Auto buttons + char_icon.** Generates `buttonN_off.png` for every emote
@@ -86,11 +94,15 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
   canvas) and exports it — no procedural effect required.
 - **Animate ALL sprites at once** — one button bakes your effect stack onto
   *every* sprite, saving each as an animated WebP `(b)` talk sprite. Give a whole
-  character the same idle sway/breathe in a single click.
+  character the same idle sway/breathe in a single click. Baked across **all CPU
+  cores**.
 - **Animate just a part** — pick a region to wave a hand or spin a limb.
-- **Lip-sync** — give it a mouth-closed + mouth-open sprite (or several visemes)
-  and it builds the talking `(b)` animation; a rough one-sprite auto mode exists
-  too.
+- **Talking mouths (lip-sync), zero extra art** — the **Mouth** tab fakes a
+  natural, looping talking `(b)` animation from a *single* drawing: a face-placed
+  mouth box drops the jaw with a speech-like cadence. **Preview it live and drag
+  the box onto the lips**, tune the open amount/speed, then save — or give your
+  **whole cast** talking mouths in one click. Already drew mouth shapes? Feed it a
+  closed+open sprite (or several visemes) instead. ([docs](docs/LIPSYNC.md))
 - **~88 stackable effects** and a **custom keyframe timeline** for full control.
 - Exports as **animated WebP** by default (bundled libwebp on desktop/mobile;
   browser-native on web), auto-falling back to APNG where WebP isn't available —
@@ -190,8 +202,11 @@ platform via [`.github/workflows/build.yml`](.github/workflows/build.yml).
 | [docs/WEBSITE.md](docs/WEBSITE.md) | Host it as a website (GitHub Pages, Netlify, …) |
 | [docs/CHAR_INI_FORMAT.md](docs/CHAR_INI_FORMAT.md) | Complete AO `char.ini` reference |
 | [docs/AUTO_BUILD.md](docs/AUTO_BUILD.md) | How folder → character works |
+| [docs/ONE_CLICK.md](docs/ONE_CLICK.md) | ⚡ One-click: folder → finished, exported character |
 | [docs/COLOR_OPS.md](docs/COLOR_OPS.md) | Every colour operation + parameters |
 | [docs/ANIMATION.md](docs/ANIMATION.md) | Recipes, easing, timeline, lip-sync, regions |
+| [docs/LIPSYNC.md](docs/LIPSYNC.md) | Talking mouths from one drawing (preview + adjust) |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | GPU previews + multi-core baking |
 | [docs/MIXER.md](docs/MIXER.md) | Snip, stack & link sprites (mouse-driven; multi-snip + layers) |
 | [docs/SPRITE_RIPPER.md](docs/SPRITE_RIPPER.md) | Slice sprite sheets into sprites (auto-detect / grid) |
 | [docs/THEME_MAKER.md](docs/THEME_MAKER.md) | Design & export an AO2 client theme (drag layout, random, custom images) |

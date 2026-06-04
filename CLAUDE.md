@@ -147,8 +147,8 @@ The central model.
 
 ### core/history.dart
 - `class EditHistory({limit=100})` — `.seed(c)`, `.push(c)`, `.undo()`→Character?,
-  `.redo()`→Character?, `.canUndo`, `.canRedo`, `.depth`. Snapshot-based (stores
-  serialised ini strings).
+  `.redo()`→Character?, `.canUndo`, `.canRedo`, `.depth`, **`.clear()`** (reset).
+  Snapshot-based (stores serialised ini strings).
 
 ### discovery/sprite_scanner.dart
 - `enum SpriteState { idle, talk, post, staticImage }`.
@@ -193,7 +193,11 @@ The central model.
   `.organize(...)` (plan+execute one-shot). Copies files, writes ini, renders
   buttons + `char_icon.png`. `iconRenderer` falls back to `buttonRenderer`; set
   it when the icon needs a different (or no) border. Existing buttons/icon are
-  kept unless `overwriteExistingButtons`.
+  kept unless `overwriteExistingButtons`. **`execute` yields (`await
+  Future.delayed(Duration.zero)`) between buttons** — button rendering is sync
+  CPU on the UI isolate, so a big cast (100 emotes, or bulk-folders) would
+  otherwise block long enough that the OS marks the app "not responding" and the
+  user force-quits (looked like a crash).
 
 ### imaging/codecs.dart
 - `Codecs.decode(bytes,{ext})`, `.decodeFirstFrame(...)`, `.isAnimatedExt`,
@@ -220,6 +224,23 @@ The central model.
   skips alpha==0 pixels. Ops needing neighbours (chromaShift, sharpen, blur)
   clone first. **outline/dropShadow/glow are spatial** — they clone first AND
   deliberately write into the transparent halo (they don't use `_eachPixel`).
+
+### imaging/color_matrix.dart  ← GPU live-preview matrix
+- `ColorMatrix.tryBuild(List<ColorOp>)` → 20-value `ColorFilter.matrix` list
+  (row-major 4×5, 0–255 channels) **or `null`** if any op isn't an exact linear
+  transform. Powers the Colour Lab GPU preview (the UI lays a `ColorFilter` over
+  the base sprite; falls back to the CPU bake when null). `supportedTypes`:
+  brightness, contrast, exposure, invert, grayscale, sepia, temperature, tint,
+  solidColor, opacity. Exact (luma weights match `ImageOps._luma`), so the
+  preview equals what "Apply" bakes. `identity`, `supports(op)`. Exposed via
+  `AppState.liveColorMatrix(pipeline)`. See docs/PERFORMANCE.md.
+
+### imaging/parallel.dart  ← multi-core scheduler
+- `mapParallel<T,R>(items, task, {concurrency, onProgress})` — pure-Dart windowed
+  runner: keeps `concurrency` `task` futures in flight, **preserves input order**.
+  Doesn't spawn isolates itself (the `task` chooses `compute` vs inline), so it's
+  web-safe + unit-tested. Drives `bulkAnimateAll`/`bulkMouthTalkAll` (one
+  `compute` per in-flight sprite = true multi-core). See docs/PERFORMANCE.md.
 
 ### imaging/region_edit.dart  ← outfit/region editing
 - `class SelectionMask(w,h)` / `.full(w,h)` — `.get/.set`, `.invert`,
@@ -361,10 +382,19 @@ The central model.
 - `class Timeline(keyframes)` — `.specAt(t)`, `.render(base,{frames,fps})`,
   `.toJson/fromJson`.
 
-### animation/lipsync.dart
-- `LipSync.twoState(closed,open,{closedCentis,openCentis})`,
-  `.fromVisemes(list,{perFrameCentis,pingPong})`,
-  `.auto(base,{mouth,openAmount,frames,fps})` (procedural jaw-drop).
+### animation/lipsync.dart  ← talking mouths (see docs/LIPSYNC.md)
+- **`LipSync.talk(base,{mouth,openAmount,frames,fps})`** — the headline path: a
+  natural, **seamless-looping** talking clip faked from ONE sprite by dropping
+  the jaw inside `mouth` with a harmonic, speech-like cadence
+  (`talkOpenness(t)`). Clones internally (never mutates the source).
+- `LipSync.defaultMouthRegion(image)` — face-derived mouth box (uses
+  `ButtonMaker.headSquare`, lower-third of the head). `defaultOpenAmount`=0.32.
+- `LipSync.twoState(closed,open,...)`, `.fromVisemes(list,...)` (real mouth art),
+  `.auto(base,...)` (original single-pulse jaw-drop, kept for back-compat).
+- `class MouthRegion(x,y,w,h)` — the box as **fractions** 0..1; `.toPixels(w,h)`,
+  `.copyWith`, `MouthRegion.defaultFor(image)`. Surfaced in the Animation
+  Studio's **Mouth** tab (live preview + adjustable box) and `AppState`
+  (`previewMouthTalk`/`saveMouthTalk`/`bulkMouthTalkAll`/`defaultMouthRegionFor`).
 
 ### theme/ao2_theme.dart  ← AO2 client theme model
 - The real AO2 theme format (Qt `QSettings` flat INIs): design = `name = x,y,w,h`,
@@ -412,9 +442,23 @@ The central model.
   `MemoryWorkspace` (web/tests; `.put`, `.snapshot`), `IoWorkspace` (native).
   Get one via `createLocalWorkspace(root)` from `workspace_factory.dart`.
 - `saveBytes(name,bytes)` (`save_file.dart`) — native dialog / web download.
+- `cpuCount` (`cpu.dart`) — logical core count (native `Platform.numberOfProcessors`
+  / web `navigator.hardwareConcurrency`); seam behind `cpu_io`/`cpu_web`. Feeds
+  `AppState.maxConcurrency` for multi-core bulk baking.
 - `pickFolderFiles()` (`folder_picker.dart`) — pick a whole folder (recursive);
-  native dir dialog, web `<input webkitdirectory>`. Returns `(name, bytes)` per
-  file with sub-folder paths preserved.
+  native dir dialog, web `<input webkitdirectory>`. Returns a **`PickedFolder`**
+  record `({String? folderName, List<PickedFolderFile> files})` — `folderName`
+  (basename on native / first path segment on web) is used to auto-name the
+  character. **Hardened** against folder-scan crashes: `followLinks: false`
+  (no symlink/junction-cycle hangs), per-file try/catch (skip unreadable), and a
+  64 MB per-file size cap (skip videos/PSDs) — **no extension filter** (char.ini
+  + audio must survive). Callers use `picked.files` / `picked.folderName`.
+- `logCrash(text)` / `crashLogPath` (`error_log.dart`) — append to
+  `pinsel_crash.log` next to the exe (native; falls back to temp/cwd) or the dev
+  console (web). Wired in `main.dart` via `runZonedGuarded` + `FlutterError.onError`
+  so an unreproducible crash in a built app becomes a sendable stack trace
+  (can't catch a hard OOM/native segfault, but catches every Dart exception).
+- `MemoryWorkspace.clear()` — drop all files (used by fresh import + reset).
 
 ### ui/
 - `AppState extends ChangeNotifier` (`ui/app_state.dart`) — the hub the screens
@@ -433,6 +477,27 @@ The central model.
   via `BulkFolders.split`, builds/organises each in a throwaway workspace using
   the studio settings, never touching the open project). Read it before adding a
   screen.
+  - **Talking mouths**: `previewMouthTalk(mouth,…)` (live loop), `saveMouthTalk(mouth,
+    {prefix,…})` (one sprite), **`bulkMouthTalkAll({…})`** (every sprite, auto mouth
+    per face), `defaultMouthRegionFor(rel)` + `currentSpriteAspect()` seed the Mouth
+    tab. `MouthRegion` (fractions). See docs/LIPSYNC.md.
+  - **One-click `autoMagicExport({convertToWebp})`**: convert→WebP (lossless,
+    delete originals, refresh `scan` **without** rebuilding the character so edits
+    survive) → ini + buttons + icon → export `.zip`. Home: "One-Click: folder →
+    finished character" / "Finish & export everything". See docs/ONE_CLICK.md.
+  - **Performance**: `useAllCores`/`setUseAllCores`, `cpuCores`, `maxConcurrency`
+    (`min(cores,8)`, or 1). `bulkAnimateAll`/`bulkMouthTalkAll` fan out via
+    `mapParallel` (one `compute` per in-flight sprite). `liveColorMatrix(pipeline)`
+    → GPU `ColorFilter` for the Colour Lab. See docs/PERFORMANCE.md.
+  - **Fresh import / reset / multi-delete**: `importFiles({projectName})` now
+    **clears the workspace first** (`_clearWorkspaceFiles`) so a second import
+    doesn't accumulate the previous character's sprites (the "Ebina emotes
+    returned" bug), and names the auto-built character after the picked folder
+    (`projectName` → `_buildConfigNamed`, sanitised by `_cleanProjectName`).
+    `resetProject()` wipes everything (workspace/character/scan/history/previews/
+    mix parts) — settings kept; surfaced as Home "Start over" + the toolbar ↻.
+    `deleteEmotes(Set<int>)` removes many emotes in one undo step (Emotes-tab
+    multi-select). `addSprites` still *grows* the current character.
   - **Export plumbing is shared**: `buildOutput` and `bulkBuildCharacters` both go
     through `_studioOrganizer()` (button/icon renderers capturing the current
     offsets+overlays) and `_studioConfig(targetCharDir:)` (size/framing/zoom/icon
@@ -476,11 +541,21 @@ The central model.
   - `color_lab`: sliders + blendable presets/gradients + a **custom colour**
     section — inline hex field and a `flutter_colorpicker` hue-wheel dialog
     (`hexInputBar`, HEX/RGB/HSV labels); picks become `colorize`/`tint`/
-    `solidColor`/`gradientMap` ops on the blend stack.
-  - `animation_studio`: two modes via a `SegmentedButton` — **Effects**
-    (procedural recipes; includes **Animate ALL sprites** → `bulkAnimateAll`) and
-    **Frames** (frame-by-frame: pick/reorder sprite frames, fps/reverse/ping-pong/
-    align, save). Both share the debounced render + `ValueNotifier` playback loop.
+    `solidColor`/`gradientMap` ops on the blend stack. **GPU live preview**: when
+    the whole pipeline is matrix-representable (`liveColorMatrix`), it shows the
+    base sprite under a `ColorFilter.matrix` (instant, compositor-side, "GPU"
+    badge) instead of the CPU bake; HSV/curve/spatial ops fall back to the CPU
+    preview. `_baseBytes` is the plain sprite (reloaded after Apply); the GPU
+    filter is applied to the image only (via `CheckerImage.colorFilter`), never
+    the checker.
+  - `animation_studio`: **three** modes via a `SegmentedButton<_StudioMode>` —
+    **Effects** (procedural recipes; **Animate ALL sprites** → `bulkAnimateAll`),
+    **Mouth** (talking lip-sync: a face-placed, draggable mouth box overlaid on a
+    looping preview — X/Y/W/H + open amount + frames/fps; **Save (b)/(a)** →
+    `saveMouthTalk`, **all sprites** → `bulkMouthTalkAll`; seeds via
+    `_ensureMouthSeed`/`defaultMouthRegionFor`/`currentSpriteAspect`), and
+    **Frames** (frame-by-frame: pick/reorder, fps/reverse/ping-pong/align, save).
+    All share the debounced render + `ValueNotifier` playback loop.
   - `ini_builder`: dedicated **char.ini `[Options]` editor** — name, showname,
     needs_showname (tri-state), side, blips, chat, category, scaling, stretch,
     effects, realization; preserves imported `extra` keys. Same no-lag pattern as
@@ -488,6 +563,10 @@ The central model.
   - `editor` (Emotes): **typing no longer notifies per keystroke** — fields write
     to the model + commit on blur/submit; the preview is a cached `_SpritePreview`
     keyed on `rel`+`spriteRevision` (was: a 1024px re-encode on every keystroke).
+    The list (`_EmoteListState`) has **multi-select** (per-row checkboxes + an
+    All/None + **Delete (N)** bar → `deleteEmotes`) and **auto-scrolls** to the
+    selected emote when it changes externally (keyboard `Ctrl+↑/↓`) via a
+    `ScrollController` + estimated row extent.
   - `button_studio`: **Button & Icon Studio** — framing (Head/face default vs Full
     body), size, face zoom (0.25–4×), crop **Move X/Y** offsets (±100%), and
     **overlays** (a KFO-style border on top + a background) for **both** buttons
@@ -542,8 +621,9 @@ The central model.
     docs/THEME_MAKER.md.
 - `app.dart` (`HomeShell`) hosts a global `CallbackShortcuts` map (undo/redo,
   import/export, add emote, prev/next emote, `Ctrl/⌘+1..9` screen jumps, F1 help)
-  and a `_TopBar` with undo/redo + import/export + **About/credits** (ℹ) buttons
-  (gated on `AppState.canUndo`/`canRedo`/`hasProject` via a `Selector`). The nav
+  and a `_TopBar` with undo/redo + import/export + **Start-over ↻** (reset, gated
+  on `hasProject`, confirm dialog → `resetProject`) + **About/credits** (ℹ)
+  buttons (gated on `AppState.canUndo`/`canRedo`/`hasProject` via a `Selector`). The nav
   now has a **Character** destination at index 1 (the ini builder), plus
   **Ripper** and **Theme** at the end (both project-independent). The no-project
   guard uses the `_projectFreeIndices` set (`{Home, Plugins, Ripper, Theme}`)

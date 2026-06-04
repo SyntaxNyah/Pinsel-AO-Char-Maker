@@ -39,6 +39,12 @@ class _ColorLabScreenState extends State<ColorLabScreen> {
   final ValueNotifier<Uint8List?> _preview = ValueNotifier<Uint8List?>(null);
   Timer? _debounce;
   Widget? _chipsCache;
+
+  /// Plain (no-pipeline) bytes of the current sprite, kept so the GPU preview
+  /// path can filter them live on the compositor. [_baseRel] tracks which sprite
+  /// they belong to so they reload when the sprite (or its pixels) change.
+  Uint8List? _baseBytes;
+  String? _baseRel;
   Color _picked = const Color(0xFFFF5577);
   late final TextEditingController _hexCtrl =
       TextEditingController(text: _hex6(_picked));
@@ -94,6 +100,12 @@ class _ColorLabScreenState extends State<ColorLabScreen> {
       _preview.value = null;
       return;
     }
+    // Load (or reload) the plain base bytes for the GPU preview path.
+    if (_baseRel != rel || _baseBytes == null) {
+      _baseRel = rel;
+      final Uint8List? base = await app.previewSprite(rel);
+      if (mounted) setState(() => _baseBytes = base);
+    }
     final Uint8List? bytes = await app.previewWithPipeline(rel, _pipeline);
     if (mounted) _preview.value = bytes;
   }
@@ -124,8 +136,10 @@ class _ColorLabScreenState extends State<ColorLabScreen> {
     if (_pipeline.isEmpty) return;
     app.setLivePipeline(_pipeline);
     await app.applyPipeline(allSprites: allSprites);
-    // The look is now baked into the sprite(s); clear the live stack so the
-    // preview shows the result instead of re-applying on top.
+    // The look is now baked into the sprite(s); reload the base bytes (the
+    // pixels changed) and clear the live stack so the preview shows the result
+    // instead of re-applying on top.
+    _baseRel = null;
     _reset();
   }
 
@@ -143,10 +157,7 @@ class _ColorLabScreenState extends State<ColorLabScreen> {
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: hasSprite
-                ? ValueListenableBuilder<Uint8List?>(
-                    valueListenable: _preview,
-                    builder: (_, Uint8List? b, __) => ZoomCanvas(bytes: b),
-                  )
+                ? _previewArea(app)
                 : const Center(
                     child: Text('Select an emote (Emotes tab) to recolour it.')),
           ),
@@ -154,6 +165,32 @@ class _ColorLabScreenState extends State<ColorLabScreen> {
         const VerticalDivider(width: 1),
         SizedBox(width: 360, child: _controls()),
       ],
+    );
+  }
+
+  /// The preview. When the whole live pipeline is an exact linear transform we
+  /// filter the base sprite **on the GPU** (a `ColorFilter` matrix) for instant,
+  /// per-frame-free feedback; otherwise we fall back to the CPU-baked preview
+  /// (HSV ops, gradient maps, blurs, …). The result is always faithful — "Apply"
+  /// bakes the same pipeline on the CPU either way.
+  Widget _previewArea(AppState app) {
+    final List<double>? matrix = app.liveColorMatrix(_pipeline);
+    if (matrix != null && _baseBytes != null) {
+      return Stack(
+        children: <Widget>[
+          Positioned.fill(
+            child: ZoomCanvas(
+              bytes: _baseBytes,
+              colorFilter: ColorFilter.matrix(matrix),
+            ),
+          ),
+          const Positioned(top: 10, right: 10, child: _GpuBadge()),
+        ],
+      );
+    }
+    return ValueListenableBuilder<Uint8List?>(
+      valueListenable: _preview,
+      builder: (_, Uint8List? b, __) => ZoomCanvas(bytes: b),
     );
   }
 
@@ -378,6 +415,33 @@ class _ColorLabScreenState extends State<ColorLabScreen> {
           },
         ),
       ],
+    );
+  }
+}
+
+/// A little "GPU" pill shown while the preview is being rendered live on the
+/// compositor (a colour-matrix filter) rather than CPU-baked.
+class _GpuBadge extends StatelessWidget {
+  const _GpuBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xCC1B5E20),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF66BB6A)),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(Icons.bolt_rounded, size: 14, color: Color(0xFFB9F6CA)),
+          SizedBox(width: 3),
+          Text('GPU live preview',
+              style: TextStyle(fontSize: 11, color: Color(0xFFB9F6CA))),
+        ],
+      ),
     );
   }
 }

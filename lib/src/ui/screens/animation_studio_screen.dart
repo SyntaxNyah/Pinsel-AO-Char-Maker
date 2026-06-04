@@ -6,10 +6,14 @@ import 'package:provider/provider.dart';
 
 import '../../animation/anim_engine.dart';
 import '../../animation/easing.dart';
+import '../../animation/lipsync.dart';
 import '../../plugins/extension_registry.dart';
 import '../../presets/presets.dart';
 import '../app_state.dart';
 import '../widgets/checker_image.dart';
+
+/// The three studio workflows.
+enum _StudioMode { effects, mouth, frames }
 
 /// Animation studio with two modes:
 ///  * **Effects** — one-click procedural recipes (sway, glow, …), stackable.
@@ -28,7 +32,7 @@ class AnimationStudioScreen extends StatefulWidget {
 
 class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
   // shared
-  bool _frameMode = false;
+  _StudioMode _mode = _StudioMode.effects;
   int _fps = 12;
 
   // effects mode
@@ -37,6 +41,13 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
   String _ease = 'linear';
   Widget? _presetChips;
   Widget? _effectChips;
+
+  // mouth (lip-sync) mode
+  MouthRegion _mouth = const MouthRegion(0.32, 0.40, 0.36, 0.07);
+  double _openAmount = LipSync.defaultOpenAmount;
+  int _mouthFrames = 8;
+  double? _mouthAspect; // selected sprite w/h, for the region overlay box
+  String? _mouthSeededRel; // sprite the auto mouth box was last seeded for
 
   // frames mode
   final List<String> _seq = <String>[];
@@ -76,9 +87,13 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
   Future<void> _render() async {
     final AppState app = context.read<AppState>();
     final List<Uint8List> imgs;
-    if (_frameMode) {
+    if (_mode == _StudioMode.frames) {
       imgs = await app.renderFrameSequence(_seq,
           fps: _fps, reverse: _reverse, pingPong: _pingPong, align: _align);
+    } else if (_mode == _StudioMode.mouth) {
+      await _ensureMouthSeed(app);
+      imgs = await app.previewMouthTalk(_mouth,
+          frames: _mouthFrames, fps: _fps, openAmount: _openAmount);
     } else {
       final int n = _recipes.isEmpty ? 1 : _frames;
       imgs = await app.renderAnimationPreview(_recipes, frames: n, fps: _fps);
@@ -167,8 +182,9 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
     _presetChips ??= _buildPresetChips();
     _effectChips ??= _buildEffectChips();
 
-    final bool empty = _frameMode ? _seq.isEmpty : app.current == null;
-    final String emptyMsg = _frameMode
+    final bool empty =
+        _mode == _StudioMode.frames ? _seq.isEmpty : app.current == null;
+    final String emptyMsg = _mode == _StudioMode.frames
         ? 'Add frames on the right →'
         : 'Select an emote to animate it.';
 
@@ -185,23 +201,11 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
                       ? Center(child: Text(emptyMsg))
                       : ClipRRect(
                           borderRadius: BorderRadius.circular(12),
-                          child: ValueListenableBuilder<int>(
-                            valueListenable: _frameIdx,
-                            builder: (_, int idx, __) {
-                              final Uint8List? b = _frameImgs.isEmpty
-                                  ? null
-                                  : _frameImgs[idx % _frameImgs.length];
-                              return CheckerImage(bytes: b);
-                            },
-                          ),
+                          child: _previewContent(),
                         ),
                 ),
                 const SizedBox(height: 8),
-                Text(_frameMode
-                    ? '${_seq.length} frame(s)  ·  ${_frameImgs.length} shown'
-                    : _recipes.isEmpty
-                        ? 'No effects yet — pick a preset or add effects →'
-                        : 'Stack: ${_recipes.map((AnimRecipe r) => r.type).join(" + ")}'),
+                Text(_statusLine()),
               ],
             ),
           ),
@@ -212,25 +216,98 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
     );
   }
 
+  String _statusLine() {
+    switch (_mode) {
+      case _StudioMode.frames:
+        return '${_seq.length} frame(s)  ·  ${_frameImgs.length} shown';
+      case _StudioMode.mouth:
+        return 'Talking mouth preview — drag the box onto the lips →';
+      case _StudioMode.effects:
+        return _recipes.isEmpty
+            ? 'No effects yet — pick a preset or add effects →'
+            : 'Stack: ${_recipes.map((AnimRecipe r) => r.type).join(" + ")}';
+    }
+  }
+
+  /// The looping preview. In Mouth mode it overlays the adjustable mouth box
+  /// (aligned to the sprite via [_mouthAspect]) so you can see exactly what's
+  /// being animated and nudge it onto the lips.
+  Widget _previewContent() {
+    return ValueListenableBuilder<int>(
+      valueListenable: _frameIdx,
+      builder: (_, int idx, __) {
+        final Uint8List? b =
+            _frameImgs.isEmpty ? null : _frameImgs[idx % _frameImgs.length];
+        if (_mode != _StudioMode.mouth || _mouthAspect == null) {
+          return CheckerImage(bytes: b);
+        }
+        return Center(
+          child: AspectRatio(
+            aspectRatio: _mouthAspect!,
+            child: LayoutBuilder(
+              builder: (_, BoxConstraints c) {
+                final double w = c.maxWidth, h = c.maxHeight;
+                return Stack(
+                  children: <Widget>[
+                    Positioned.fill(
+                        child: CheckerImage(bytes: b, fit: BoxFit.fill)),
+                    Positioned(
+                      left: (_mouth.x * w).clamp(0.0, w),
+                      top: (_mouth.y * h).clamp(0.0, h),
+                      width: (_mouth.w * w).clamp(1.0, w),
+                      height: (_mouth.h * h).clamp(1.0, h),
+                      child: const IgnorePointer(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Color(0x22FF4081),
+                            border: Border.fromBorderSide(
+                                BorderSide(color: Color(0xFFFF4081), width: 2)),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _controls(AppState app) {
     return ListView(
       padding: const EdgeInsets.all(12),
       children: <Widget>[
-        SegmentedButton<bool>(
-          segments: const <ButtonSegment<bool>>[
-            ButtonSegment<bool>(
-                value: false, label: Text('Effects'), icon: Icon(Icons.auto_awesome)),
-            ButtonSegment<bool>(
-                value: true, label: Text('Frames'), icon: Icon(Icons.burst_mode_outlined)),
+        SegmentedButton<_StudioMode>(
+          showSelectedIcon: false,
+          segments: const <ButtonSegment<_StudioMode>>[
+            ButtonSegment<_StudioMode>(
+                value: _StudioMode.effects,
+                label: Text('Effects'),
+                icon: Icon(Icons.auto_awesome)),
+            ButtonSegment<_StudioMode>(
+                value: _StudioMode.mouth,
+                label: Text('Mouth'),
+                icon: Icon(Icons.record_voice_over_outlined)),
+            ButtonSegment<_StudioMode>(
+                value: _StudioMode.frames,
+                label: Text('Frames'),
+                icon: Icon(Icons.burst_mode_outlined)),
           ],
-          selected: <bool>{_frameMode},
-          onSelectionChanged: (Set<bool> s) {
-            setState(() => _frameMode = s.first);
+          selected: <_StudioMode>{_mode},
+          onSelectionChanged: (Set<_StudioMode> s) {
+            setState(() => _mode = s.first);
             _schedule();
           },
         ),
         const SizedBox(height: 12),
-        if (_frameMode) ..._frameControls(app) else ..._effectControls(app),
+        ...switch (_mode) {
+          _StudioMode.frames => _frameControls(app),
+          _StudioMode.mouth => _mouthControls(app),
+          _StudioMode.effects => _effectControls(app),
+        },
       ],
     );
   }
@@ -426,6 +503,180 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
   }
 
   String _leaf(String rel) => rel.split('/').last;
+
+  // ===========================================================================
+  // Mouth (lip-sync) mode
+  // ===========================================================================
+  List<Widget> _mouthControls(AppState app) {
+    return <Widget>[
+      Text('Talking mouth', style: Theme.of(context).textTheme.titleMedium),
+      const Text(
+        'Fake a talking (b) animation from this one drawing — no extra art '
+        'needed. The pink box is the mouth: the jaw drops there with a natural, '
+        'looping cadence. Watch the preview loop and nudge the box onto the lips.',
+        style: TextStyle(fontSize: 12, color: Colors.white60),
+      ),
+      const SizedBox(height: 8),
+      OutlinedButton.icon(
+        onPressed: () => _autoPlaceMouth(app),
+        icon: const Icon(Icons.center_focus_strong_outlined),
+        label: const Text('Auto-place on face'),
+      ),
+      const SizedBox(height: 4),
+      _mouthSlider('Mouth X', _mouth.x,
+          (double v) => _mouth = _mouth.copyWith(x: v)),
+      _mouthSlider('Mouth Y', _mouth.y,
+          (double v) => _mouth = _mouth.copyWith(y: v)),
+      _mouthSlider('Width', _mouth.w,
+          (double v) => _mouth = _mouth.copyWith(w: v),
+          min: 0.02, max: 0.9),
+      _mouthSlider('Height', _mouth.h,
+          (double v) => _mouth = _mouth.copyWith(h: v),
+          min: 0.01, max: 0.5),
+      const SizedBox(height: 4),
+      Text('Open amount: ${_openAmount.toStringAsFixed(2)}'),
+      Slider(
+        value: _openAmount.clamp(0.05, 0.8),
+        min: 0.05,
+        max: 0.8,
+        onChanged: (double v) {
+          setState(() => _openAmount = v);
+          _schedule();
+        },
+      ),
+      Text('Frames: $_mouthFrames'),
+      Slider(
+        value: _mouthFrames.toDouble(),
+        min: 2,
+        max: 16,
+        divisions: 14,
+        onChanged: (double v) {
+          setState(() => _mouthFrames = v.round());
+          _schedule();
+        },
+      ),
+      _fpsSlider(),
+      const SizedBox(height: 8),
+      Row(children: <Widget>[
+        Expanded(
+          child: FilledButton.icon(
+            onPressed: app.current == null
+                ? null
+                : () => app.saveMouthTalk(_mouth,
+                    frames: _mouthFrames,
+                    fps: _fps,
+                    openAmount: _openAmount,
+                    prefix: '(b)'),
+            icon: const Icon(Icons.save_rounded),
+            label: const Text('Save as (b) talk'),
+          ),
+        ),
+        const SizedBox(width: 6),
+        IconButton(
+          tooltip: 'Save as (a) idle',
+          onPressed: app.current == null
+              ? null
+              : () => app.saveMouthTalk(_mouth,
+                  frames: _mouthFrames,
+                  fps: _fps,
+                  openAmount: _openAmount,
+                  prefix: '(a)'),
+          icon: const Icon(Icons.bedtime_outlined),
+        ),
+      ]),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: !app.hasProject ? null : () => _mouthAll(app),
+          icon: const Icon(Icons.auto_awesome_motion),
+          label: const Text('Talking mouth on ALL sprites'),
+        ),
+      ),
+      const Padding(
+        padding: EdgeInsets.only(top: 2),
+        child: Text(
+          'Gives every sprite its own face-placed talking mouth and saves each '
+          'as an animated WebP (b) sprite — baked across all CPU cores.',
+          style: TextStyle(fontSize: 11, color: Colors.white60),
+        ),
+      ),
+      const SizedBox(height: 24),
+    ];
+  }
+
+  Widget _mouthSlider(String label, double value, void Function(double) assign,
+      {double min = 0.0, double max = 1.0}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text('$label: ${(value * 100).round()}%'),
+        Slider(
+          value: value.clamp(min, max),
+          min: min,
+          max: max,
+          onChanged: (double v) {
+            setState(() => assign(v));
+            _schedule();
+          },
+        ),
+      ],
+    );
+  }
+
+  /// Reset the mouth box to the face-derived default for the current sprite.
+  Future<void> _autoPlaceMouth(AppState app) async {
+    final String? rel =
+        app.current == null ? null : app.spriteRelFor(app.current!);
+    if (rel == null) return;
+    final MouthRegion? region = await app.defaultMouthRegionFor(rel);
+    if (!mounted || region == null) return;
+    setState(() => _mouth = region);
+    _schedule();
+  }
+
+  /// Seed the mouth box + sprite aspect the first time we show a given sprite,
+  /// so the box starts on the face and the overlay is correctly proportioned.
+  Future<void> _ensureMouthSeed(AppState app) async {
+    final String? rel =
+        app.current == null ? null : app.spriteRelFor(app.current!);
+    if (rel == null) return;
+    if (_mouthSeededRel == rel && _mouthAspect != null) return;
+    final MouthRegion? region = await app.defaultMouthRegionFor(rel);
+    final double? aspect = await app.currentSpriteAspect();
+    if (!mounted) return;
+    setState(() {
+      if (region != null) _mouth = region;
+      _mouthAspect = aspect;
+      _mouthSeededRel = rel;
+    });
+  }
+
+  Future<void> _mouthAll(AppState app) async {
+    final int count = app.spriteBases().length;
+    final bool? go = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        title: const Text('Talking mouth on all sprites?'),
+        content: Text(
+          'Give all $count sprite(s) a face-placed talking mouth and save each '
+          'as an animated WebP (b) talk sprite, replacing any existing talk '
+          'sprite. Bakes at full resolution across all CPU cores.',
+        ),
+        actions: <Widget>[
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Do all')),
+        ],
+      ),
+    );
+    if (go != true) return;
+    await app.bulkMouthTalkAll(
+        frames: _mouthFrames, fps: _fps, openAmount: _openAmount, prefix: '(b)');
+  }
 
   // ===========================================================================
   // Effects mode

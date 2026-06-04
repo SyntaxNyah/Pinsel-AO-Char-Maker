@@ -98,26 +98,44 @@ returns how many sprites it animated, and the status line reports how many came
 out as WebP vs APNG (with the reason for any fallback).
 
 The heavy render+encode for each sprite runs **off the UI isolate** (via
-Flutter's `compute`, inline on web) so the app stays responsive instead of
-freezing. It stays **lossless** (`lossless: true` — bulk export must not degrade
-quality; responsiveness comes from the background isolate, not from dropping to
-lossy). Bulk uses the built-in effect recipes (plugin-registered recipe types
-aren't available in the worker isolate).
+Flutter's `compute`, inline on web) and fans out across **all CPU cores** — up to
+`maxConcurrency` sprites encode at once instead of one-at-a-time (toggle on Home,
+details in [PERFORMANCE.md](PERFORMANCE.md)). It stays **lossless**
+(`lossless: true` — bulk export must not degrade quality; responsiveness comes
+from the background isolates, not from dropping to lossy). Bulk uses the built-in
+effect recipes (plugin-registered recipe types aren't available in the worker
+isolate).
 
-## Lip-sync
+## Talking mouth / lip-sync
+
+The headline path needs **zero extra art**: from one drawing, Pinsel fakes a
+talking `(b)` animation by dropping the jaw inside a mouth box with a natural,
+**seamless-looping** cadence. Full guide: **[LIPSYNC.md](LIPSYNC.md)**.
+
+In the app: **Animate → Mouth**. A pink box marks the mouth (auto-placed on the
+face); the preview loops so you can **see it talking** and **adjust** the box
+(Mouth X/Y, Width, Height), the **Open amount**, frames and speed. Then **Save as
+(b) talk** / **(a) idle**, or **Talking mouth on ALL sprites** to do the whole
+cast at once (baked across all CPU cores — see [PERFORMANCE.md](PERFORMANCE.md)).
+
 ```dart
 import 'package:pinsel/src/animation/lipsync.dart';
 
-// Easiest: closed + open mouth sprites → a looping talking animation
+// Zero extra art: a natural, looping talking animation from ONE sprite.
+LipSync.talk(sprite, openAmount: 0.32, frames: 8, fps: 10);
+// (mouth box defaults to LipSync.defaultMouthRegion(sprite) — the face's lower
+// third — or pass your own IntRect.)
+
+// Already have mouth art? Closed + open → a looping talking animation:
 LipSync.twoState(closedImage, openImage);
-
-// Several mouth shapes (visemes), cycled naturally
+// Several mouth shapes (visemes), cycled naturally:
 LipSync.fromVisemes([closed, half, open], pingPong: true);
-
-// Zero extra art: rough procedural jaw-drop from a single sprite
-LipSync.auto(closedImage, openAmount: 0.35);
+// The original single-pulse jaw-drop is still available as LipSync.auto(...).
 ```
-Save the result as `(b)<sprite>.apng` and it becomes the talking animation.
+`AppState.previewMouthTalk(mouth, ...)` drives the live preview;
+`saveMouthTalk(mouth, {prefix, ...})` bakes one sprite; `bulkMouthTalkAll(...)`
+does every sprite (auto mouth per face). All save as animated WebP (APNG
+fallback) and drop into the project so they're exported.
 
 ## Manual keyframe timeline (advanced)
 ```dart

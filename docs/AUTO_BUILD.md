@@ -7,6 +7,14 @@ configuration — then lets you tweak any of its decisions. Sub-folder structure
 is preserved, and an existing `char.ini` in the folder is loaded losslessly
 instead of rebuilt.
 
+The character is **named after the imported folder** (so a folder `Hachiman` →
+`name = Hachiman`, not the generic `newchar`); rename it any time in the
+**Character** tab. **Import always starts a fresh project** — the previously
+imported sprites are cleared first, so importing a second folder never mixes the
+old character's emotes into the new one. To *grow* the current character instead,
+use **Add sprites / Add sprite folder**; to wipe to an empty project, use **Start
+over** (Home, or the ↻ toolbar button).
+
 ## The pipeline
 
 ```

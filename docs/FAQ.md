@@ -151,13 +151,46 @@ to switch screens, `F1` for the full list. See [SHORTCUTS.md](SHORTCUTS.md).
 
 **Recolour / bulk / animation feel slow or freeze — anything I can do?**
 It's a lot faster now: the per-pixel engine is allocation-free, live previews
-run on a downscaled copy, and bulk/recolour/edit jobs yield so the **progress
-bar updates** instead of the window freezing. The big one-off **bakes** (recolour
-ALL, convert ALL, animation export at full res) still take a moment on large
-sprite sets — watch the status bar. Tips: recolour the **selected emote** (just
-`Apply`) while dialling in a look, then do **All sprites** once; keep sprite
-dimensions reasonable; the native WebP encoder (desktop release / web) is much
-faster than the APNG fallback.
+run on a downscaled copy (the GPU even renders tonal previews), and
+bulk/recolour/edit/**button** jobs yield so the **progress bar updates** instead
+of the window freezing. Animate-all and talking-mouth-all bake across **all CPU
+cores** (toggle on Home → Performance). The big one-off **bakes** still take a
+moment on large sprite sets — watch the status bar. Tips: recolour the
+**selected emote** (just `Apply`) while dialling in a look, then do **All
+sprites** once; keep sprite dimensions reasonable; the native WebP encoder
+(desktop release / web) is much faster than the APNG fallback. See
+[PERFORMANCE.md](PERFORMANCE.md).
+
+**The app froze / "not responding" / crashed when exporting a big character (or
+bulk folders).** Generating buttons for a large cast (e.g. 100 emotes, or many
+characters at once) used to render every button back-to-back on the UI thread
+and could make the OS mark the window "not responding" — reopening it "fixed" it.
+That's fixed: button rendering now yields between buttons so the UI stays alive,
+folder scanning skips unreadable/huge files and symlink loops, and a global
+crash logger writes a stack trace to **`pinsel_crash.log`** (next to the `.exe`,
+or your temp folder) plus the browser console on web. If it still crashes, send
+that log — it turns "it crashes sometimes" into something fixable.
+
+**I imported another folder and the previous character's emotes came back!**
+Fixed. **Import** now starts a *fresh* project (the old sprites are cleared
+first) — it no longer accumulates onto the last import. Use **Add sprites / Add
+sprite folder** when you *want* to grow the current character, and **Start over**
+to wipe everything explicitly.
+
+**How do I reset / start over?**
+**Home → Start over** (or the ↻ button in the top toolbar). It clears the
+character, all imported sprites and edits back to an empty project (your
+Button/Studio settings are kept). It asks first — it can't be undone.
+
+**Can I delete lots of emotes at once?**
+Yes — in the **Emotes** tab, tick the checkboxes on the rows you want (or **All**),
+then **Delete (N)**. One undo step. Single rows still have their own trash icon.
+
+**The character name defaults to "newchar".**
+Import via **Import folder** (or **One-Click**) and the character is named after
+the folder automatically. You can still rename it in the **Character** tab. (Note:
+the export always reflects the name shown there — if an exported `char.ini` looks
+stale, make sure you're opening the freshly-exported file, not an older copy.)
 
 **Can it just play my frames in order (real frame-by-frame), not only effects?**
 Yes. **Animate → Frames**: tap sprites to add them as ordered frames, set
@@ -198,6 +231,7 @@ Author a JSON pack (see [PLUGINS.md](PLUGINS.md)) — it works on desktop, mobil
 **and** the web with no code.
 
 **It runs slowly on a huge sprite while dragging sliders.**
-The live preview is computed on a downscaled copy for speed; "Apply" then bakes
-at full resolution. Very large bulk jobs run sequentially today — isolate-based
-parallelism is on the roadmap.
+The live preview is computed on a downscaled copy for speed (tonal adjustments
+preview on the GPU); "Apply" then bakes at full resolution. Big bulk bakes
+(animate-all, talking-mouth-all) now fan out across **all CPU cores** — see
+[PERFORMANCE.md](PERFORMANCE.md).

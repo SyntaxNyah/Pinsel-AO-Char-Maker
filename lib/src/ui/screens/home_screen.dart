@@ -31,15 +31,18 @@ class HomeScreen extends StatelessWidget {
 
   Future<void> _importFolder(BuildContext context) async {
     final AppState app = context.read<AppState>();
-    final List<PickedFolderFile>? files = await pickFolderFiles();
-    if (files == null || files.isEmpty) return;
+    final PickedFolder? picked = await pickFolderFiles();
+    if (picked == null || picked.files.isEmpty) return;
+    // Fresh import — name the character after the picked folder.
     await app.importFiles(<PickedFile>[
-      for (final PickedFolderFile f in files) PickedFile(f.name, f.bytes),
-    ]);
+      for (final PickedFolderFile f in picked.files) PickedFile(f.name, f.bytes),
+    ], projectName: picked.folderName);
   }
 
   /// Add more sprite files to the **current** character (keeps existing emotes
-  /// and edits; only new sprite groups become new emotes).
+  /// and edits; only new sprite groups become new emotes). Now supports picking
+  /// **multiple** files at once (it always did) — drag-select or Ctrl/Shift-click
+  /// in the OS dialog.
   Future<void> _addSpriteFiles(BuildContext context) async {
     final AppState app = context.read<AppState>();
     final FilePickerResult? res = await FilePicker.platform.pickFiles(
@@ -58,10 +61,10 @@ class HomeScreen extends StatelessWidget {
   /// Add a whole folder of sprites to the **current** character.
   Future<void> _addSpriteFolder(BuildContext context) async {
     final AppState app = context.read<AppState>();
-    final List<PickedFolderFile>? files = await pickFolderFiles();
-    if (files == null || files.isEmpty) return;
+    final PickedFolder? picked = await pickFolderFiles();
+    if (picked == null || picked.files.isEmpty) return;
     await app.addSprites(<PickedFile>[
-      for (final PickedFolderFile f in files) PickedFile(f.name, f.bytes),
+      for (final PickedFolderFile f in picked.files) PickedFile(f.name, f.bytes),
     ]);
   }
 
@@ -71,18 +74,78 @@ class HomeScreen extends StatelessWidget {
   /// current Button & Icon Studio settings.
   Future<void> _bulkFolders(BuildContext context) async {
     final AppState app = context.read<AppState>();
-    final List<PickedFolderFile>? files = await pickFolderFiles();
-    if (files == null || files.isEmpty) return;
+    final PickedFolder? picked = await pickFolderFiles();
+    if (picked == null || picked.files.isEmpty) return;
     final int n = await app.bulkBuildCharacters(<PickedFile>[
-      for (final PickedFolderFile f in files) PickedFile(f.name, f.bytes),
+      for (final PickedFolderFile f in picked.files) PickedFile(f.name, f.bytes),
     ]);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        duration: const Duration(seconds: 6),
         content: Text(n > 0
             ? 'Built $n character(s) into one .zip — unzip into AO\'s characters/.'
-            : 'No character sub-folders with sprites found in that folder.'),
+            // On failure show the diagnostic status (which folders were detected /
+            // skipped / failed) so it's actionable, not a silent "nothing happened".
+            : app.status),
       ));
     }
+  }
+
+  /// **One-click: a folder of sprites → a finished, exported character.** Picks
+  /// a folder, imports it (auto char.ini + emotes), converts sprites to WebP,
+  /// generates buttons + char_icon, and downloads the ready-to-drop `.zip` — the
+  /// whole pipeline in a single action.
+  Future<void> _oneClickFolder(BuildContext context) async {
+    final AppState app = context.read<AppState>();
+    final PickedFolder? picked = await pickFolderFiles();
+    if (picked == null || picked.files.isEmpty) return;
+    await app.importFiles(<PickedFile>[
+      for (final PickedFolderFile f in picked.files) PickedFile(f.name, f.bytes),
+    ], projectName: picked.folderName);
+    final String? path = await app.autoMagicExport();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(path == null
+            ? 'Imported, but nothing to export — were there any sprites?'
+            : 'Finished character exported. Unzip into AO\'s characters/.'),
+      ));
+    }
+  }
+
+  /// One-click for the **already-loaded** project: convert → ini → buttons →
+  /// icon → export, no re-import.
+  Future<void> _finishEverything(BuildContext context) async {
+    final AppState app = context.read<AppState>();
+    await app.autoMagicExport();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Finished & exported — WebP sprites, buttons, icon, ini.'),
+      ));
+    }
+  }
+
+  /// Wipe the whole project and start over (confirmed — it's destructive).
+  Future<void> _reset(BuildContext context) async {
+    final AppState app = context.read<AppState>();
+    final bool? go = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        title: const Text('Start over?'),
+        content: const Text(
+            'Clear the current character, all imported sprites and edits, and '
+            'reset to an empty project? Your Button/Studio settings are kept. '
+            'This can\'t be undone.'),
+        actions: <Widget>[
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Reset')),
+        ],
+      ),
+    );
+    if (go == true) app.resetProject();
   }
 
   @override
@@ -104,6 +167,25 @@ class HomeScreen extends StatelessWidget {
         ),
         const SizedBox(height: 20),
 
+        // The headline shortcut: one button, finished character.
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: () => _oneClickFolder(context),
+            icon: const Icon(Icons.bolt_rounded),
+            label: const Text('One-Click: folder → finished character'),
+            style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16)),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Pick a folder of sprites and get a ready-to-drop character .zip — auto '
+          'char.ini, WebP sprites, buttons & char_icon, all in one go.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 16),
+
         Wrap(
           spacing: 12,
           runSpacing: 12,
@@ -124,6 +206,11 @@ class HomeScreen extends StatelessWidget {
               label: const Text('Bulk folders → characters'),
             ),
             if (app.hasProject) ...<Widget>[
+              FilledButton.icon(
+                onPressed: () => _finishEverything(context),
+                icon: const Icon(Icons.bolt_rounded),
+                label: const Text('Finish & export everything'),
+              ),
               FilledButton.tonalIcon(
                 onPressed: () => _addSpriteFiles(context),
                 icon: const Icon(Icons.add_photo_alternate_outlined),
@@ -143,6 +230,12 @@ class HomeScreen extends StatelessWidget {
                 onPressed: () => app.exportIni(),
                 icon: const Icon(Icons.description_outlined),
                 label: const Text('Export char.ini'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _reset(context),
+                icon: const Icon(Icons.restart_alt_rounded),
+                label: const Text('Start over'),
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
               ),
             ],
           ],
@@ -187,8 +280,56 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
+        _PerformanceCard(app: app),
+        const SizedBox(height: 12),
         const CreditsCard(),
       ],
+    );
+  }
+}
+
+/// "Advanced" performance controls: GPU-rendered previews are automatic
+/// (Flutter's compositor), and heavy bulk baking can fan out across every CPU
+/// core. A simple toggle lets the user dial that back if they'd rather keep the
+/// machine free.
+class _PerformanceCard extends StatelessWidget {
+  const _PerformanceCard({required this.app});
+  final AppState app;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(children: <Widget>[
+              const Icon(Icons.speed_rounded),
+              const SizedBox(width: 12),
+              Text('Performance', style: Theme.of(context).textTheme.titleMedium),
+            ]),
+            const SizedBox(height: 8),
+            Text(
+              'Live recolour previews run on the GPU (an exact colour matrix for '
+              'tonal adjustments). Heavy bulk jobs — animate-all, talking mouths, '
+              'recolour-all, convert — fan out across CPU cores.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 4),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text('Use all CPU cores (${app.cpuCores} detected)'),
+              subtitle: Text(app.useAllCores
+                  ? 'Bulk baking runs on up to ${app.maxConcurrency} cores at once.'
+                  : 'Bulk baking runs one job at a time.'),
+              value: app.useAllCores,
+              onChanged: app.setUseAllCores,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
