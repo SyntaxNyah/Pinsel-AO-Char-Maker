@@ -3,7 +3,7 @@
 Global shortcuts work from anywhere in the app. **Control** and **⌘ (Command)**
 are both bound, so the same keys work on Windows/Linux and macOS. Press **F1**
 in-app to pop up this list, and find the same actions as buttons on the **top
-toolbar** (undo / redo / import / export).
+toolbar** (undo / redo / import / export / **Start over ↻**).
 
 | Shortcut | Action |
 |----------|--------|
@@ -13,7 +13,7 @@ toolbar** (undo / redo / import / export).
 | `Ctrl/⌘ + S` | Export the character as a `.zip` |
 | `Ctrl/⌘ + E` | Export just `char.ini` |
 | `Ctrl/⌘ + N` | Add a new emote |
-| `Ctrl/⌘ + ↑` / `Ctrl/⌘ + ↓` | Select the previous / next emote |
+| `Ctrl/⌘ + ↑` / `Ctrl/⌘ + ↓` | Select the previous / next emote (the list auto-scrolls to it) |
 | `Ctrl/⌘ + 1 … 9` | Jump to a screen (1 = Home, 2 = Character, … 9 = Bulk) |
 | `F1` | Show the shortcuts cheat-sheet |
 
@@ -43,6 +43,10 @@ speed, then fine-tune with the keyboard:
   **Home/End** jump to min/max. The Ripper's sliders step by 1.
 - **Sprite Ripper → Manual** and the **Mixer.** Drag boxes/snips to move, drag a
   corner to resize.
+- **Emotes list.** Tick the per-row **checkboxes** (or **All**) to multi-select,
+  then **Delete (N)** to remove many at once. Drag a row to reorder — and dragging
+  any **ticked** row moves the **whole selection** together (as one block), so you
+  can reorder several emotes at once instead of one at a time.
 
 These are **contextual** — they act on the focused/selected widget, not globally.
 

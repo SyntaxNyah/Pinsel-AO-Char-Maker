@@ -17,8 +17,13 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ✅ Organizer (folders, file copy/move, auto buttons, ini)
 - ✅ Auto `char_icon.png` generation (head/face framing, size 40–128, choose the
   source emote, optional border/background overlay)
-- ✅ **⚡ One-click character** (`autoMagicExport`) — folder/project → convert to
-  WebP → ini + buttons + char_icon → exported `.zip`, in one action
+- ✅ **⚡ One-click character** (`autoMagicExport`) — folder/project → ini +
+  buttons + char_icon → exported `.zip`, in one action (WebP convert is opt-in:
+  forcing it via native FFI was hard-crashing, see PERFORMANCE/FAQ)
+- ✅ **Manual button/icon crop** (`CropFraming.manual` + `CropBox`) — KFO/DRO-style
+  draggable/resizable crop box + X/Y/Size sliders, seeded from the auto head-square
+- ✅ **`pinselcredits.txt`** stamped into every exported character (attribution +
+  bug-report URL), written by the Organizer (single + bulk)
 - ⬜ Auto `credits.txt` scaffolding
 
 ## Imaging & colour

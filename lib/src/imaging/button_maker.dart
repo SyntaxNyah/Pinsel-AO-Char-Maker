@@ -12,6 +12,48 @@ class IntRect {
   final int x, y, w, h;
 }
 
+/// A **manual** crop box (the KFO/DRO-style "drag a box on the sprite") as
+/// fractions of the sprite, so one box applies to every emote regardless of
+/// sprite size. [x]/[y] are the top-left (fractions of width/height); [side] is
+/// the box edge as a fraction of the **width**, so the region is square in
+/// pixels (and looks square on an aspect-correct preview). [toPixels] always
+/// returns a valid square fully inside the image — that clamp is the safety net
+/// that makes the draggable editor robust (a slightly-off drag can't produce a
+/// broken button).
+class CropBox {
+  const CropBox(this.x, this.y, this.side);
+
+  final double x, y, side;
+
+  /// A sensible starting box (upper-middle, half-width) before the auto
+  /// head-square seeds it.
+  static const CropBox initial = CropBox(0.25, 0.08, 0.5);
+
+  IntRect toPixels(int w, int h) {
+    if (w <= 0 || h <= 0) return const IntRect(0, 0, 1, 1);
+    int s = (side * w).round();
+    final int maxS = w < h ? w : h;
+    if (s < 1) s = 1;
+    if (s > maxS) s = maxS;
+    int px = (x * w).round();
+    int py = (y * h).round();
+    if (px < 0) px = 0;
+    if (py < 0) py = 0;
+    if (px + s > w) px = w - s;
+    if (py + s > h) py = h - s;
+    return IntRect(px, py, s, s);
+  }
+
+  /// Build a box (fractions) from a pixel square on a [w]×[h] image — used to
+  /// seed Manual mode from the auto head-square so you start at the detected
+  /// face and nudge from there.
+  static CropBox fromPixels(IntRect r, int w, int h) =>
+      (w <= 0 || h <= 0) ? initial : CropBox(r.x / w, r.y / h, r.w / w);
+
+  CropBox copyWith({double? x, double? y, double? side}) =>
+      CropBox(x ?? this.x, y ?? this.y, side ?? this.side);
+}
+
 /// Produces emote button icons and character-select icons.
 ///
 /// Entry points:
@@ -58,6 +100,7 @@ class ButtonMaker {
     double offsetY = 0,
     img.Image? background,
     img.Image? foreground,
+    CropBox? manualCrop,
   }) async {
     final img.Image? frame = Codecs.decodeFirstFrame(sourceBytes, ext: ext);
     if (frame == null) return null;
@@ -67,7 +110,8 @@ class ButtonMaker {
         offsetX: offsetX,
         offsetY: offsetY,
         background: background,
-        foreground: foreground);
+        foreground: foreground,
+        manualCrop: manualCrop);
   }
 
   /// Frame an already-decoded [frame] into a [size]×[size] PNG icon. See
@@ -81,12 +125,20 @@ class ButtonMaker {
     double offsetY = 0,
     img.Image? background,
     img.Image? foreground,
+    CropBox? manualCrop,
   }) {
     final img.Image rgba = _ensureRgba(frame);
-    IntRect square = framing == CropFraming.head
-        ? headSquare(rgba, zoom: zoom)
-        : _centerSquare(autoTrimBounds(rgba), rgba.width, rgba.height);
-    if (offsetX != 0 || offsetY != 0) {
+    IntRect square;
+    if (framing == CropFraming.manual && manualCrop != null) {
+      // The user's hand-placed box (KFO/DRO style). Already positioned + sized.
+      square = manualCrop.toPixels(rgba.width, rgba.height);
+    } else if (framing == CropFraming.head) {
+      square = headSquare(rgba, zoom: zoom);
+    } else {
+      square = _centerSquare(autoTrimBounds(rgba), rgba.width, rgba.height);
+    }
+    // Offsets nudge the *auto* crops; the manual box carries its own position.
+    if (framing != CropFraming.manual && (offsetX != 0 || offsetY != 0)) {
       final int sx = (square.x + offsetX * square.w)
           .round()
           .clamp(0, math.max(0, rgba.width - square.w));

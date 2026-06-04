@@ -40,7 +40,9 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
 - **Auto buttons + char_icon.** Generates `buttonN_off.png` for every emote
   **and** the character-select `char_icon.png`. They frame the character's
   **face by default** (AO buttons show expressions, not whole bodies); switch to
-  full-body, tune the size/zoom/position, or lay a **border on top** (KFO-style)
+  full-body, **draw the crop box yourself** (Manual mode — drag/resize a box on
+  the sprite, KFO/DRO-style), tune the size/zoom/position, or lay a **border on
+  top** (KFO-style)
   — import your own, pick from **dozens of built-in border & background presets**
   (Umineko, Danganronpa, Limbus, kawaii pastels, hearts/sparkles, and a big colour
   palette), *or* **build your own in-app** (style + **colour-wheel** + gradients +

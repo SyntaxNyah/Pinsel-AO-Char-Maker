@@ -213,6 +213,12 @@ class Organizer {
     await target.writeString(plan.iniRel, plan.iniText ?? '');
     tick('Wrote ${plan.iniRel}');
 
+    // Stamp every exported character with a Pinsel attribution file.
+    await target.writeString(
+      joinRel(plan.charDir, CharFolder.pinselCreditsFile),
+      kPinselCreditsText,
+    );
+
     if (buttonRenderer != null) {
       for (final ButtonJob job in plan.buttonJobs) {
         if (!config.overwriteExistingButtons &&

@@ -191,6 +191,9 @@ There's an **Export char.ini** button right here, too.
 - **Multi-select / bulk delete** — tick the **checkboxes** on the rows you want
   (or **All** in the bar above the list), then **Delete (N)** to remove them all
   at once (one undo step). Great for trimming a big imported cast.
+- **Drag several at once** — with rows ticked, **drag any ticked row** and the
+  whole selection moves together as one block (keeping their order), so you can
+  reorder a group in one drag instead of one emote at a time.
 - **Keyboard navigation** — `Ctrl/⌘ + ↑ / ↓` moves to the previous/next emote and
   the list **auto-scrolls** to it (so you can step through 100 emotes without
   losing the selected one off-screen).
@@ -346,14 +349,21 @@ when you export. This tab — the **Button & Icon Studio** — lets you control
 
 ### Framing (the big one)
 By default Pinsel frames the character's **head / face** — AO buttons show
-*expressions*, so a full-body button looks weird and tiny. Toggle **Head / face**
-↔ **Full body** for both the button and the icon.
+*expressions*, so a full-body button looks weird and tiny. The framing picker has
+three modes for both the button and the icon: **Face**, **Full** (whole sprite),
+and **Manual**.
 
-- **Face zoom** (head mode) — tighter or looser around the face (**0.25–4×**;
+- **Manual (do it yourself, KFO/DRO-style)** — pick **Manual** and a crop box
+  appears over the sprite (seeded on the detected face). **Drag the box to move
+  it**, **drag the corner to resize**, or use the **Box X / Y / Size** sliders for
+  exact values. That one box crops **every** emote button (the char_icon has its
+  own). The preview beside it updates live as you drag.
+- **Face zoom** (Face mode) — tighter or looser around the face (**0.25–4×**;
   >1 zooms in, <1 pulls back to head-and-shoulders).
-- **Move X / Y** — nudge the crop if the auto-detected face is off (e.g. an
-  off-centre or tilted head). The full **±100 %** range lets you shift the crop a
-  whole crop-width/height, so you can reach any part of the sprite.
+- **Move X / Y** (Face/Full modes) — nudge the auto crop if the detected face is
+  off (e.g. an off-centre or tilted head). The full **±100 %** range lets you
+  shift the crop a whole crop-width/height. (In **Manual** mode the box carries
+  its own position, so these are hidden — you place it directly.)
 - **Size** — buttons default **128 px** (24–512); the **char_icon** defaults to
   **40 px** and is customisable **40–128**. Output is **lossless PNG**, crisply
   **downscaled** from the full-res sprite and **never upscaled**, so a bigger

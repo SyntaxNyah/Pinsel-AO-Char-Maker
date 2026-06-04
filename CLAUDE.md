@@ -92,8 +92,10 @@ Constants + enums. Key items:
 - `enum CourtSide { defense('def')…seance('sea') }` — `.id`, `.label`,
   `CourtSide.fromId`, `.defaultValue` (= witness).
 - `enum ScalingMode { smooth, pixel }` — `.id`, `.fromId`.
-- `enum CropFraming { head, full }` — how auto buttons / the char_icon frame a
-  sprite. `.id`, `.label`, `.fromId`, `.defaultValue` (= **head**, i.e. face).
+- `enum CropFraming { head, full, manual }` — how buttons / the char_icon frame a
+  sprite (auto face, whole-body, or a hand-placed `CropBox`). `.id`, `.label`,
+  `.fromId`, `.defaultValue` (= **head**). No exhaustive `switch`es on it (safe to
+  extend); `ButtonMaker.renderFramed` keys off it.
 - `enum FrameEffectKind { sfx, realization, screenshake }` — `.suffix`,
   `.sectionSuffix(spriteRef)`.
 - `IniSection` — canonical lower-case section names.
@@ -197,7 +199,9 @@ The central model.
   Future.delayed(Duration.zero)`) between buttons** — button rendering is sync
   CPU on the UI isolate, so a big cast (100 emotes, or bulk-folders) would
   otherwise block long enough that the OS marks the app "not responding" and the
-  user force-quits (looked like a crash).
+  user force-quits (looked like a crash). `execute` also stamps every character
+  with `CharFolder.pinselCreditsFile` (`pinselcredits.txt` = `kPinselCreditsText`,
+  attribution + repo/bug-report URL) — so single + bulk export both get it.
 
 ### imaging/codecs.dart
 - `Codecs.decode(bytes,{ext})`, `.decodeFirstFrame(...)`, `.isAnimatedExt`,
@@ -285,6 +289,17 @@ The central model.
 
 ### imaging/button_maker.dart
 - `class IntRect(x,y,w,h)`.
+- `class CropBox(x,y,side)` — **manual** crop as fractions (x/y top-left, side =
+  edge as a frac of width → square in px). `toPixels(w,h)` returns a square
+  **clamped** fully inside the image (the safety net for the draggable editor);
+  `fromPixels(rect,w,h)` (seed from `headSquare`), `initial`, `copyWith`. Used by
+  `CropFraming.manual` (Button Studio "Manual" mode). One box applies to all
+  buttons; the icon has its own.
+- `renderFramed`/`renderAutoOverlaid` take **`CropBox? manualCrop`**: when
+  `framing == manual`, the square is `manualCrop.toPixels(...)` and the auto
+  offsets are skipped. Threaded from `AppState` (`buttonCrop`/`iconCrop`) via the
+  preview calls + the `_studioOrganizer` renderer closures (NOT the
+  `ButtonRenderer` typedef — closures capture it like the overlays/offsets).
 - `ButtonMaker.renderAuto(bytes,ext,size,[framing,zoom])` (matches
   `ButtonRenderer`; framing defaults to **head/face**),
   `.renderAutoOverlaid(bytes,ext,size,{framing,zoom,offsetX,offsetY,background,
@@ -481,10 +496,14 @@ The central model.
     {prefix,…})` (one sprite), **`bulkMouthTalkAll({…})`** (every sprite, auto mouth
     per face), `defaultMouthRegionFor(rel)` + `currentSpriteAspect()` seed the Mouth
     tab. `MouthRegion` (fractions). See docs/LIPSYNC.md.
-  - **One-click `autoMagicExport({convertToWebp})`**: convert→WebP (lossless,
-    delete originals, refresh `scan` **without** rebuilding the character so edits
-    survive) → ini + buttons + icon → export `.zip`. Home: "One-Click: folder →
-    finished character" / "Finish & export everything". See docs/ONE_CLICK.md.
+  - **One-click `autoMagicExport({convertToWebp = false})`**: ini + buttons + icon
+    → export `.zip`, via the same path as `exportZip` (reliable). `convertToWebp`
+    is **off by default** — force-converting every sprite through the native
+    libwebp FFI was *hard-crashing* (window closes = OOM/segfault, uncatchable in
+    Dart) so One-Click copies sprites as-is; convert via Bulk→WebP instead. Writes
+    phase **breadcrumbs** to `pinsel_crash.log` (`logCrash`) so a hard crash is
+    localisable. Home: "One-Click: folder → finished character" / "Finish &
+    export everything". See docs/ONE_CLICK.md.
   - **Performance**: `useAllCores`/`setUseAllCores`, `cpuCores`, `maxConcurrency`
     (`min(cores,8)`, or 1). `bulkAnimateAll`/`bulkMouthTalkAll` fan out via
     `mapParallel` (one `compute` per in-flight sprite). `liveColorMatrix(pipeline)`
@@ -496,8 +515,9 @@ The central model.
     (`projectName` → `_buildConfigNamed`, sanitised by `_cleanProjectName`).
     `resetProject()` wipes everything (workspace/character/scan/history/previews/
     mix parts) — settings kept; surfaced as Home "Start over" + the toolbar ↻.
-    `deleteEmotes(Set<int>)` removes many emotes in one undo step (Emotes-tab
-    multi-select). `addSprites` still *grows* the current character.
+    `deleteEmotes(Set<int>)` removes many emotes in one undo step + `moveEmotes(
+    Set<int>, newIndex)` reorders a multi-selection as a block (Emotes-tab
+    multi-select drag). `addSprites` still *grows* the current character.
   - **Export plumbing is shared**: `buildOutput` and `bulkBuildCharacters` both go
     through `_studioOrganizer()` (button/icon renderers capturing the current
     offsets+overlays) and `_studioConfig(targetCharDir:)` (size/framing/zoom/icon
@@ -564,13 +584,22 @@ The central model.
     to the model + commit on blur/submit; the preview is a cached `_SpritePreview`
     keyed on `rel`+`spriteRevision` (was: a 1024px re-encode on every keystroke).
     The list (`_EmoteListState`) has **multi-select** (per-row checkboxes + an
-    All/None + **Delete (N)** bar → `deleteEmotes`) and **auto-scrolls** to the
-    selected emote when it changes externally (keyboard `Ctrl+↑/↓`) via a
-    `ScrollController` + estimated row extent.
-  - `button_studio`: **Button & Icon Studio** — framing (Head/face default vs Full
-    body), size, face zoom (0.25–4×), crop **Move X/Y** offsets (±100%), and
-    **overlays** (a KFO-style border on top + a background) for **both** buttons
-    and the char_icon. Every numeric setting is a `_ValueSlider` (a slider + a
+    All/None + **Delete (N)** bar → `deleteEmotes`), **multi-drag** (dragging a
+    ticked row moves the whole selection as a block → `moveEmotes(selected,
+    newIndex)`, which uses the raw `ReorderableListView` drop index), and
+    **auto-scrolls** to the selected emote when it changes externally (keyboard
+    `Ctrl+↑/↓`) via a `ScrollController` + estimated row extent (only when
+    off-screen).
+  - `button_studio`: **Button & Icon Studio** — 3-way framing (**Face** / **Full**
+    / **Manual**), size, face zoom (0.25–4×), crop **Move X/Y** offsets (±100%),
+    and **overlays** (a KFO-style border on top + a background) for **both**
+    buttons and the char_icon. **Manual mode** (`_CropBoxEditor` + `_cropSliders`):
+    drag the box / drag the corner to resize over the base sprite (loaded via
+    `spriteEditorSource`, reloads on emote/`spriteRevision`), seeded once from
+    `headCropFor` (auto head-square) on first switch; writes `app.buttonCrop`/
+    `iconCrop` + reschedules the preview. In Manual the auto controls (face zoom,
+    Move X/Y) are hidden — one positioning system at a time. `toPixels` clamps so
+    a sloppy drag still yields a valid square. Every numeric setting is a `_ValueSlider` (a slider + a
     **typeable value box**, kept in sync: drag, or type an exact value committed
     on Enter/blur and clamped to range) — replaces the old slider-only helpers.
     Each overlay slot offers **Presets** (a grouped grid picker over

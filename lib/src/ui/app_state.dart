@@ -28,6 +28,7 @@ import '../imaging/sprite_edit.dart';
 import '../imaging/sprite_sheet.dart';
 import '../imaging/webp_codec.dart';
 import '../platform/cpu.dart';
+import '../platform/error_log.dart';
 import '../platform/save_file.dart';
 import '../platform/workspace.dart';
 import '../theme/ao2_theme.dart';
@@ -158,6 +159,12 @@ class AppState extends ChangeNotifier {
   double buttonOffsetY = 0;
   double iconOffsetX = 0;
   double iconOffsetY = 0;
+
+  /// Manual crop boxes (KFO/DRO-style "drag a box on the sprite") used when the
+  /// framing is [CropFraming.manual] — one box (in fractions) applied to every
+  /// button / the char_icon. Seeded from the auto head-square on first switch.
+  CropBox buttonCrop = CropBox.initial;
+  CropBox iconCrop = CropBox.initial;
 
   /// Optional art composited into every button: [buttonBg] sits behind the
   /// sprite, [buttonFg] is laid **on top** (a KFO-style border/frame). The icon
@@ -414,6 +421,31 @@ class AppState extends ChangeNotifier {
     e.insert(to, e.removeAt(from));
     selectedEmote = to;
     commitEdit();
+  }
+
+  /// Reorder a **multi-selection** as one contiguous block: move every emote in
+  /// [selected] (keeping their relative order) so the block lands at [newIndex]
+  /// (a `ReorderableListView` raw drop index, 0..length). Returns the new index
+  /// of the first moved emote, or -1 if it didn't move (needs ≥2 selected). This
+  /// is what lets you drag several ticked emotes together instead of one at a
+  /// time.
+  int moveEmotes(Set<int> selected, int newIndex) {
+    if (character == null) return -1;
+    final List<Emote> e = character!.emotes;
+    final List<int> sorted =
+        selected.where((int i) => i >= 0 && i < e.length).toList()..sort();
+    if (sorted.length < 2) return -1;
+    final List<Emote> moved = <Emote>[for (final int i in sorted) e[i]];
+    // Selected items before the drop point shift the insertion left once removed.
+    final int selBefore = sorted.where((int i) => i < newIndex).length;
+    for (final int i in sorted.reversed) {
+      e.removeAt(i);
+    }
+    final int insertAt = (newIndex - selBefore).clamp(0, e.length);
+    e.insertAll(insertAt, moved);
+    selectedEmote = insertAt;
+    commitEdit();
+    return insertAt;
   }
 
   void undo() {
@@ -821,7 +853,33 @@ class AppState extends ChangeNotifier {
         offsetX: buttonOffsetX,
         offsetY: buttonOffsetY,
         background: buttonBg.image,
-        foreground: buttonFg.image);
+        foreground: buttonFg.image,
+        manualCrop: buttonFraming == CropFraming.manual ? buttonCrop : null);
+  }
+
+  /// The plain base sprite (bytes + aspect) for the manual crop-box editor, for
+  /// the given [e]mote. Reloads via the decode/preview caches; the editor calls
+  /// this on emote-change and [spriteRevision] change.
+  Future<({Uint8List? bytes, double? aspect})> spriteEditorSource(Emote? e) async {
+    if (e == null) return (bytes: null, aspect: null);
+    final String? rel = spriteRelFor(e);
+    if (rel == null) return (bytes: null, aspect: null);
+    final img.Image? im = await decodeFirstFrame(rel);
+    final Uint8List? bytes = await previewSprite(rel);
+    final double? aspect =
+        (im == null || im.height == 0) ? null : im.width / im.height;
+    return (bytes: bytes, aspect: aspect);
+  }
+
+  /// A [CropBox] seeded from [e]'s auto head-square, so Manual mode starts at the
+  /// detected face and you adjust from there. Falls back to [CropBox.initial].
+  Future<CropBox> headCropFor(Emote? e) async {
+    if (e == null) return CropBox.initial;
+    final String? rel = spriteRelFor(e);
+    if (rel == null) return CropBox.initial;
+    final img.Image? im = await decodeFirstFrame(rel);
+    if (im == null) return CropBox.initial;
+    return CropBox.fromPixels(ButtonMaker.headSquare(im), im.width, im.height);
   }
 
   /// The emote the char_icon is rendered from: [iconSourceEmote] (clamped), or
@@ -852,7 +910,8 @@ class AppState extends ChangeNotifier {
         offsetX: iconOffsetX,
         offsetY: iconOffsetY,
         background: iconBg.image,
-        foreground: iconFg.image);
+        foreground: iconFg.image,
+        manualCrop: iconFraming == CropFraming.manual ? iconCrop : null);
   }
 
   /// Bake `char_icon.png` into the project root (so it's part of the export) and
@@ -1297,22 +1356,30 @@ class AppState extends ChangeNotifier {
   // One-click "auto-magic" — sprites → finished, exported character
   // ---------------------------------------------------------------------------
 
-  /// **Do everything, in one click.** Optionally convert every sprite to WebP
-  /// (lossless, AO's default here), then build the finished character — auto
+  /// **Do everything, in one click.** Build the finished character — auto
   /// `char.ini`, `emotions/` buttons and `char_icon.png` using the current
-  /// Button & Icon Studio settings — and download it as a ready-to-drop `.zip`.
+  /// Button & Icon Studio settings — and download it as a ready-to-drop `.zip`,
+  /// via the **same export path as "Export .zip"** (so it's just as reliable).
   ///
-  /// This is the "I just dropped in sprites, now give me a working character"
-  /// shortcut: it ties together convert → ini → buttons → icon → export so the
-  /// user doesn't have to visit each screen. The character's emotes/edits are
-  /// preserved (sprite fields store base names, so png→webp keeps them valid);
-  /// nothing is rebuilt from scratch. Returns the saved `.zip` path, or null.
-  Future<String?> autoMagicExport({bool convertToWebp = true}) async {
+  /// [convertToWebp] is **off by default**: force-converting every sprite to WebP
+  /// through the native `libwebp` FFI is the heaviest, most fragile step and was
+  /// *hard-crashing* the app (the window just closing — an OOM/native crash Dart
+  /// can't catch) on some sprite sets. So One-Click now copies sprites in their
+  /// existing format (still AO-compatible); convert deliberately via **Bulk →
+  /// WebP** when you want it, where any encoder problem is isolated to that step.
+  /// Sprites the maker *generates* (animations/mouths) are already WebP.
+  /// Emotes/edits are preserved; nothing is rebuilt. Returns the saved `.zip`.
+  Future<String?> autoMagicExport({bool convertToWebp = false}) async {
     if (character == null || scan == null) {
       _setBusy(false, 'Import some sprites first (Home).');
       return null;
     }
     _setBusy(true, 'One-click: finishing your character…');
+    // Breadcrumb to pinsel_crash.log: a HARD crash (OOM / native segfault) can't
+    // be caught in Dart, but the last breadcrumb before the window dies tells us
+    // which phase did it.
+    await logCrash('one-click start: ${scan!.groups.length} sprite group(s), '
+        'convertToWebp=$convertToWebp');
 
     int converted = 0;
     int convertFail = 0;
@@ -1330,6 +1397,7 @@ class AppState extends ChangeNotifier {
       // Lossless so quality is preserved; delete the original so the export is
       // clean WebP. We refresh `scan` afterwards WITHOUT rebuilding the
       // character, so emote edits survive (base names are unchanged).
+      await logCrash('one-click: converting ${targets.length} sprite(s) to WebP');
       final List<BulkResult> res = await BulkProcessor(workspace).run(
         files: targets,
         output: OutputFormat.webp,
@@ -1344,7 +1412,9 @@ class AppState extends ChangeNotifier {
     }
 
     // exportZip rebuilds the output folder (ini + buttons + icon) and downloads.
+    await logCrash('one-click: building + zipping export');
     final String? path = await exportZip();
+    await logCrash('one-click done: ${path ?? "no path"}');
     final String convNote = convertToWebp
         ? ' · $converted→WebP${convertFail > 0 ? " ($convertFail kept as-is)" : ""}'
         : '';
@@ -1695,7 +1765,8 @@ class AppState extends ChangeNotifier {
                     offsetX: buttonOffsetX,
                     offsetY: buttonOffsetY,
                     background: buttonBg.image,
-                    foreground: buttonFg.image),
+                    foreground: buttonFg.image,
+                    manualCrop: f == CropFraming.manual ? buttonCrop : null),
         iconRenderer:
             (Uint8List b, String e, int s, CropFraming f, double z) =>
                 ButtonMaker.renderAutoOverlaid(b, e, s,
@@ -1704,7 +1775,8 @@ class AppState extends ChangeNotifier {
                     offsetX: iconOffsetX,
                     offsetY: iconOffsetY,
                     background: iconBg.image,
-                    foreground: iconFg.image),
+                    foreground: iconFg.image,
+                    manualCrop: f == CropFraming.manual ? iconCrop : null),
       );
 
   /// The current button/char_icon studio settings as an [OrganizeConfig] for a

@@ -177,7 +177,11 @@ enum CropFraming {
   head('head', 'Head / face'),
 
   /// Square around the whole (auto-trimmed) sprite — the legacy framing.
-  full('full', 'Full body');
+  full('full', 'Full body'),
+
+  /// A hand-placed crop box you drag/resize yourself (KFO/DRO style). See
+  /// `CropBox` in `imaging/button_maker.dart`.
+  manual('manual', 'Manual box');
 
   const CropFraming(this.id, this.label);
 
@@ -251,6 +255,10 @@ class CharFolder {
   static const String iniName = 'char.ini';
   static const String charIcon = 'char_icon.png';
   static const String creditsFile = 'credits.txt';
+
+  /// Attribution file written into every exported character (see
+  /// [kPinselCreditsText]). Separate from the user's own `credits.txt`.
+  static const String pinselCreditsFile = 'pinselcredits.txt';
   static const String emotionsDir = 'emotions';
   static const String backupEmotionsDir = '_old_emotions';
   static const String preanimDir = 'anim';
@@ -318,3 +326,26 @@ const String kEmoteFieldSeparator = '#';
 
 /// Placeholder used for "no preanimation".
 const String kNoPreanim = '-';
+
+/// Project identity + attribution. Kept here (pure Dart) so the exporter can
+/// stamp every character with credits without depending on the Flutter UI.
+/// **Keep in sync with `ui/credits.dart`** (`kAppName`/`kMaintainer`/`kRepoUrl`).
+const String kPinselAppName = 'Pinsel AO Char Maker';
+const String kPinselMaintainer = 'SyntaxNyah';
+const String kPinselRepoUrl =
+    'https://github.com/SyntaxNyah/Pinsel-AO-Char-Maker';
+
+/// Contents of the [CharFolder.pinselCreditsFile] written into every export.
+const String kPinselCreditsText =
+    'This Attorney Online character was generated with $kPinselAppName.\n'
+    '\n'
+    'Pinsel is a free, open-source AO / webAO character & button maker —\n'
+    'drop in a folder of sprites and get a finished, ready-to-use character\n'
+    '(auto char.ini, emote buttons, char_icon), then recolour, animate and\n'
+    'customise everything.\n'
+    '\n'
+    'Created and maintained by $kPinselMaintainer.\n'
+    'Project, source code and bug reports:\n'
+    '$kPinselRepoUrl\n'
+    '\n'
+    'This file is just attribution — you can delete it.\n';

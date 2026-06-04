@@ -86,9 +86,22 @@ leaves sounds blank for you to set in the **Emotes** tab.
 
 **My buttons show the whole body — can they just show the face?**
 They already do by default. Buttons (and the `char_icon`) frame the character's
-**head/face** (detected from the silhouette). The **Buttons** tab has a **Head /
-face ↔ Full body** toggle, plus **Face zoom** and **Move X/Y** to fine-tune the
-crop if the auto-detection is off.
+**head/face** (detected from the silhouette). The **Buttons** tab framing picker
+has **Face**, **Full** (whole sprite) and **Manual** — plus **Face zoom** and
+**Move X/Y** to fine-tune the auto crop.
+
+**Can I crop the button myself instead of the auto-detect (like KFO / DRO)?**
+Yes — **Buttons** tab → framing → **Manual**. A crop box appears over the sprite
+(seeded on the detected face): **drag the box to move it**, **drag the corner to
+resize**, or use the **Box X / Y / Size** sliders for exact values. The one box
+crops every emote button (and the char_icon has its own). The live preview beside
+it updates as you drag. (The auto **Face**/**Full** modes are still there.)
+
+**What's the `pinselcredits.txt` in my exported character?**
+It's a small attribution file Pinsel adds to every exported character noting it
+was made with Pinsel, who maintains it, and where to file bug reports
+(github.com/SyntaxNyah/Pinsel-AO-Char-Maker). It's harmless — delete it if you
+don't want it; it doesn't affect the character in-game.
 
 **How do I make the char_icon? Can I move it or add a border?**
 The **Buttons** tab generates `char_icon.png` automatically on export. There you
@@ -170,6 +183,17 @@ folder scanning skips unreadable/huge files and symlink loops, and a global
 crash logger writes a stack trace to **`pinsel_crash.log`** (next to the `.exe`,
 or your temp folder) plus the browser console on web. If it still crashes, send
 that log — it turns "it crashes sometimes" into something fixable.
+
+**The app didn't freeze — the window *just closed* (during One-Click).** That's a
+*hard* crash (out-of-memory or a native-library crash) which the in-app logger
+can't catch as a Dart error. The culprit was One-Click **force-converting every
+sprite to WebP** through the native encoder. So **One-Click no longer converts**
+— it copies sprites in their existing format (still AO-compatible) and is now the
+same reliable path as **Export .zip**. Convert to WebP deliberately via **Bulk →
+Convert → WebP** when you want it (if *that* crashes, it's clearly the WebP
+encoder — tell us, with the build details). One-Click also drops **phase
+breadcrumbs** into `pinsel_crash.log` ("one-click start / building+zipping /
+done"), so if it ever closes again the last line says which phase did it.
 
 **I imported another folder and the previous character's emotes came back!**
 Fixed. **Import** now starts a *fresh* project (the old sprites are cleared

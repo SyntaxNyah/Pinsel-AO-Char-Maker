@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/ao_constants.dart';
 import '../../core/emote.dart';
+import '../../imaging/button_maker.dart';
 import '../../imaging/codecs.dart';
 import '../../imaging/overlay_presets.dart';
 import '../app_state.dart';
@@ -136,17 +137,202 @@ Widget _framingPicker(CropFraming value, ValueChanged<CropFraming> onChanged) {
       ButtonSegment<CropFraming>(
         value: CropFraming.head,
         icon: Icon(Icons.face_rounded),
-        label: Text('Head / face'),
+        label: Text('Face'),
       ),
       ButtonSegment<CropFraming>(
         value: CropFraming.full,
         icon: Icon(Icons.accessibility_new_rounded),
-        label: Text('Full body'),
+        label: Text('Full'),
+      ),
+      ButtonSegment<CropFraming>(
+        value: CropFraming.manual,
+        icon: Icon(Icons.crop_rounded),
+        label: Text('Manual'),
       ),
     ],
     selected: <CropFraming>{value},
     onSelectionChanged: (Set<CropFraming> s) => onChanged(s.first),
     showSelectedIcon: false,
+  );
+}
+
+/// The draggable / resizable manual crop box (KFO/DRO style) over the base
+/// sprite. It loads the [emote]'s base sprite (reloading on emote / [revision]
+/// change), draws the box from [box] (fractions), and reports drags via
+/// [onChanged]. [CropBox.toPixels] clamps on render, so even an imperfect drag
+/// can only ever produce a valid square button.
+class _CropBoxEditor extends StatefulWidget {
+  const _CropBoxEditor({
+    required this.app,
+    required this.emote,
+    required this.revision,
+    required this.box,
+    required this.onChanged,
+  });
+  final AppState app;
+  final Emote? emote;
+  final int revision;
+  final CropBox box;
+  final ValueChanged<CropBox> onChanged;
+
+  @override
+  State<_CropBoxEditor> createState() => _CropBoxEditorState();
+}
+
+class _CropBoxEditorState extends State<_CropBoxEditor> {
+  Uint8List? _bytes;
+  double? _aspect;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CropBoxEditor old) {
+    super.didUpdateWidget(old);
+    if (old.emote != widget.emote || old.revision != widget.revision) _load();
+  }
+
+  Future<void> _load() async {
+    _loading = true;
+    final ({Uint8List? bytes, double? aspect}) r =
+        await widget.app.spriteEditorSource(widget.emote);
+    if (!mounted) return;
+    setState(() {
+      _bytes = r.bytes;
+      _aspect = r.aspect;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_bytes == null) {
+      return SizedBox(
+        height: 200,
+        child: Center(
+          child: _loading
+              ? const CircularProgressIndicator()
+              : const Text('Select an emote to crop.'),
+        ),
+      );
+    }
+    final double aspect =
+        (_aspect == null || _aspect! <= 0) ? 1.0 : _aspect!;
+    final CropBox box = widget.box;
+    return SizedBox(
+      height: 240,
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints c) {
+          double dw = c.maxWidth;
+          double dh = dw / aspect;
+          if (dh > c.maxHeight) {
+            dh = c.maxHeight;
+            dw = dh * aspect;
+          }
+          final double left = box.x * dw, top = box.y * dh, side = box.side * dw;
+          return Center(
+            child: SizedBox(
+              width: dw,
+              height: dh,
+              child: Stack(
+                children: <Widget>[
+                  Positioned.fill(
+                      child: CheckerImage(bytes: _bytes, fit: BoxFit.fill)),
+                  Positioned(
+                    left: left,
+                    top: top,
+                    width: side,
+                    height: side,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onPanUpdate: (DragUpdateDetails d) {
+                        final double nx = (box.x + d.delta.dx / dw)
+                            .clamp(0.0, (1 - box.side).clamp(0.0, 1.0));
+                        final double maxY =
+                            (1 - box.side * aspect).clamp(0.0, 1.0);
+                        final double ny =
+                            (box.y + d.delta.dy / dh).clamp(0.0, maxY);
+                        widget.onChanged(box.copyWith(x: nx, y: ny));
+                      },
+                      child: const DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Color(0x22FF4081),
+                          border: Border.fromBorderSide(
+                              BorderSide(color: Color(0xFFFF4081), width: 2)),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: (left + side - 16).clamp(0.0, dw - 1),
+                    top: (top + side - 16).clamp(0.0, dh - 1),
+                    width: 28,
+                    height: 28,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onPanUpdate: (DragUpdateDetails d) {
+                        final double ns =
+                            (box.side + d.delta.dx / dw).clamp(0.08, 1.0);
+                        final double nx =
+                            box.x.clamp(0.0, (1 - ns).clamp(0.0, 1.0));
+                        final double maxY = (1 - ns * aspect).clamp(0.0, 1.0);
+                        final double ny = box.y.clamp(0.0, maxY);
+                        widget.onChanged(box.copyWith(side: ns, x: nx, y: ny));
+                      },
+                      child: const DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Color(0xFFFF4081),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(Icons.open_in_full_rounded,
+                            size: 14, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// X / Y / Size sliders for a [CropBox] — the precise (and always-reliable)
+/// companion to dragging the box.
+Widget _cropSliders(CropBox box, ValueChanged<CropBox> onChanged) {
+  return Column(
+    children: <Widget>[
+      _ValueSlider(
+        label: 'Box X',
+        value: box.x * 100,
+        min: 0,
+        max: 100,
+        suffix: '%',
+        onChanged: (double v) => onChanged(box.copyWith(x: v / 100)),
+      ),
+      _ValueSlider(
+        label: 'Box Y',
+        value: box.y * 100,
+        min: 0,
+        max: 100,
+        suffix: '%',
+        onChanged: (double v) => onChanged(box.copyWith(y: v / 100)),
+      ),
+      _ValueSlider(
+        label: 'Box size',
+        value: box.side * 100,
+        min: 5,
+        max: 100,
+        suffix: '%',
+        onChanged: (double v) => onChanged(box.copyWith(side: v / 100)),
+      ),
+    ],
   );
 }
 
@@ -524,6 +710,19 @@ class _BtnCard extends StatefulWidget {
 }
 
 class _BtnCardState extends State<_BtnCard> {
+  bool _seeded = false;
+
+  /// Seed the manual box from the auto head-square the first time the user
+  /// switches to Manual, so they start at the detected face and adjust.
+  Future<void> _seedManual() async {
+    if (_seeded) return;
+    _seeded = true;
+    final CropBox seed = await widget.app.headCropFor(widget.app.current);
+    if (!mounted) return;
+    setState(() => widget.app.buttonCrop = seed);
+    widget.onChanged();
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppState app = widget.app;
@@ -559,6 +758,7 @@ class _BtnCardState extends State<_BtnCard> {
                       const SizedBox(height: 6),
                       _framingPicker(app.buttonFraming, (CropFraming f) {
                         setState(() => app.buttonFraming = f);
+                        if (f == CropFraming.manual) _seedManual();
                         widget.onChanged();
                       }),
                       const SizedBox(height: 12),
@@ -574,44 +774,69 @@ class _BtnCardState extends State<_BtnCard> {
                           widget.onChanged();
                         },
                       ),
-                      if (app.buttonFraming == CropFraming.head)
-                        _ValueSlider(
-                          label: 'Face zoom (1.00× default · >1 tighter)',
-                          value: app.buttonZoom,
-                          min: 0.25,
-                          max: 4.0,
-                          divisions: 75,
-                          decimals: 2,
-                          suffix: '×',
-                          onChanged: (double v) {
-                            setState(() => app.buttonZoom = v);
+                      if (app.buttonFraming == CropFraming.manual) ...<Widget>[
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Drag the box to move it, drag the corner to resize — '
+                          'this one box crops every button. (Sliders below for '
+                          'exact values.)',
+                          style: TextStyle(fontSize: 12, color: Colors.white60),
+                        ),
+                        const SizedBox(height: 6),
+                        _CropBoxEditor(
+                          app: app,
+                          emote: app.current,
+                          revision: app.spriteRevision,
+                          box: app.buttonCrop,
+                          onChanged: (CropBox b) {
+                            setState(() => app.buttonCrop = b);
                             widget.onChanged();
                           },
                         ),
-                      _ValueSlider(
-                        label: 'Move X',
-                        value: app.buttonOffsetX * 100,
-                        min: -100,
-                        max: 100,
-                        divisions: 200,
-                        suffix: '%',
-                        onChanged: (double v) {
-                          setState(() => app.buttonOffsetX = v / 100);
+                        _cropSliders(app.buttonCrop, (CropBox b) {
+                          setState(() => app.buttonCrop = b);
                           widget.onChanged();
-                        },
-                      ),
-                      _ValueSlider(
-                        label: 'Move Y',
-                        value: app.buttonOffsetY * 100,
-                        min: -100,
-                        max: 100,
-                        divisions: 200,
-                        suffix: '%',
-                        onChanged: (double v) {
-                          setState(() => app.buttonOffsetY = v / 100);
-                          widget.onChanged();
-                        },
-                      ),
+                        }),
+                      ] else ...<Widget>[
+                        if (app.buttonFraming == CropFraming.head)
+                          _ValueSlider(
+                            label: 'Face zoom (1.00× default · >1 tighter)',
+                            value: app.buttonZoom,
+                            min: 0.25,
+                            max: 4.0,
+                            divisions: 75,
+                            decimals: 2,
+                            suffix: '×',
+                            onChanged: (double v) {
+                              setState(() => app.buttonZoom = v);
+                              widget.onChanged();
+                            },
+                          ),
+                        _ValueSlider(
+                          label: 'Move X',
+                          value: app.buttonOffsetX * 100,
+                          min: -100,
+                          max: 100,
+                          divisions: 200,
+                          suffix: '%',
+                          onChanged: (double v) {
+                            setState(() => app.buttonOffsetX = v / 100);
+                            widget.onChanged();
+                          },
+                        ),
+                        _ValueSlider(
+                          label: 'Move Y',
+                          value: app.buttonOffsetY * 100,
+                          min: -100,
+                          max: 100,
+                          divisions: 200,
+                          suffix: '%',
+                          onChanged: (double v) {
+                            setState(() => app.buttonOffsetY = v / 100);
+                            widget.onChanged();
+                          },
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       const Text('Overlays (KFO-style borders)',
                           style: TextStyle(fontWeight: FontWeight.w600)),
@@ -658,6 +883,17 @@ class _IconCard extends StatefulWidget {
 }
 
 class _IconCardState extends State<_IconCard> {
+  bool _seeded = false;
+
+  Future<void> _seedManual() async {
+    if (_seeded) return;
+    _seeded = true;
+    final CropBox seed = await widget.app.headCropFor(widget.app.iconEmote());
+    if (!mounted) return;
+    setState(() => widget.app.iconCrop = seed);
+    widget.onChanged();
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppState app = widget.app;
@@ -695,6 +931,7 @@ class _IconCardState extends State<_IconCard> {
                       const SizedBox(height: 6),
                       _framingPicker(app.iconFraming, (CropFraming f) {
                         setState(() => app.iconFraming = f);
+                        if (f == CropFraming.manual) _seedManual();
                         widget.onChanged();
                       }),
                       const SizedBox(height: 12),
@@ -710,44 +947,67 @@ class _IconCardState extends State<_IconCard> {
                           widget.onChanged();
                         },
                       ),
-                      if (app.iconFraming == CropFraming.head)
-                        _ValueSlider(
-                          label: 'Face zoom (1.00× default · >1 tighter)',
-                          value: app.iconZoom,
-                          min: 0.25,
-                          max: 4.0,
-                          divisions: 75,
-                          decimals: 2,
-                          suffix: '×',
-                          onChanged: (double v) {
-                            setState(() => app.iconZoom = v);
+                      if (app.iconFraming == CropFraming.manual) ...<Widget>[
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Drag the box to move it, drag the corner to resize.',
+                          style: TextStyle(fontSize: 12, color: Colors.white60),
+                        ),
+                        const SizedBox(height: 6),
+                        _CropBoxEditor(
+                          app: app,
+                          emote: app.iconEmote(),
+                          revision: app.spriteRevision,
+                          box: app.iconCrop,
+                          onChanged: (CropBox b) {
+                            setState(() => app.iconCrop = b);
                             widget.onChanged();
                           },
                         ),
-                      _ValueSlider(
-                        label: 'Move X',
-                        value: app.iconOffsetX * 100,
-                        min: -100,
-                        max: 100,
-                        divisions: 200,
-                        suffix: '%',
-                        onChanged: (double v) {
-                          setState(() => app.iconOffsetX = v / 100);
+                        _cropSliders(app.iconCrop, (CropBox b) {
+                          setState(() => app.iconCrop = b);
                           widget.onChanged();
-                        },
-                      ),
-                      _ValueSlider(
-                        label: 'Move Y',
-                        value: app.iconOffsetY * 100,
-                        min: -100,
-                        max: 100,
-                        divisions: 200,
-                        suffix: '%',
-                        onChanged: (double v) {
-                          setState(() => app.iconOffsetY = v / 100);
-                          widget.onChanged();
-                        },
-                      ),
+                        }),
+                      ] else ...<Widget>[
+                        if (app.iconFraming == CropFraming.head)
+                          _ValueSlider(
+                            label: 'Face zoom (1.00× default · >1 tighter)',
+                            value: app.iconZoom,
+                            min: 0.25,
+                            max: 4.0,
+                            divisions: 75,
+                            decimals: 2,
+                            suffix: '×',
+                            onChanged: (double v) {
+                              setState(() => app.iconZoom = v);
+                              widget.onChanged();
+                            },
+                          ),
+                        _ValueSlider(
+                          label: 'Move X',
+                          value: app.iconOffsetX * 100,
+                          min: -100,
+                          max: 100,
+                          divisions: 200,
+                          suffix: '%',
+                          onChanged: (double v) {
+                            setState(() => app.iconOffsetX = v / 100);
+                            widget.onChanged();
+                          },
+                        ),
+                        _ValueSlider(
+                          label: 'Move Y',
+                          value: app.iconOffsetY * 100,
+                          min: -100,
+                          max: 100,
+                          divisions: 200,
+                          suffix: '%',
+                          onChanged: (double v) {
+                            setState(() => app.iconOffsetY = v / 100);
+                            widget.onChanged();
+                          },
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       const Text('Overlays (KFO-style borders)',
                           style: TextStyle(fontWeight: FontWeight.w600)),

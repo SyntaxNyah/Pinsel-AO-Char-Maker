@@ -126,8 +126,26 @@ class _EmoteListState extends State<_EmoteList> {
               child: ReorderableListView.builder(
                 scrollController: _scroll,
                 itemCount: emotes.length,
-                onReorder: (int from, int to) =>
-                    app.moveEmote(from, to > from ? to - 1 : to),
+                onReorder: (int from, int to) {
+                  // Dragging one of several ticked rows moves the WHOLE selection
+                  // as a block (so you can reorder multiple at once); otherwise
+                  // it's a normal single-row move.
+                  if (_selected.length > 1 && _selected.contains(from)) {
+                    final int count =
+                        _selected.where((int i) => i < emotes.length).length;
+                    final int first = app.moveEmotes(_selected, to);
+                    if (first >= 0) {
+                      setState(() {
+                        _selected
+                          ..clear()
+                          ..addAll(
+                              List<int>.generate(count, (int k) => first + k));
+                      });
+                    }
+                  } else {
+                    app.moveEmote(from, to > from ? to - 1 : to);
+                  }
+                },
                 itemBuilder: (BuildContext context, int i) {
                   final Emote e = emotes[i];
                   return ListTile(
