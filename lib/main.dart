@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart'; // FlutterExceptionHandler (not re-exported by material)
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
