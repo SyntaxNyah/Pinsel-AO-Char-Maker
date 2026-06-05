@@ -160,7 +160,19 @@ class _EmoteListState extends State<_EmoteList> {
                           visualDensity: VisualDensity.compact,
                           onChanged: (_) => _toggle(i),
                         ),
-                        CircleAvatar(radius: 12, child: Text('${i + 1}')),
+                        // Scale the number down to fit so 3+ digit emote numbers
+                        // (a 100+ sprite cast) stay fully readable instead of
+                        // being clipped by the circle.
+                        CircleAvatar(
+                          radius: 14,
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('${i + 1}'),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                     title: Text(e.comment,
@@ -172,7 +184,16 @@ class _EmoteListState extends State<_EmoteList> {
                       tooltip: 'Delete',
                       onPressed: () => app.deleteEmote(i),
                     ),
-                    onTap: () => app.selectEmote(i),
+                    // Sync `_lastSelected` so the auto-scroll (which fires on
+                    // selection change) is suppressed for a tap — the tapped row
+                    // is already on-screen, and the row-height estimate used to
+                    // decide "is it visible" was scrolling the list to a
+                    // *different* emote on every click. Keyboard nav still
+                    // scrolls (it changes selectedEmote without touching this).
+                    onTap: () {
+                      _lastSelected = i;
+                      app.selectEmote(i);
+                    },
                   );
                 },
               ),

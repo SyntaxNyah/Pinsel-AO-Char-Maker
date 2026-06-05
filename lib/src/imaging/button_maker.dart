@@ -13,13 +13,15 @@ class IntRect {
 }
 
 /// A **manual** crop box (the KFO/DRO-style "drag a box on the sprite") as
-/// fractions of the sprite, so one box applies to every emote regardless of
-/// sprite size. [x]/[y] are the top-left (fractions of width/height); [side] is
-/// the box edge as a fraction of the **width**, so the region is square in
-/// pixels (and looks square on an aspect-correct preview). [toPixels] always
-/// returns a valid square fully inside the image — that clamp is the safety net
-/// that makes the draggable editor robust (a slightly-off drag can't produce a
-/// broken button).
+/// fractions of the sprite, so a box is independent of the sprite's pixel size.
+/// The Button Studio keeps **one box per sprite** (keyed by sprite base name —
+/// see `AppState.buttonCrops`) so different poses can each be framed by hand;
+/// the char_icon keeps its own single box. [x]/[y] are the top-left (fractions
+/// of width/height); [side] is the box edge as a fraction of the **width**, so
+/// the region is square in pixels (and looks square on an aspect-correct
+/// preview). [toPixels] always returns a valid square fully inside the image —
+/// that clamp is the safety net that makes the draggable editor robust (a
+/// slightly-off drag can't produce a broken button).
 class CropBox {
   const CropBox(this.x, this.y, this.side);
 
@@ -68,8 +70,11 @@ class CropBox {
 class ButtonMaker {
   const ButtonMaker._();
 
-  /// Matches the `ButtonRenderer` typedef expected by the organiser. Defaults to
+  /// The bare automatic render (no overlays/offsets/manual box). Defaults to
   /// **head/face** framing, the natural look for AO emote buttons and icons.
+  /// The organiser's `ButtonRenderer` is supplied as a closure over this (see
+  /// `AppState._studioOrganizer`) so it can add the per-sprite manual crop,
+  /// offsets and overlays — this entry point stays simple for direct callers.
   ///
   /// [zoom] tunes the head crop: `1.0` is the default framing, `>1` zooms in
   /// (tighter on the face), `<1` zooms out (more head-and-shoulders). Ignored
@@ -129,9 +134,16 @@ class ButtonMaker {
   }) {
     final img.Image rgba = _ensureRgba(frame);
     IntRect square;
-    if (framing == CropFraming.manual && manualCrop != null) {
-      // The user's hand-placed box (KFO/DRO style). Already positioned + sized.
-      square = manualCrop.toPixels(rgba.width, rgba.height);
+    if (framing == CropFraming.manual) {
+      // The user's hand-placed box (KFO/DRO style). With **per-sprite** Manual
+      // mode a sprite the user never touched has no box (`manualCrop == null`);
+      // fall back to the auto head-square so every button still frames a face,
+      // which is far better than a whole-sprite centre square. So "Manual" means
+      // "a hand-placed box where you set one, the auto face crop everywhere
+      // else" — you only customise the sprites you care about.
+      square = manualCrop != null
+          ? manualCrop.toPixels(rgba.width, rgba.height)
+          : headSquare(rgba, zoom: zoom);
     } else if (framing == CropFraming.head) {
       square = headSquare(rgba, zoom: zoom);
     } else {

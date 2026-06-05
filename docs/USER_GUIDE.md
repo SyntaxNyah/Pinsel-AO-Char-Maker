@@ -356,8 +356,17 @@ and **Manual**.
 - **Manual (do it yourself, KFO/DRO-style)** — pick **Manual** and a crop box
   appears over the sprite (seeded on the detected face). **Drag the box to move
   it**, **drag the corner to resize**, or use the **Box X / Y / Size** sliders for
-  exact values. That one box crops **every** emote button (the char_icon has its
-  own). The preview beside it updates live as you drag.
+  exact values. The preview beside it updates live as you drag.
+  - **Every sprite has its own box.** Use the **◀ ▶** arrows ("Sprite *k* of *N*")
+    to step through the whole cast and frame each pose by hand — a standing full
+    body, a close-up, a sprite that's off to one side, they can each get their own
+    crop. The caption shows how many sprites you've customised (e.g. "7 of 42").
+  - **Sprites you never touch auto-frame the face**, so you only have to visit the
+    poses the auto crop gets wrong — you're never forced to hand-place all 100+.
+  - **Reset this sprite to auto** snaps the current one back to its detected face;
+    **Apply this box to all sprites** stamps the current box onto every sprite at
+    once (handy when many poses share the same framing).
+  - The **char_icon** keeps its own single Manual box (it's one image).
 - **Face zoom** (Face mode) — tighter or looser around the face (**0.25–4×**;
   >1 zooms in, <1 pulls back to head-and-shoulders).
 - **Move X / Y** (Face/Full modes) — nudge the auto crop if the detected face is

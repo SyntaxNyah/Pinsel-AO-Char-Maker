@@ -9,12 +9,17 @@ import 'sprite_scanner.dart';
 /// the requested [CropFraming] (head/face vs full body) and head-crop [zoom].
 /// Returns null if it cannot produce one. Injected from the imaging layer so the
 /// organiser has no hard dependency on the image engine.
+///
+/// [spriteBase] is the emote's `sprite` base name, passed so the renderer can
+/// look up a **per-sprite** manual crop box (Button Studio "Manual" mode). It's
+/// `null` for the char_icon (which carries its own single box).
 typedef ButtonRenderer = Future<Uint8List?> Function(
   Uint8List sourceBytes,
   String ext,
   int size,
   CropFraming framing,
   double zoom,
+  String? spriteBase,
 );
 
 /// Progress callback: (completed, total, label).
@@ -88,10 +93,15 @@ class ButtonJob {
     required this.emoteIndex,
     required this.sourceRel,
     required this.targetRel,
+    this.spriteBase,
   });
   final int emoteIndex; // 0-based
   final String sourceRel; // within target workspace, after files are copied
   final String targetRel;
+
+  /// The emote's sprite base name — handed to the [ButtonRenderer] so it can
+  /// apply this sprite's own manual crop box. Null when unknown.
+  final String? spriteBase;
 }
 
 /// The full, inspectable plan produced before anything touches the workspace.
@@ -160,6 +170,7 @@ class Organizer {
         plan.buttonJobs.add(ButtonJob(
           emoteIndex: i,
           sourceRel: src,
+          spriteBase: character.emotes[i].sprite,
           targetRel: joinRel(
             charDir,
             '${CharFolder.emotionsDir}/${CharFolder.buttonName(i + 1, on: false)}',
@@ -228,8 +239,8 @@ class Organizer {
         }
         final Uint8List src = await target.readBytes(job.sourceRel);
         final String ext = job.sourceRel.split('.').last.toLowerCase();
-        final Uint8List? png = await buttonRenderer!(
-            src, ext, config.buttonSize, config.buttonFraming, config.buttonZoom);
+        final Uint8List? png = await buttonRenderer!(src, ext, config.buttonSize,
+            config.buttonFraming, config.buttonZoom, job.spriteBase);
         if (png != null) {
           await target.writeBytes(job.targetRel, png);
         }
@@ -251,8 +262,9 @@ class Organizer {
           final Uint8List src = await target.readBytes(plan.iconSourceRel!);
           final String ext = plan.iconSourceRel!.split('.').last.toLowerCase();
           final ButtonRenderer render = iconRenderer ?? buttonRenderer!;
+          // The icon carries its own single crop box, so no per-sprite key.
           final Uint8List? png = await render(
-              src, ext, config.iconSize, config.iconFraming, config.iconZoom);
+              src, ext, config.iconSize, config.iconFraming, config.iconZoom, null);
           if (png != null) await target.writeBytes(plan.iconRel!, png);
         }
         tick('char_icon');

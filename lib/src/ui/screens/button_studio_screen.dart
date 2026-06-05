@@ -336,6 +336,108 @@ Widget _cropSliders(CropBox box, ValueChanged<CropBox> onChanged) {
   );
 }
 
+/// Steps the Button Studio's "current sprite" in Manual mode (◀ ▶) and shows
+/// which sprite you're framing plus how many have a custom box, so editing all
+/// of a cast's poses by hand is one tidy walk instead of bouncing to the Emotes
+/// screen per sprite.
+class _SpriteNav extends StatelessWidget {
+  const _SpriteNav({required this.app, required this.onGoto});
+  final AppState app;
+  final ValueChanged<int> onGoto;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<Emote> emotes = app.character?.emotes ?? const <Emote>[];
+    if (emotes.isEmpty) {
+      return const Text('No emotes to frame yet — import sprites first.',
+          style: TextStyle(fontSize: 12, color: Colors.white60));
+    }
+    final int i = app.selectedEmote.clamp(0, emotes.length - 1);
+    final Emote e = emotes[i];
+    final (int, int) cov = app.buttonCropCoverage;
+    final String label =
+        e.comment.trim().isEmpty ? e.sprite : '${e.comment}  ·  ${e.sprite}';
+    return Row(
+      children: <Widget>[
+        IconButton(
+          tooltip: 'Previous sprite',
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.chevron_left_rounded),
+          onPressed: i > 0 ? () => onGoto(i - 1) : null,
+        ),
+        Expanded(
+          child: Column(
+            children: <Widget>[
+              Text('Sprite ${i + 1} of ${emotes.length}',
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, color: Colors.white70),
+              ),
+              Text('${cov.$1} of ${cov.$2} sprites customised',
+                  style: const TextStyle(fontSize: 11, color: Colors.white38)),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: 'Next sprite',
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.chevron_right_rounded),
+          onPressed: i < emotes.length - 1 ? () => onGoto(i + 1) : null,
+        ),
+      ],
+    );
+  }
+}
+
+/// Per-sprite Manual actions: snap the current sprite back to its auto face
+/// crop, or stamp the current box onto every sprite at once (when many poses
+/// share a framing).
+class _ManualCropActions extends StatelessWidget {
+  const _ManualCropActions(
+      {required this.app, required this.emote, required this.onChanged});
+  final AppState app;
+  final Emote? emote;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final Emote? e = emote;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        children: <Widget>[
+          OutlinedButton.icon(
+            onPressed: e == null
+                ? null
+                : () async {
+                    await app.resetButtonCropFor(e);
+                    onChanged();
+                  },
+            icon: const Icon(Icons.restore_rounded, size: 16),
+            label: const Text('Reset this sprite to auto'),
+          ),
+          OutlinedButton.icon(
+            onPressed: e == null
+                ? null
+                : () {
+                    app.applyButtonCropToAll(app.buttonCropFor(e.sprite));
+                    onChanged();
+                  },
+            icon: const Icon(Icons.select_all_rounded, size: 16),
+            label: const Text('Apply this box to all sprites'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 Widget _previewBox(ValueNotifier<Uint8List?> preview, String caption) {
   return Column(
     children: <Widget>[
@@ -710,22 +812,55 @@ class _BtnCard extends StatefulWidget {
 }
 
 class _BtnCardState extends State<_BtnCard> {
-  bool _seeded = false;
+  @override
+  void initState() {
+    super.initState();
+    // If the studio is already in Manual when re-entered, seed the current
+    // sprite so its box matches the live preview straight away.
+    if (widget.app.buttonFraming == CropFraming.manual) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _seedManual();
+      });
+    }
+  }
 
-  /// Seed the manual box from the auto head-square the first time the user
-  /// switches to Manual, so they start at the detected face and adjust.
+  /// Seed the **current sprite's** manual box from its own auto head-square the
+  /// first time it's shown in Manual mode (each sprite keeps its own box). If no
+  /// emote is selected yet, point at the first one so the editor + preview have
+  /// a sprite to act on.
   Future<void> _seedManual() async {
-    if (_seeded) return;
-    _seeded = true;
-    final CropBox seed = await widget.app.headCropFor(widget.app.current);
+    final AppState app = widget.app;
+    if (app.current == null && (app.character?.emotes.isNotEmpty ?? false)) {
+      app.selectEmote(0);
+    }
+    await app.ensureButtonCropSeeded(app.current);
     if (!mounted) return;
-    setState(() => widget.app.buttonCrop = seed);
+    setState(() {});
+    widget.onChanged();
+  }
+
+  /// Step the Button Studio's "current sprite" (drives both the per-sprite crop
+  /// editor and the live preview), seeding the newly-shown sprite on arrival.
+  Future<void> _gotoEmote(int index) async {
+    final AppState app = widget.app;
+    final int n = app.character?.emotes.length ?? 0;
+    if (n == 0) return;
+    app.selectEmote(index.clamp(0, n - 1));
+    await app.ensureButtonCropSeeded(app.current);
+    if (!mounted) return;
+    setState(() {});
     widget.onChanged();
   }
 
   @override
   Widget build(BuildContext context) {
     final AppState app = widget.app;
+    // Capture the current emote/sprite ONCE per build so the Manual editor's
+    // display, its lookups, and its writes all agree. (`app.current` can change
+    // without rebuilding this card — e.g. the global prev/next-emote shortcut —
+    // which would otherwise show sprite A while a drag wrote to sprite B's box.)
+    final Emote? cur = app.current;
+    final String? curSprite = cur?.sprite;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -777,26 +912,38 @@ class _BtnCardState extends State<_BtnCard> {
                       if (app.buttonFraming == CropFraming.manual) ...<Widget>[
                         const SizedBox(height: 4),
                         const Text(
-                          'Drag the box to move it, drag the corner to resize — '
-                          'this one box crops every button. (Sliders below for '
-                          'exact values.)',
+                          'Each sprite has its OWN box — step through them with '
+                          '◀ ▶ and frame every pose by hand. Drag the box to '
+                          'move it, drag the corner to resize. Sprites you never '
+                          'touch auto-frame the face. (Sliders below for exact '
+                          'values.)',
                           style: TextStyle(fontSize: 12, color: Colors.white60),
                         ),
                         const SizedBox(height: 6),
+                        _SpriteNav(app: app, onGoto: _gotoEmote),
+                        const SizedBox(height: 6),
                         _CropBoxEditor(
                           app: app,
-                          emote: app.current,
+                          emote: cur,
                           revision: app.spriteRevision,
-                          box: app.buttonCrop,
+                          box: app.buttonCropFor(curSprite),
                           onChanged: (CropBox b) {
-                            setState(() => app.buttonCrop = b);
+                            setState(() => app.setButtonCrop(curSprite, b));
                             widget.onChanged();
                           },
                         ),
-                        _cropSliders(app.buttonCrop, (CropBox b) {
-                          setState(() => app.buttonCrop = b);
+                        _cropSliders(app.buttonCropFor(curSprite), (CropBox b) {
+                          setState(() => app.setButtonCrop(curSprite, b));
                           widget.onChanged();
                         }),
+                        _ManualCropActions(
+                          app: app,
+                          emote: cur,
+                          onChanged: () {
+                            setState(() {});
+                            widget.onChanged();
+                          },
+                        ),
                       ] else ...<Widget>[
                         if (app.buttonFraming == CropFraming.head)
                           _ValueSlider(

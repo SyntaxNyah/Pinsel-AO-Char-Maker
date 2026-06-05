@@ -28,12 +28,14 @@ void main() {
 
     final List<String> calls = <String>[];
     final Organizer org = Organizer(
-      buttonRenderer: (Uint8List b, String e, int s, CropFraming f, double z) async {
-        calls.add('btn:$s:${f.id}');
+      buttonRenderer: (Uint8List b, String e, int s, CropFraming f, double z,
+          String? sb) async {
+        calls.add('btn:$s:${f.id}:$sb');
         return b;
       },
-      iconRenderer: (Uint8List b, String e, int s, CropFraming f, double z) async {
-        calls.add('icon:$s:${f.id}');
+      iconRenderer: (Uint8List b, String e, int s, CropFraming f, double z,
+          String? sb) async {
+        calls.add('icon:$s:${f.id}:$sb');
         return b;
       },
     );
@@ -55,9 +57,10 @@ void main() {
 
     expect(await target.exists('Bob/char_icon.png'), isTrue);
     expect(await target.exists('Bob/emotions/button1_off.png'), isTrue);
-    // Buttons used the button size + framing; the icon used its own.
-    expect(calls.any((String c) => c == 'btn:128:head'), isTrue);
-    expect(calls.any((String c) => c == 'icon:40:full'), isTrue);
+    // Buttons used the button size + framing + the emote's sprite base (for
+    // per-sprite manual crops); the icon used its own size/framing and no base.
+    expect(calls.any((String c) => c == 'btn:128:head:happy'), isTrue);
+    expect(calls.any((String c) => c == 'icon:40:full:null'), isTrue);
   });
 
   test('generateCharIcon=false skips the icon', () async {
@@ -70,7 +73,9 @@ void main() {
 
     final MemoryWorkspace target = MemoryWorkspace();
     await Organizer(
-      buttonRenderer: (Uint8List b, String e, int s, CropFraming f, double z) async => b,
+      buttonRenderer: (Uint8List b, String e, int s, CropFraming f, double z,
+              String? sb) async =>
+          b,
     ).organize(
       character: character,
       scan: scan,

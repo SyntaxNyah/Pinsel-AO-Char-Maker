@@ -161,10 +161,70 @@ class AppState extends ChangeNotifier {
   double iconOffsetY = 0;
 
   /// Manual crop boxes (KFO/DRO-style "drag a box on the sprite") used when the
-  /// framing is [CropFraming.manual] — one box (in fractions) applied to every
-  /// button / the char_icon. Seeded from the auto head-square on first switch.
-  CropBox buttonCrop = CropBox.initial;
+  /// framing is [CropFraming.manual]. Buttons keep **one box per sprite** in
+  /// [buttonCrops] (keyed by the emote's `sprite` base name) so different poses
+  /// can each be framed by hand; a sprite with no entry auto-frames its own head
+  /// (see [ButtonMaker.renderFramed]'s manual fallback), so you only customise
+  /// the sprites you care about. The char_icon keeps its own single [iconCrop].
+  /// All are seeded from the auto head-square on first switch.
+  final Map<String, CropBox> buttonCrops = <String, CropBox>{};
   CropBox iconCrop = CropBox.initial;
+
+  /// The stored manual box for [spriteBase], or null when that sprite hasn't
+  /// been customised (the renderer then auto-frames its head — untouched sprites
+  /// still get a good button without visiting all of them).
+  CropBox? buttonCropRaw(String? spriteBase) =>
+      (spriteBase == null || spriteBase.isEmpty) ? null : buttonCrops[spriteBase];
+
+  /// The manual box for [spriteBase] to **edit/draw** — the stored box, or
+  /// [CropBox.initial] as a neutral placeholder until [ensureButtonCropSeeded]
+  /// fills in a real per-sprite head-square.
+  CropBox buttonCropFor(String? spriteBase) =>
+      buttonCropRaw(spriteBase) ?? CropBox.initial;
+
+  /// Store [box] as [spriteBase]'s manual crop (the studio mutates this directly
+  /// for lag-free dragging, then reschedules its own preview).
+  void setButtonCrop(String? spriteBase, CropBox box) {
+    if (spriteBase == null || spriteBase.isEmpty) return;
+    buttonCrops[spriteBase] = box;
+  }
+
+  /// Seed [e]'s sprite with a manual box derived from its **own** auto
+  /// head-square the first time it's shown in Manual mode, so every sprite
+  /// starts at its detected face. No-op if it already has a box or no sprite.
+  /// Returns true if it seeded (the caller should refresh).
+  Future<bool> ensureButtonCropSeeded(Emote? e) async {
+    if (e == null || e.sprite.isEmpty || buttonCrops.containsKey(e.sprite)) {
+      return false;
+    }
+    buttonCrops[e.sprite] = await headCropFor(e);
+    return true;
+  }
+
+  /// Re-seed [e]'s sprite box from its auto head-square — the Manual "reset this
+  /// sprite to auto" action.
+  Future<void> resetButtonCropFor(Emote? e) async {
+    if (e == null || e.sprite.isEmpty) return;
+    buttonCrops[e.sprite] = await headCropFor(e);
+  }
+
+  /// Copy [box] onto every emote's sprite — the Manual "apply this box to all
+  /// sprites" action (handy when many poses share a framing).
+  void applyButtonCropToAll(CropBox box) {
+    for (final Emote e in character?.emotes ?? const <Emote>[]) {
+      if (e.sprite.isNotEmpty) buttonCrops[e.sprite] = box;
+    }
+  }
+
+  /// (customised, total) count of distinct non-empty sprite bases — the
+  /// Manual-mode "k of N customised" caption.
+  (int, int) get buttonCropCoverage {
+    final Set<String> bases = <String>{
+      for (final Emote e in character?.emotes ?? const <Emote>[])
+        if (e.sprite.isNotEmpty) e.sprite,
+    };
+    return (bases.where(buttonCrops.containsKey).length, bases.length);
+  }
 
   /// Optional art composited into every button: [buttonBg] sits behind the
   /// sprite, [buttonFg] is laid **on top** (a KFO-style border/frame). The icon
@@ -232,6 +292,7 @@ class AppState extends ChangeNotifier {
   void _clearWorkspaceFiles() {
     workspace.clear();
     mixSources.clear();
+    buttonCrops.clear();
   }
 
   /// Sanitise a picked folder name into a usable character/folder name, or null
@@ -249,6 +310,7 @@ class AppState extends ChangeNotifier {
   void resetProject() {
     workspace.clear();
     mixSources.clear();
+    buttonCrops.clear();
     history.clear();
     character = null;
     scan = null;
@@ -854,7 +916,8 @@ class AppState extends ChangeNotifier {
         offsetY: buttonOffsetY,
         background: buttonBg.image,
         foreground: buttonFg.image,
-        manualCrop: buttonFraming == CropFraming.manual ? buttonCrop : null);
+        manualCrop:
+            buttonFraming == CropFraming.manual ? buttonCropRaw(e.sprite) : null);
   }
 
   /// The plain base sprite (bytes + aspect) for the manual crop-box editor, for
@@ -1757,26 +1820,29 @@ class AppState extends ChangeNotifier {
   /// icon get their own renderer so each can carry a different (or no) border.
   /// Shared by single export ([buildOutput]) and [bulkBuildCharacters].
   Organizer _studioOrganizer() => Organizer(
-        buttonRenderer:
-            (Uint8List b, String e, int s, CropFraming f, double z) =>
-                ButtonMaker.renderAutoOverlaid(b, e, s,
-                    framing: f,
-                    zoom: z,
-                    offsetX: buttonOffsetX,
-                    offsetY: buttonOffsetY,
-                    background: buttonBg.image,
-                    foreground: buttonFg.image,
-                    manualCrop: f == CropFraming.manual ? buttonCrop : null),
-        iconRenderer:
-            (Uint8List b, String e, int s, CropFraming f, double z) =>
-                ButtonMaker.renderAutoOverlaid(b, e, s,
-                    framing: f,
-                    zoom: z,
-                    offsetX: iconOffsetX,
-                    offsetY: iconOffsetY,
-                    background: iconBg.image,
-                    foreground: iconFg.image,
-                    manualCrop: f == CropFraming.manual ? iconCrop : null),
+        buttonRenderer: (Uint8List b, String e, int s, CropFraming f, double z,
+                String? spriteBase) =>
+            ButtonMaker.renderAutoOverlaid(b, e, s,
+                framing: f,
+                zoom: z,
+                offsetX: buttonOffsetX,
+                offsetY: buttonOffsetY,
+                background: buttonBg.image,
+                foreground: buttonFg.image,
+                // Each button uses its own sprite's box; an untouched sprite
+                // (null) auto-frames its head in renderFramed.
+                manualCrop:
+                    f == CropFraming.manual ? buttonCropRaw(spriteBase) : null),
+        iconRenderer: (Uint8List b, String e, int s, CropFraming f, double z,
+                String? spriteBase) =>
+            ButtonMaker.renderAutoOverlaid(b, e, s,
+                framing: f,
+                zoom: z,
+                offsetX: iconOffsetX,
+                offsetY: iconOffsetY,
+                background: iconBg.image,
+                foreground: iconFg.image,
+                manualCrop: f == CropFraming.manual ? iconCrop : null),
       );
 
   /// The current button/char_icon studio settings as an [OrganizeConfig] for a

@@ -91,5 +91,30 @@ void main() {
       final Uint8List b = ButtonMaker.renderFramed(_figure(), 32, offsetY: 0.4);
       expect(a, isNot(equals(b)));
     });
+
+    test('manual framing with no box falls back to the auto head-square', () {
+      // Per-sprite Manual mode leaves untouched sprites with a null box; they
+      // should auto-frame the face, not square the whole body.
+      final img.Image fig = _figure();
+      final Uint8List manualNull =
+          ButtonMaker.renderFramed(fig, 32, framing: CropFraming.manual);
+      final Uint8List head =
+          ButtonMaker.renderFramed(fig, 32, framing: CropFraming.head);
+      expect(manualNull, equals(head));
+    });
+
+    test('manual framing with a box crops exactly that square', () {
+      final img.Image fig = _figure(); // 100×200
+      const CropBox box = CropBox(0.1, 0.1, 0.5); // 50px square at (10,20)
+      final Uint8List png = ButtonMaker.renderFramed(fig, 50,
+          framing: CropFraming.manual, manualCrop: box);
+      final img.Image out = Codecs.decode(png, ext: 'png')!;
+      expect(out.width, 50);
+      // The box (x 10..60, y 20..70) misses the head (x42..58,y12..50 only
+      // partially) — just assert it differs from the auto head crop.
+      final Uint8List head =
+          ButtonMaker.renderFramed(fig, 50, framing: CropFraming.head);
+      expect(png, isNot(equals(head)));
+    });
   });
 }

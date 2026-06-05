@@ -181,8 +181,11 @@ The central model.
 
 ### discovery/organizer.dart
 - `typedef ButtonRenderer = Future<Uint8List?> Function(bytes, ext, size,
-  framing, zoom)` — framing/zoom let the renderer head-crop; overlays/offsets are
-  captured by the injected closure (see `AppState.buildOutput`).
+  framing, zoom, spriteBase)` — framing/zoom let the renderer head-crop;
+  overlays/offsets + the **per-sprite manual crop** are captured by the injected
+  closure (see `AppState.buildOutput`). `spriteBase` is the emote's `sprite`
+  base name so the closure can pick that sprite's own manual box; it's `null`
+  for the char_icon. `ButtonJob` carries the `spriteBase` from `plan`.
 - `typedef ProgressCallback = void Function(done,total,label)`.
 - `class OrganizeConfig({targetCharDir,deleteOriginals,generateButtons,
   buttonSize,buttonFraming,buttonZoom,overwriteExistingButtons,generateCharIcon,
@@ -293,13 +296,17 @@ The central model.
   edge as a frac of width → square in px). `toPixels(w,h)` returns a square
   **clamped** fully inside the image (the safety net for the draggable editor);
   `fromPixels(rect,w,h)` (seed from `headSquare`), `initial`, `copyWith`. Used by
-  `CropFraming.manual` (Button Studio "Manual" mode). One box applies to all
-  buttons; the icon has its own.
+  `CropFraming.manual` (Button Studio "Manual" mode). **Buttons keep one box per
+  sprite** (`AppState.buttonCrops`, keyed by sprite base); the icon has its own.
 - `renderFramed`/`renderAutoOverlaid` take **`CropBox? manualCrop`**: when
-  `framing == manual`, the square is `manualCrop.toPixels(...)` and the auto
-  offsets are skipped. Threaded from `AppState` (`buttonCrop`/`iconCrop`) via the
-  preview calls + the `_studioOrganizer` renderer closures (NOT the
-  `ButtonRenderer` typedef — closures capture it like the overlays/offsets).
+  `framing == manual` and the box is non-null the square is
+  `manualCrop.toPixels(...)`; when `framing == manual` and the box is **null**
+  (a sprite the user never hand-placed) it **falls back to `headSquare`** so
+  every button still frames a face. Auto offsets are skipped in manual. Threaded
+  from `AppState` (`buttonCropRaw(spriteBase)`/`iconCrop`) via the preview calls
+  + the `_studioOrganizer` renderer closures (the closures capture it like the
+  overlays/offsets; the typedef passes `spriteBase` so the closure can resolve
+  the right box per button).
 - `ButtonMaker.renderAuto(bytes,ext,size,[framing,zoom])` (matches
   `ButtonRenderer`; framing defaults to **head/face**),
   `.renderAutoOverlaid(bytes,ext,size,{framing,zoom,offsetX,offsetY,background,
@@ -546,6 +553,17 @@ The central model.
     / `previewCharIcon()` use `renderFramed`; `saveCharIcon()` bakes `char_icon.png`
     into the project; `buildOutput()` feeds them all into `OrganizeConfig` and wraps
     `ButtonMaker.renderAutoOverlaid` in `buttonRenderer`/`iconRenderer` closures.
+  - **Per-sprite manual crops**: `buttonCrops` is a `Map<spriteBase, CropBox>`
+    (replaces the old single `buttonCrop`) so each sprite gets its own hand-placed
+    box in Manual mode; a sprite with no entry renders with its auto head-square.
+    `buttonCropRaw(base)` (stored box or null → head fallback in `renderFramed`),
+    `buttonCropFor(base)` (box or `CropBox.initial`, for the editor),
+    `setButtonCrop(base,box)`, `ensureButtonCropSeeded(emote)` (lazy seed from the
+    sprite's own head-square on first view), `resetButtonCropFor(emote)`,
+    `applyButtonCropToAll(box)`, and `buttonCropCoverage` (→ `(customised,total)`
+    distinct sprite bases, for the caption). The char_icon still uses one `iconCrop`.
+    `buttonCrops` is cleared on `resetProject`/`importFiles` (via
+    `_clearWorkspaceFiles`).
   - **Preview cache + lag fix**: `previewSprite(rel)` memoises the plain (no-op
     pipeline) PNG per `rel@maxEdge`; `_invalidateImageCaches()` clears the decode +
     preview caches and bumps `spriteRevision` whenever sprite pixels/paths change.
@@ -589,17 +607,28 @@ The central model.
     newIndex)`, which uses the raw `ReorderableListView` drop index), and
     **auto-scrolls** to the selected emote when it changes externally (keyboard
     `Ctrl+↑/↓`) via a `ScrollController` + estimated row extent (only when
-    off-screen).
+    off-screen). **Tap sets `_lastSelected = i` before `selectEmote`** so the
+    auto-scroll is suppressed for a tap (the row is already visible) — the row-
+    extent estimate is imperfect and was jumping the list to a different emote on
+    every click ("click a sprite, it selects the one above"). The number badge
+    is a `FittedBox`-scaled `CircleAvatar` so 3+ digit emote numbers (100+ casts)
+    stay readable instead of being clipped by the circle.
   - `button_studio`: **Button & Icon Studio** — 3-way framing (**Face** / **Full**
     / **Manual**), size, face zoom (0.25–4×), crop **Move X/Y** offsets (±100%),
     and **overlays** (a KFO-style border on top + a background) for **both**
     buttons and the char_icon. **Manual mode** (`_CropBoxEditor` + `_cropSliders`):
     drag the box / drag the corner to resize over the base sprite (loaded via
-    `spriteEditorSource`, reloads on emote/`spriteRevision`), seeded once from
-    `headCropFor` (auto head-square) on first switch; writes `app.buttonCrop`/
-    `iconCrop` + reschedules the preview. In Manual the auto controls (face zoom,
-    Move X/Y) are hidden — one positioning system at a time. `toPixels` clamps so
-    a sloppy drag still yields a valid square. Every numeric setting is a `_ValueSlider` (a slider + a
+    `spriteEditorSource`, reloads on emote/`spriteRevision`), seeded from the
+    sprite's own `headCropFor` (auto head-square). **Buttons are per-sprite**: a
+    `_SpriteNav` (◀ ▶ "Sprite k of N" + a "customised k/N" caption) steps
+    `app.selectEmote` through the cast so you can frame every pose by hand,
+    writing each to `app.buttonCrops[sprite]` via `setButtonCrop` (seeded lazily
+    by `ensureButtonCropSeeded` as you arrive on a sprite); `_ManualCropActions`
+    offers **Reset this sprite to auto** (`resetButtonCropFor`) and **Apply this
+    box to all sprites** (`applyButtonCropToAll`). The char_icon keeps its single
+    `iconCrop`. In Manual the auto controls (face zoom, Move X/Y) are hidden —
+    one positioning system at a time. `toPixels` clamps so a sloppy drag still
+    yields a valid square. Every numeric setting is a `_ValueSlider` (a slider + a
     **typeable value box**, kept in sync: drag, or type an exact value committed
     on Enter/blur and clamped to range) — replaces the old slider-only helpers.
     Each overlay slot offers **Presets** (a grouped grid picker over

@@ -21,7 +21,12 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   buttons + char_icon → exported `.zip`, in one action (WebP convert is opt-in:
   forcing it via native FFI was hard-crashing, see PERFORMANCE/FAQ)
 - ✅ **Manual button/icon crop** (`CropFraming.manual` + `CropBox`) — KFO/DRO-style
-  draggable/resizable crop box + X/Y/Size sliders, seeded from the auto head-square
+  draggable/resizable crop box + X/Y/Size sliders, seeded from the auto head-square.
+  **Per-sprite**: buttons keep one box *per sprite* (`AppState.buttonCrops`,
+  keyed by sprite base) with a ◀ ▶ sprite navigator, a "k of N customised"
+  caption, **Reset this sprite to auto** + **Apply this box to all sprites**;
+  untouched sprites auto-frame their own face, so you only hand-place the poses
+  the auto crop gets wrong
 - ✅ **`pinselcredits.txt`** stamped into every exported character (attribution +
   bug-report URL), written by the Organizer (single + bulk)
 - ⬜ Auto `credits.txt` scaffolding
@@ -113,6 +118,10 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   (incl. the Mixer), cached chip lists, smooth (non-pixelated) scaling
 - ✅ Performance: field editing (Emotes/Character) is no longer re-rendered per
   keystroke — it commits on blur, and the preview is cached per sprite revision
+- ✅ Emote list fixes for big casts: tapping a row no longer auto-scrolls the
+  list and selects the wrong (upper) emote (tap syncs `_lastSelected`); the
+  number badge scales to fit so 3+ digit emote numbers (100+ sprites) aren't
+  clipped
 - ✅ Performance: allocation-free per-pixel op core (sequential pixel cursor),
   bulk/recolour/edit loops yield so the UI stays responsive
 - ✅ Keyboard shortcuts (undo/redo, import/export, screen jumps, F1 help) + a
