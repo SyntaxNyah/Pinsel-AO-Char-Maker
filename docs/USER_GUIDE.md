@@ -393,6 +393,9 @@ and **Manual**.
   - The **on-screen preview is rendered larger than the export** so a tiny 40×40
     button still *frames* sharply while you work — the saved file is still the
     size you picked (shown under the preview).
+  - **If buttons still look soft *in-game*, your theme displays them bigger than
+    40px** (many HD / KFO themes do) — the client is upscaling the 40px file.
+    Just bump the size up (e.g. 64–128) to match what the theme shows.
 
 > **Slider *or* exact value.** Every setting (size, zoom, move X/Y) is a slider
 > with a **typeable box** next to it — drag for a quick adjust, or type an exact

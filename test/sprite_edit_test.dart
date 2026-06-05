@@ -72,6 +72,20 @@ void main() {
       final img.Image src = _solid(10, 10);
       expect(identical(SpriteEdit.cropTo(src, const IntRect(0, 0, 10, 10)), src), isTrue);
     });
+
+    test('crop one side + grow the other (mixed offset, no negative dstX)', () {
+      // What `computeRect(cropLeft:0.1, padRight:0.3)` yields on a 10×10: drop
+      // the left column, add 3px of margin on the right. The grow branch must
+      // copy src cols 1..9 to canvas cols 0..8 and leave cols 9..11 empty —
+      // i.e. a positive srcX with a zero (never negative) dstX.
+      final img.Image out = SpriteEdit.cropTo(_solid(10, 10), const IntRect(1, 0, 12, 10));
+      expect(out.width, 12);
+      expect(out.height, 10);
+      expect(out.getPixel(0, 0).a, 255); // src col 1 → here, opaque
+      expect(out.getPixel(8, 0).a, 255); // src col 9 → here, opaque
+      expect(out.getPixel(9, 0).a, 0); // new right margin transparent
+      expect(out.getPixel(11, 0).a, 0);
+    });
   });
 
   group('apply (preview path)', () {

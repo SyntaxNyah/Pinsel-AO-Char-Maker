@@ -161,7 +161,22 @@ class SpriteEdit {
       final img.Image src = f.numChannels == 4 ? f : f.convert(numChannels: 4);
       final img.Image canvas =
           img.Image(width: r.w, height: r.h, numChannels: 4);
-      img.compositeImage(canvas, src, dstX: -r.x, dstY: -r.y);
+      // The rect can crop one side AND grow another at once (e.g. crop left +
+      // grow top), so the offset on each axis may be inward (skip src pixels) or
+      // outward (leave a transparent margin). Compute non-negative dst/src
+      // offsets and an explicitly-bounded copy region — never hand
+      // compositeImage a negative dstX/dstY (its clipping behaviour isn't
+      // guaranteed and a throw here would hang applyEdit on "busy").
+      final int dstX = r.x < 0 ? -r.x : 0;
+      final int dstY = r.y < 0 ? -r.y : 0;
+      final int srcX = r.x > 0 ? r.x : 0;
+      final int srcY = r.y > 0 ? r.y : 0;
+      final int copyW = math.min(src.width - srcX, r.w - dstX);
+      final int copyH = math.min(src.height - srcY, r.h - dstY);
+      if (copyW > 0 && copyH > 0) {
+        img.compositeImage(canvas, src,
+            dstX: dstX, dstY: dstY, srcX: srcX, srcY: srcY, srcW: copyW, srcH: copyH);
+      }
       return canvas;
     }).toList();
     final img.Image out = cropped.first;

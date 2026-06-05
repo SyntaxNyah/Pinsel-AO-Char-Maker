@@ -108,7 +108,9 @@ class _ButtonStudioScreenState extends State<ButtonStudioScreen> {
           'full-res sprite (never upscaled). The default is the classic '
           '40×40 AO button: exporting at the size the theme shows it means no '
           'blurry theme-side rescale in-game. The on-screen preview is rendered '
-          'larger so framing stays crisp — the file is still the size you pick.',
+          'larger so framing stays crisp — the file is still the size you pick. '
+          'If buttons look soft in your theme, it shows them bigger than 40px — '
+          'just raise the size.',
         ),
         const SizedBox(height: 16),
 
