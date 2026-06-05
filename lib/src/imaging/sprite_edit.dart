@@ -162,20 +162,22 @@ class SpriteEdit {
       final img.Image canvas =
           img.Image(width: r.w, height: r.h, numChannels: 4);
       // The rect can crop one side AND grow another at once (e.g. crop left +
-      // grow top), so the offset on each axis may be inward (skip src pixels) or
-      // outward (leave a transparent margin). Compute non-negative dst/src
-      // offsets and an explicitly-bounded copy region — never hand
-      // compositeImage a negative dstX/dstY (its clipping behaviour isn't
-      // guaranteed and a throw here would hang applyEdit on "busy").
-      final int dstX = r.x < 0 ? -r.x : 0;
-      final int dstY = r.y < 0 ? -r.y : 0;
-      final int srcX = r.x > 0 ? r.x : 0;
-      final int srcY = r.y > 0 ? r.y : 0;
-      final int copyW = math.min(src.width - srcX, r.w - dstX);
-      final int copyH = math.min(src.height - srcY, r.h - dstY);
-      if (copyW > 0 && copyH > 0) {
-        img.compositeImage(canvas, src,
-            dstX: dstX, dstY: dstY, srcX: srcX, srcY: srcY, srcW: copyW, srcH: copyH);
+      // grow top), so each axis is partly inside the source and partly past it.
+      // Crop out the *overlapping* source region with copyCrop (well-tested),
+      // then drop it onto the transparent canvas at a **non-negative** offset.
+      // We deliberately avoid compositeImage's srcX/srcW cropping (its source-
+      // region semantics scale rather than crop) and never pass a negative
+      // dstX/dstY (a throw here would hang applyEdit on "busy").
+      final int ox0 = r.x < 0 ? 0 : r.x;
+      final int oy0 = r.y < 0 ? 0 : r.y;
+      final int ox1 = math.min(w, r.x + r.w);
+      final int oy1 = math.min(h, r.y + r.h);
+      final int overlapW = ox1 - ox0;
+      final int overlapH = oy1 - oy0;
+      if (overlapW > 0 && overlapH > 0) {
+        final img.Image piece =
+            img.copyCrop(src, x: ox0, y: oy0, width: overlapW, height: overlapH);
+        img.compositeImage(canvas, piece, dstX: ox0 - r.x, dstY: oy0 - r.y);
       }
       return canvas;
     }).toList();
