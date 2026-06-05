@@ -26,7 +26,9 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   keyed by sprite base) with a ◀ ▶ sprite navigator, a "k of N customised"
   caption, **Reset this sprite to auto** + **Apply this box to all sprites**;
   untouched sprites auto-frame their own face, so you only hand-place the poses
-  the auto crop gets wrong
+  the auto crop gets wrong. **Keyboard-driven, KFO-style**: a big framing canvas
+  + single-key flow (`[`/`]` prev/next, Enter make-&-next, R reset, A apply-all,
+  F cycle framing) so you frame a 100-sprite cast without reaching for the rail
 - ✅ **`pinselcredits.txt`** stamped into every exported character (attribution +
   bug-report URL), written by the Organizer (single + bulk)
 - ⬜ Auto `credits.txt` scaffolding
@@ -108,9 +110,16 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ⬜ Recent projects / autosave
 
 ## UI polish
-- ✅ Button & Icon Studio: head/face vs full-body framing (face default), size,
+- ✅ Button & Icon Studio: head/face vs full-body framing (face default), size
+  (**defaults to the classic 40×40** so the theme shows it 1:1 = crisp in-game;
+  the on-screen preview renders larger so small buttons still frame sharply),
   zoom, crop-position offsets, and **image overlays** (KFO-style borders +
   backgrounds) for both buttons and the char_icon
+- ✅ **Edit screen grows as well as crops**: each side is one bidirectional
+  slider (crop in / pad out with transparency) with `−`/`+` 1% steppers, plus a
+  This-sprite / All-sprites toggle
+- ✅ **Emotes sound picker**: the Sound (SoundN) field has a working ▾ that lists
+  used names + sfx guesses + bundled audio files (free typing still allowed)
 - ✅ Dedicated **char.ini builder** screen (the full `[Options]` block: name,
   showname, blips, chat, side, category, scaling, …)
 - ✅ About / credits (maintainer + repo) in the toolbar and on Home

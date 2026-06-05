@@ -385,6 +385,29 @@ class AppState extends ChangeNotifier {
           if (!f.startsWith('$_mixPrefix/')) f,
       ];
 
+  /// Sound names the Emotes-tab **sound picker** offers for the `[SoundN]`
+  /// field: names already used by other emotes, the built-in sfx guesses, and
+  /// any audio files bundled with the imported character (offered by *base*
+  /// name, since AO references a sound without its extension). Sorted,
+  /// de-duplicated, and free of the "no sound" sentinels. This is only a list of
+  /// suggestions — the field still lets you type any name you like.
+  Future<List<String>> availableSoundNames() async {
+    final Set<String> names = <String>{};
+    for (final Emote e in character?.emotes ?? const <Emote>[]) {
+      if (e.hasMeaningfulSound && e.soundName != null) names.add(e.soundName!);
+    }
+    names.addAll(soundGuessNames());
+    for (final String rel in await _projectFiles()) {
+      final String ext = p.extension(rel).replaceFirst('.', '').toLowerCase();
+      if (kAudioExtensions.contains(ext)) {
+        names.add(p.basenameWithoutExtension(rel));
+      }
+    }
+    names.removeWhere((String s) => s.trim().isEmpty);
+    final List<String> out = names.toList()..sort();
+    return out;
+  }
+
   Future<void> _rebuild() async {
     _invalidateImageCaches();
     final List<String> files = await _projectFiles();
@@ -958,16 +981,19 @@ class AppState extends ChangeNotifier {
     return es[start];
   }
 
-  /// Preview the auto-generated **char_icon** at [iconSize] px, using the current
-  /// [iconFraming]/[iconZoom] and [iconSourceEmote].
-  Future<Uint8List?> previewCharIcon() async {
+  /// Preview the auto-generated **char_icon**, using the current
+  /// [iconFraming]/[iconZoom] and [iconSourceEmote]. Renders at [size] px when
+  /// given (the studio passes a larger preview resolution so a small icon still
+  /// frames crisply on screen), otherwise at the real [iconSize] that
+  /// [saveCharIcon] bakes into the export.
+  Future<Uint8List?> previewCharIcon([int? size]) async {
     final Emote? e = iconEmote();
     if (e == null) return null;
     final String? rel = spriteRelFor(e);
     if (rel == null) return null;
     final img.Image? frame = await decodeFirstFrame(rel);
     if (frame == null) return null;
-    return ButtonMaker.renderFramed(frame, iconSize,
+    return ButtonMaker.renderFramed(frame, size ?? iconSize,
         framing: iconFraming,
         zoom: iconZoom,
         offsetX: iconOffsetX,

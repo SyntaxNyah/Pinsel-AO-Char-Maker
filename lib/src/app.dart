@@ -242,6 +242,9 @@ class _HomeShellState extends State<HomeShell> {
       <String>['Ctrl/⌘ + N', 'Add a new emote'],
       <String>['Ctrl/⌘ + ↑ / ↓', 'Previous / next emote'],
       <String>['Ctrl/⌘ + 1 … 9', 'Jump to a screen (Home, Character … Bulk)'],
+      <String>['Buttons (Manual) · [ / ]', 'Previous / next sprite to frame'],
+      <String>['Buttons (Manual) · Enter / Space', 'Make this button & go to the next sprite'],
+      <String>['Buttons (Manual) · R / A / F', 'Reset sprite to auto · apply box to all · cycle framing'],
       <String>['F1', 'Show this list'],
     ];
     showDialog<void>(

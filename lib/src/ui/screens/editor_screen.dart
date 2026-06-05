@@ -423,8 +423,18 @@ class _FieldsState extends State<_Fields> {
               },
             ),
           ),
-          _text('Sound (SoundN)', _sound,
-              (String v) => e.soundName = v.isEmpty ? null : v, width: 200),
+          SizedBox(
+            width: 220,
+            child: _SoundField(
+              controller: _sound,
+              app: widget.app,
+              onChanged: (String v) {
+                e.soundName = v.isEmpty ? null : v;
+                _dirty = true;
+              },
+              onCommit: _commit,
+            ),
+          ),
           _text('Delay ticks', _delay,
               (String v) => e.soundDelayTicks = int.tryParse(v), width: 110),
           Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
@@ -456,4 +466,103 @@ class _FieldsState extends State<_Fields> {
           onSubmitted: (_) => _commit(),
         ),
       );
+}
+
+/// The `[SoundN]` field with a **working sound picker**: a dropdown arrow that
+/// opens a list of sounds already used in the character, the built-in sfx
+/// guesses, and any audio files bundled with the imported folder
+/// ([AppState.availableSoundNames]). You can always just type a name instead —
+/// the picker only fills the box for you. (Replaces the old plain text box whose
+/// neighbouring caret looked like it should do this but didn't.)
+class _SoundField extends StatefulWidget {
+  const _SoundField({
+    required this.controller,
+    required this.app,
+    required this.onChanged,
+    required this.onCommit,
+  });
+
+  final TextEditingController controller;
+  final AppState app;
+
+  /// Write the typed/picked value to the emote model (live, no rebuild).
+  final ValueChanged<String> onChanged;
+
+  /// Commit the change (undo snapshot + list refresh).
+  final VoidCallback onCommit;
+
+  @override
+  State<_SoundField> createState() => _SoundFieldState();
+}
+
+class _SoundFieldState extends State<_SoundField> {
+  List<String> _options = const <String>[];
+  bool _loaded = false;
+
+  void _pick(String s) {
+    widget.controller.text = s;
+    widget.controller.selection = TextSelection.collapsed(offset: s.length);
+    widget.onChanged(s);
+    widget.onCommit();
+  }
+
+  /// Load the suggestion list (once) and pop a menu anchored under the field.
+  Future<void> _openPicker() async {
+    if (!_loaded) {
+      _options = await widget.app.availableSoundNames();
+      _loaded = true;
+    }
+    if (!mounted) return;
+    final RenderBox box = context.findRenderObject() as RenderBox;
+    final RenderBox overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    // Anchor the menu just under the field (overlay-relative, so it's placed
+    // correctly regardless of where on screen the field is).
+    final RelativeRect position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        box.localToGlobal(box.size.bottomLeft(Offset.zero), ancestor: overlay),
+        box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+    final String? chosen = await showMenu<String>(
+      context: context,
+      position: position,
+      constraints: const BoxConstraints(minWidth: 200, maxHeight: 360),
+      items: _options.isEmpty
+          ? <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(
+                enabled: false,
+                child: Text('No sounds detected — just type a name'),
+              ),
+            ]
+          : <PopupMenuEntry<String>>[
+              for (final String s in _options)
+                PopupMenuItem<String>(value: s, child: Text(s)),
+            ],
+    );
+    if (chosen != null) _pick(chosen);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: widget.controller,
+      decoration: InputDecoration(
+        labelText: 'Sound (SoundN)',
+        suffixIcon: IconButton(
+          tooltip: 'Pick a sound',
+          icon: const Icon(Icons.arrow_drop_down_rounded),
+          onPressed: _openPicker,
+        ),
+      ),
+      onChanged: (String v) {
+        widget.onChanged(v);
+        // Re-typing should refresh the suggestion list next time it's opened
+        // (a freshly typed name might be a new audio file the user just added).
+        _loaded = false;
+      },
+      onSubmitted: (_) => widget.onCommit(),
+    );
+  }
 }

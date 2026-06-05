@@ -14,6 +14,10 @@ class SpriteEditSpec {
     this.cropTop = 0,
     this.cropRight = 0,
     this.cropBottom = 0,
+    this.padLeft = 0,
+    this.padTop = 0,
+    this.padRight = 0,
+    this.padBottom = 0,
     this.autoTrim = false,
     this.removeBgCorners = false,
     this.eraseColorEnabled = false,
@@ -21,11 +25,22 @@ class SpriteEditSpec {
     this.bgTolerance = 40,
   });
 
-  /// Crop insets as fractions of width/height (0..0.49 each).
+  /// Crop insets as fractions of width/height (0..0.49 each) — reduce the canvas
+  /// by pulling each edge *inward*.
   final double cropLeft;
   final double cropTop;
   final double cropRight;
   final double cropBottom;
+
+  /// Pad (grow) fractions of width/height — *extend* the canvas outward on each
+  /// edge with transparent pixels. The opposite of cropping; a side is never
+  /// both cropped and padded (the UI maps one bidirectional slider per side to
+  /// exactly one of these). Applied *after* crop/auto-trim, so growing always
+  /// adds clean margin around the kept content.
+  final double padLeft;
+  final double padTop;
+  final double padRight;
+  final double padBottom;
 
   /// Trim fully-transparent margins (in addition to any crop insets).
   final bool autoTrim;
@@ -45,6 +60,10 @@ class SpriteEditSpec {
       cropTop == 0 &&
       cropRight == 0 &&
       cropBottom == 0 &&
+      padLeft == 0 &&
+      padTop == 0 &&
+      padRight == 0 &&
+      padBottom == 0 &&
       !autoTrim &&
       !removeBgCorners &&
       !eraseColorEnabled;
@@ -90,7 +109,20 @@ class SpriteEdit {
     y0 = y0.clamp(0, h - 1);
     x1 = x1.clamp(x0 + 1, w);
     y1 = y1.clamp(y0 + 1, h);
-    return IntRect(x0, y0, x1 - x0, y1 - y0);
+
+    // Grow outward (pad) by the pad fractions of the *original* dimensions, on
+    // top of the inward crop/trim box. The result may have a negative origin or
+    // exceed the image bounds — [cropTo] fills the extra area with transparency,
+    // so this is how the Edit screen *adds* width/height instead of removing it.
+    final int padL = (spec.padLeft.clamp(0.0, 4.0) * w).round();
+    final int padT = (spec.padTop.clamp(0.0, 4.0) * h).round();
+    final int padR = (spec.padRight.clamp(0.0, 4.0) * w).round();
+    final int padB = (spec.padBottom.clamp(0.0, 4.0) * h).round();
+    final int rx = x0 - padL;
+    final int ry = y0 - padT;
+    final int rw = (x1 - x0) + padL + padR;
+    final int rh = (y1 - y0) + padT + padB;
+    return IntRect(rx, ry, math.max(1, rw), math.max(1, rh));
   }
 
   /// Background/colour removal only (mutates [image]'s frames in place; no size
@@ -109,17 +141,29 @@ class SpriteEdit {
     }
   }
 
-  /// Crop every frame to [r], preserving frame durations. No-op if [r] is the
-  /// full frame.
+  /// Crop **or grow** every frame to [r], preserving frame durations. No-op if
+  /// [r] is the full frame. When [r] sits fully inside the image it's a plain
+  /// crop; when it extends past an edge (a negative origin or oversize, produced
+  /// by the pad/grow sliders) each frame is painted onto a transparent canvas of
+  /// the new size so the added margin is empty — uniform across every frame so
+  /// animations stay aligned.
   static img.Image cropTo(img.Image image, IntRect r) {
     final List<img.Image> frames =
         image.frames.isEmpty ? <img.Image>[image] : image.frames.toList();
     final int w = frames.first.width, h = frames.first.height;
     if (r.x == 0 && r.y == 0 && r.w == w && r.h == h) return image;
-    final List<img.Image> cropped = frames
-        .map((img.Image f) =>
-            img.copyCrop(f, x: r.x, y: r.y, width: r.w, height: r.h))
-        .toList();
+    final bool inside =
+        r.x >= 0 && r.y >= 0 && r.x + r.w <= w && r.y + r.h <= h;
+    final List<img.Image> cropped = frames.map((img.Image f) {
+      if (inside) {
+        return img.copyCrop(f, x: r.x, y: r.y, width: r.w, height: r.h);
+      }
+      final img.Image src = f.numChannels == 4 ? f : f.convert(numChannels: 4);
+      final img.Image canvas =
+          img.Image(width: r.w, height: r.h, numChannels: 4);
+      img.compositeImage(canvas, src, dstX: -r.x, dstY: -r.y);
+      return canvas;
+    }).toList();
     final img.Image out = cropped.first;
     out.frameDuration = frames.first.frameDuration;
     for (int i = 1; i < cropped.length; i++) {

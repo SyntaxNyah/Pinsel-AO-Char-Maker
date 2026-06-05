@@ -101,10 +101,17 @@ Constants + enums. Key items:
 - `IniSection` — canonical lower-case section names.
 - `AoTiming` — `soundTickMs`=60, `frameDelayUnitSeconds`=0.01, defaults.
 - `CharFolder` — `iniName`, `charIcon`, `emotionsDir`, `buttonName(n,{on})`,
-  `recommendedButtonSize`=40, `defaultButtonSize`=128, `min/maxButtonSize`,
+  `recommendedButtonSize`=40, **`defaultButtonSize`=40** (classic AO size →
+  exported 1:1 so the theme doesn't rescale = crisp in-game; was 128, user asked
+  for 40), `min/maxButtonSize`(24–512), **`buttonPreviewRenderPx`=320** (the
+  Button/Icon Studio renders its on-screen *preview* at ≥ this, decoupled from
+  the export size, so a 40px button still frames sharply on screen),
   `recommendedIconSize`=60, `defaultIconSize`=40, `min/maxIconSize`(40–128),
   `ignoredScanDirs`, `ignoredScanBaseNames`, …
 - `kEmoteFieldSeparator`='#', `kNoPreanim`='-'.
+- `kAudioExtensions` (opus/ogg/wav/mp3) — feeds the Emotes-tab **sound picker**.
+- `CropLimits` — `maxCropFraction`=0.45, `maxPadFraction`=0.5, `stepFraction`=0.01
+  for the Edit screen's bidirectional crop/grow sliders + their −/+ steppers.
 
 ### core/ao_ini.dart
 Low-level tolerant INI.
@@ -259,15 +266,21 @@ The central model.
   `removeBackgroundFromCorners(image,{tolerance,feather})`,
   `eraseColor(image,argb,{tolerance})`.
 
-### imaging/sprite_edit.dart  ← crop / trim / background removal
-- `class SpriteEditSpec({cropLeft,cropTop,cropRight,cropBottom (fractions),
-  autoTrim, removeBgCorners, eraseColorEnabled, eraseColorValue, bgTolerance})`
-  — `.isNoop`.
-- `class SpriteEdit` — `computeRect(images, spec)` (one shared crop box for a
-  whole emote group, incl. union auto-trim), `removeBg(image, spec)` (in place,
-  no size change), `cropTo(image, rect)` (frame-aware), `apply(image, spec,
-  {rect})` (preview: removeBg → crop). Geometry is uniform across frames and
-  across an emote's (a)/(b)/(c) so animations/idle-talk stay aligned.
+### imaging/sprite_edit.dart  ← crop / **grow** / trim / background removal
+- `class SpriteEditSpec({cropLeft,cropTop,cropRight,cropBottom,
+  **padLeft,padTop,padRight,padBottom** (all fractions), autoTrim, removeBgCorners,
+  eraseColorEnabled, eraseColorValue, bgTolerance})` — `.isNoop`. **crop\* reduce
+  a side; pad\* grow (extend) it with transparency.** A side is never both (the
+  Edit UI maps one bidirectional slider per side to exactly one).
+- `class SpriteEdit` — `computeRect(images, spec)` (one shared box for a whole
+  emote group: inward crop + union auto-trim, **then grows outward by pad\*** so
+  the returned `IntRect` may have a **negative origin / exceed the image**),
+  `removeBg(image, spec)` (in place, no size change), `cropTo(image, rect)`
+  (frame-aware; when `rect` is inside it crops, when it overflows it paints each
+  frame onto a transparent canvas = the pad/grow), `apply(image, spec, {rect})`
+  (preview: removeBg → crop/grow). Geometry is uniform across frames and across
+  an emote's (a)/(b)/(c) so animations/idle-talk stay aligned. See
+  `test/sprite_edit_test.dart`.
 
 ### imaging/sprite_sheet.dart  ← rip a sheet into sprites
 - `enum SheetMode { auto, grid }`; `class SheetCell(rect,{enabled,name})`.
@@ -550,7 +563,9 @@ The central model.
     `buttonZoom`, `button/iconOffsetX/Y`; `generateCharIcon`, `iconSize` (default
     40), `iconFraming`, `iconZoom`, `iconSourceEmote`; overlay slots `buttonBg/Fg`
     + `iconBg/Fg` (`OverlaySlot`, set via `setOverlay`). `previewAutoButton(size)`
-    / `previewCharIcon()` use `renderFramed`; `saveCharIcon()` bakes `char_icon.png`
+    / **`previewCharIcon([int? size])`** use `renderFramed` (the studio passes a
+    large preview size; `size` omitted = real `iconSize`); `availableSoundNames()`
+    (async) feeds the Emotes sound picker; `saveCharIcon()` bakes `char_icon.png`
     into the project; `buildOutput()` feeds them all into `OrganizeConfig` and wraps
     `ButtonMaker.renderAutoOverlaid` in `buttonRenderer`/`iconRenderer` closures.
   - **Per-sprite manual crops**: `buttonCrops` is a `Map<spriteBase, CropBox>`
@@ -612,7 +627,12 @@ The central model.
     extent estimate is imperfect and was jumping the list to a different emote on
     every click ("click a sprite, it selects the one above"). The number badge
     is a `FittedBox`-scaled `CircleAvatar` so 3+ digit emote numbers (100+ casts)
-    stay readable instead of being clipped by the circle.
+    stay readable instead of being clipped by the circle. The **Sound (SoundN)**
+    field is now a `_SoundField`: a TextField with a working **▾ picker** (an
+    `IconButton` → `showMenu`) listing `AppState.availableSoundNames()` (names
+    used by other emotes + the sfx guesses + bundled audio files by base name);
+    free typing still allowed. (User reported the old plain field's neighbouring
+    caret "did nothing" and wanted a sound picker.)
   - `button_studio`: **Button & Icon Studio** — 3-way framing (**Face** / **Full**
     / **Manual**), size, face zoom (0.25–4×), crop **Move X/Y** offsets (±100%),
     and **overlays** (a KFO-style border on top + a background) for **both**
@@ -640,7 +660,29 @@ The central model.
     Debounced `ValueNotifier` previews; settings live on `AppState` so export uses
     them. **Buttons render crisp**: `renderFramed` never upscales and area-averages
     on downscale (PNG is lossless — sharpness is purely the resample).
-  - `edit`: crop / auto-trim / background removal (drives `SpriteEdit`).
+    **Preview vs export resolution**: `_computeBtn`/`_computeIcon` render the
+    on-screen preview at `max(size, CharFolder.buttonPreviewRenderPx)` — NOT the
+    export size — so the 40px default still frames sharply on screen (the user
+    saw a blown-up 40px preview as "crispy/low quality"); the exported file still
+    uses `app.buttonSize`/`iconSize`. `previewCharIcon([int? size])` takes the
+    preview size; `saveCharIcon` calls it with none → real `iconSize`.
+    **KFO-style fast framing (Manual mode)**: the `_CropBoxEditor` takes a
+    `height` (buttons pass **440** = a big canvas; icon stays 240), and the whole
+    manual block is wrapped in a `Focus(focusNode:_kbFocus, autofocus, onKeyEvent:
+    _onKey)` with a `Listener(onPointerDown→requestFocus)` on the canvas. Keys
+    (only when `_kbFocus.hasPrimaryFocus`, so a focused `_ValueSlider` box never
+    triggers them): **`[`/`]`** prev/next sprite, **Enter/Space** "make & next"
+    (boxes commit live, so advancing finishes the current one), **R** reset this
+    sprite to auto, **A** apply box to all, **F** cycle Face→Full→Manual — the
+    answer to "had to mouse to the top to pick the next sprite". Mirrored in the
+    F1 cheat-sheet (`app.dart`) + docs/SHORTCUTS.md. Bare keys are safe — the only
+    global shortcuts are Ctrl/⌘-modified + F1.
+  - `edit`: crop / **grow** / auto-trim / background removal (drives `SpriteEdit`).
+    Each of L/T/R/B is **one bidirectional slider** (`_sideControl`): >0 crops the
+    edge in, <0 grows the canvas out (mapped to `crop*`/`pad*` in `_spec`), with
+    **`−`/`+` stepper `IconButton`s** (`CropLimits.stepFraction` = 1% nudges).
+    Range −`maxPadFraction`..+`maxCropFraction`. A **This sprite / All sprites**
+    `SegmentedButton` (`_applyAll`) drives one Apply button.
   - `mixer`: frankensprite, **three modes** (`SegmentedButton`): **Arrange**
     (drag a snip to move, corner handle / scroll to scale, round handle to rotate),
     **Snip** (drag the crop box / corner handles on the source), **Layers** ("link

@@ -47,6 +47,19 @@ speed, then fine-tune with the keyboard:
   then **Delete (N)** to remove many at once. Drag a row to reorder — and dragging
   any **ticked** row moves the **whole selection** together (as one block), so you
   can reorder several emotes at once instead of one at a time.
+- **Buttons → Manual (frame the whole cast from the keyboard).** Click the sprite
+  once to focus the big framing canvas, then:
+
+  | Key | Action |
+  |-----|--------|
+  | `[` / `]` | Previous / next sprite to frame |
+  | `Enter` *or* `Space` | "Make it & go to the next sprite" (boxes save as you go) |
+  | `R` | Reset this sprite to its auto face crop |
+  | `A` | Apply the current box to **all** sprites |
+  | `F` | Cycle framing **Face → Full → Manual** |
+
+  Drag the box to move it, the corner to resize. These only fire while the
+  framing area is focused — typing in a value box never triggers them.
 
 These are **contextual** — they act on the focused/selected widget, not globally.
 

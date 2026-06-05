@@ -61,6 +61,11 @@ class _SoundGuess {
   final int delayTicks;
 }
 
+/// The distinct sfx names referenced by [soundGuesses] — offered as suggestions
+/// by the Emotes-tab sound picker ([AppState.availableSoundNames]).
+List<String> soundGuessNames() =>
+    soundGuesses.values.map((_SoundGuess g) => g.name).toSet().toList();
+
 /// Builds a fully-formed [Character] from a [ScanResult].
 class CharacterBuilder {
   const CharacterBuilder();

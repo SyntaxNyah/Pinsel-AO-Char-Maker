@@ -208,7 +208,10 @@ There's an **Export char.ini** button right here, too.
   - **Modifier** — *Idle* (no preanim), *Play preanim + sound*, *Zoom* (speed
     lines, hides desk), or *Zoom + preanim*.
   - **Desk** — force the desk/stand shown or hidden, with preanim variations.
-  - **Sound (SoundN)** — the sound effect name.
+  - **Sound (SoundN)** — the sound effect name. **Tap the ▾ arrow** to pick from
+    a list of sounds already used in this character, the built-in sfx names, and
+    any audio files (`.opus`/`.ogg`/`.wav`/`.mp3`) bundled in the folder you
+    imported — or just type any name yourself.
   - **Delay ticks** — wait before the sound plays (1 tick = 60 ms).
   - **Loop sound** — repeat the sound.
 
@@ -353,19 +356,26 @@ By default Pinsel frames the character's **head / face** — AO buttons show
 three modes for both the button and the icon: **Face**, **Full** (whole sprite),
 and **Manual**.
 
-- **Manual (do it yourself, KFO/DRO-style)** — pick **Manual** and a crop box
-  appears over the sprite (seeded on the detected face). **Drag the box to move
-  it**, **drag the corner to resize**, or use the **Box X / Y / Size** sliders for
-  exact values. The preview beside it updates live as you drag.
-  - **Every sprite has its own box.** Use the **◀ ▶** arrows ("Sprite *k* of *N*")
-    to step through the whole cast and frame each pose by hand — a standing full
-    body, a close-up, a sprite that's off to one side, they can each get their own
-    crop. The caption shows how many sprites you've customised (e.g. "7 of 42").
+- **Manual (do it yourself, KFO/DRO-style)** — pick **Manual** and a **big** crop
+  box appears over the sprite (seeded on the detected face). **Drag the box to
+  move it**, **drag the corner to resize**, or use the **Box X / Y / Size**
+  sliders for exact values. The preview beside it updates live as you drag.
+  - **Frame the whole cast from the keyboard — no mouse trip to the top.** Click
+    the sprite once to focus the framing area, then fly through it: **`[` / `]`**
+    previous / next sprite, **Enter** (or **Space**) "make it & go to the next",
+    **R** reset this sprite to its auto face, **A** apply the current box to every
+    sprite, **F** cycle Face → Full → Manual. (This is the fix for the classic
+    "I had to reach for the next-sprite button every single time" gripe — boxes
+    save as you go, so advancing *is* finishing the current one.)
+  - **Every sprite has its own box.** The **◀ ▶** arrows ("Sprite *k* of *N*") do
+    the same as `[` / `]` if you prefer the mouse; the caption shows how many
+    sprites you've customised (e.g. "7 of 42").
   - **Sprites you never touch auto-frame the face**, so you only have to visit the
     poses the auto crop gets wrong — you're never forced to hand-place all 100+.
-  - **Reset this sprite to auto** snaps the current one back to its detected face;
-    **Apply this box to all sprites** stamps the current box onto every sprite at
-    once (handy when many poses share the same framing).
+  - **Reset this sprite to auto** (key **R**) snaps the current one back to its
+    detected face; **Apply this box to all sprites** (key **A**) stamps the
+    current box onto every sprite at once (handy when many poses share the same
+    framing).
   - The **char_icon** keeps its own single Manual box (it's one image).
 - **Face zoom** (Face mode) — tighter or looser around the face (**0.25–4×**;
   >1 zooms in, <1 pulls back to head-and-shoulders).
@@ -373,10 +383,16 @@ and **Manual**.
   off (e.g. an off-centre or tilted head). The full **±100 %** range lets you
   shift the crop a whole crop-width/height. (In **Manual** mode the box carries
   its own position, so these are hidden — you place it directly.)
-- **Size** — buttons default **128 px** (24–512); the **char_icon** defaults to
-  **40 px** and is customisable **40–128**. Output is **lossless PNG**, crisply
-  **downscaled** from the full-res sprite and **never upscaled**, so a bigger
-  size is only as sharp as your source art (no blurry enlargement).
+- **Size** — buttons default to the **classic 40×40 AO button** (range 24–512);
+  the **char_icon** defaults to **40 px** (40–128). Output is **lossless PNG**,
+  **area-averaged** down from the full-res sprite and **never upscaled**.
+  Exporting at the size the theme actually shows the button means the client
+  doesn't have to rescale it with a cheap filter — which is what keeps it crisp
+  in-game (a big image the theme shrinks is what looked "low quality"). Bump the
+  size up for HiDPI / KFO themes that display bigger art.
+  - The **on-screen preview is rendered larger than the export** so a tiny 40×40
+    button still *frames* sharply while you work — the saved file is still the
+    size you picked (shown under the preview).
 
 > **Slider *or* exact value.** Every setting (size, zoom, move X/Y) is a slider
 > with a **typeable box** next to it — drag for a quick adjust, or type an exact
@@ -426,7 +442,7 @@ overlays (or none).
 
 ---
 
-## 9. Edit — crop, trim & remove background
+## 9. Edit — crop, **grow**, trim & remove background
 
 Open the **Edit** tab (pick an emote first).
 
@@ -434,10 +450,17 @@ Open the **Edit** tab (pick an emote first).
 - **Remove background** — flood-fills from the four corners and makes a flat/near-
   flat background transparent. Use the **BG tolerance** slider if it removes too
   little or too much.
-- **Crop** — drag the **Left / Top / Right / Bottom** sliders to trim edges.
-- Watch the live preview, then **Apply** (this emote) or **All sprites**.
+- **Crop *or* grow each side** — each of **Left / Top / Right / Bottom** is one
+  **bidirectional** slider: **drag right to crop** that edge inward, **drag left
+  to grow** the canvas outward (adding transparent margin — handy for giving a
+  sprite head-room, squaring it up, or making space before a Mixer paste). The
+  label tells you which way it's going ("12% crop" / "8% grow").
+  - **`−` / `+` buttons** beside each slider nudge that side by **1%** per click —
+    quick, exact mouse adjustments without a steady-handed drag.
+- **Apply to** — a **This sprite / All sprites** toggle picks the target; then
+  press **Apply**.
 
-Crop and auto-trim apply the **same box to every frame and to an emote's
+Crop, grow and auto-trim apply the **same box to every frame and to an emote's
 `(a)`/`(b)`/`(c)` sprites**, so animations and idle/talk stay perfectly aligned.
 (The result is baked into the sprite files — use Export afterwards.)
 

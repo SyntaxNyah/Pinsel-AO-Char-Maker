@@ -276,14 +276,28 @@ class CharFolder {
   /// Recommended minimum button edge in pixels (1:1).
   static const int recommendedButtonSize = 40;
 
-  /// Default button edge the app generates at (crisp on modern/high-DPI themes).
-  static const int defaultButtonSize = 128;
+  /// Default button edge the app generates at. **40 is the classic AO emote-
+  /// button size**: exporting at the size the theme actually displays means the
+  /// client shows the button 1:1 with no theme-side resampling — which is what
+  /// keeps it crisp in-game (a larger image the theme downscales with a cheap
+  /// filter is what looked "low quality"). The renderer area-averages the
+  /// downscale from the full-res sprite, so 40px is as clean as 40px can be;
+  /// raise the slider (up to [maxButtonSize]) for HiDPI/KFO themes that want
+  /// bigger art.
+  static const int defaultButtonSize = 40;
 
   /// Allowed button edge range for the Button Studio slider. The renderer never
   /// upscales past the source crop, so a high value just means "as crisp as the
   /// source allows" for high-res art.
   static const int minButtonSize = 24;
   static const int maxButtonSize = 512;
+
+  /// Resolution the Button/Icon Studio renders its on-screen *preview* at,
+  /// independent of the exported [defaultButtonSize]. A 40px button shown in a
+  /// ~168px preview box would otherwise be blown up and look pixelated/blurry;
+  /// rendering the preview large (then letting Flutter fit it down) shows a
+  /// crisp framing preview while the exported file stays the chosen size.
+  static const int buttonPreviewRenderPx = 320;
 
   /// Recommended minimum char_icon edge in pixels (1:1).
   static const int recommendedIconSize = 60;
@@ -326,6 +340,30 @@ const String kEmoteFieldSeparator = '#';
 
 /// Placeholder used for "no preanimation".
 const String kNoPreanim = '-';
+
+/// Audio file extensions AO/webAO plays (SFX, blips). Used by the Emotes-tab
+/// **sound picker** to offer the audio files bundled with an imported character
+/// as pickable `[SoundN]` names (AO references a sound by name, without the
+/// extension), alongside the names already used elsewhere in the character.
+const List<String> kAudioExtensions = <String>['opus', 'ogg', 'wav', 'mp3'];
+
+/// Limits + step for the Edit screen's per-side crop / grow sliders. A single
+/// slider per side is **bidirectional**: positive crops that edge *in*, negative
+/// pads (grows) the canvas *out* with transparency. Kept here so the slider
+/// range and the engine clamp never drift apart.
+class CropLimits {
+  const CropLimits._();
+
+  /// Largest fraction of a side that may be cropped away (in, positive).
+  static const double maxCropFraction = 0.45;
+
+  /// Largest fraction of a side the canvas may grow by (out, negative). 0.5 =
+  /// add half the width/height of transparent margin to that edge.
+  static const double maxPadFraction = 0.5;
+
+  /// How much one tap of a `−` / `+` stepper button nudges a side (1%).
+  static const double stepFraction = 0.01;
+}
 
 /// Project identity + attribution. Kept here (pure Dart) so the exporter can
 /// stamp every character with credits without depending on the Flutter UI.

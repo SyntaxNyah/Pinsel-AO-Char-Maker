@@ -4,12 +4,19 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/ao_constants.dart';
 import '../../imaging/sprite_edit.dart';
 import '../app_state.dart';
 import '../widgets/zoom_canvas.dart';
 
-/// Crop / auto-trim / background-removal for the selected sprite (or all).
-/// Live, debounced preview decoupled from widget rebuilds.
+/// Crop / **grow** / auto-trim / background-removal for the selected sprite (or
+/// all). Live, debounced preview decoupled from widget rebuilds.
+///
+/// Each side has ONE bidirectional control: drag right (positive) to **crop**
+/// that edge inward, drag left (negative) to **grow** the canvas outward with
+/// transparent margin. Small `−` / `+` stepper buttons beside each slider give
+/// pixel-precise nudges without a steady-handed drag. A *This sprite / All
+/// sprites* toggle decides what one Apply press bakes.
 class EditScreen extends StatefulWidget {
   const EditScreen({super.key});
 
@@ -18,19 +25,32 @@ class EditScreen extends StatefulWidget {
 }
 
 class _EditScreenState extends State<EditScreen> {
+  /// Per-side amount, signed: **> 0 crops** that edge in (0..maxCrop), **< 0
+  /// grows** the canvas out on that edge (0..-maxPad). 0 leaves the side alone.
   double _l = 0, _t = 0, _r = 0, _b = 0;
   bool _autoTrim = false;
   bool _removeBg = false;
   double _tol = 40;
 
+  /// Apply target: false = just the selected emote's sprite, true = every
+  /// sprite. Surfaced as a toggle so it's obvious which one Apply will hit.
+  bool _applyAll = false;
+
   final ValueNotifier<Uint8List?> _preview = ValueNotifier<Uint8List?>(null);
   Timer? _debounce;
 
+  static double _crop(double v) => v > 0 ? v : 0;
+  static double _pad(double v) => v < 0 ? -v : 0;
+
   SpriteEditSpec get _spec => SpriteEditSpec(
-        cropLeft: _l,
-        cropTop: _t,
-        cropRight: _r,
-        cropBottom: _b,
+        cropLeft: _crop(_l),
+        cropTop: _crop(_t),
+        cropRight: _crop(_r),
+        cropBottom: _crop(_b),
+        padLeft: _pad(_l),
+        padTop: _pad(_t),
+        padRight: _pad(_r),
+        padBottom: _pad(_b),
         autoTrim: _autoTrim,
         removeBgCorners: _removeBg,
         bgTolerance: _tol,
@@ -76,9 +96,9 @@ class _EditScreenState extends State<EditScreen> {
     _schedule();
   }
 
-  Future<void> _apply({required bool allSprites}) async {
+  Future<void> _apply() async {
     final AppState app = context.read<AppState>();
-    await app.applyEdit(_spec, allSprites: allSprites);
+    await app.applyEdit(_spec, allSprites: _applyAll);
     _reset(); // baked in; show the result
   }
 
@@ -104,7 +124,7 @@ class _EditScreenState extends State<EditScreen> {
           ),
         ),
         const VerticalDivider(width: 1),
-        SizedBox(width: 360, child: _controls()),
+        SizedBox(width: 380, child: _controls()),
       ],
     );
   }
@@ -138,42 +158,114 @@ class _EditScreenState extends State<EditScreen> {
           },
         ),
         if (_removeBg)
-          _slider('BG tolerance', _tol, 0, 120, (double v) => _tol = v, label: _tol.round().toString()),
+          _simpleSlider('BG tolerance', _tol, 0, 120,
+              (double v) => _tol = v, label: _tol.round().toString()),
         const Divider(height: 24),
-        Text('Crop', style: Theme.of(context).textTheme.labelLarge),
-        _slider('Left', _l, 0, 0.45, (double v) => _l = v),
-        _slider('Top', _t, 0, 0.45, (double v) => _t = v),
-        _slider('Right', _r, 0, 0.45, (double v) => _r = v),
-        _slider('Bottom', _b, 0, 0.45, (double v) => _b = v),
+        Text('Crop / grow each side', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 2),
+        const Text(
+          'Drag right to crop the edge in, left to grow the canvas out '
+          '(transparent). Use −/+ for 1% nudges.',
+          style: TextStyle(fontSize: 12, color: Colors.white60),
+        ),
+        const SizedBox(height: 4),
+        _sideControl('Left', _l, (double v) => _l = v),
+        _sideControl('Top', _t, (double v) => _t = v),
+        _sideControl('Right', _r, (double v) => _r = v),
+        _sideControl('Bottom', _b, (double v) => _b = v),
+        const Divider(height: 24),
+        Text('Apply to', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 6),
+        SegmentedButton<bool>(
+          segments: const <ButtonSegment<bool>>[
+            ButtonSegment<bool>(
+              value: false,
+              icon: Icon(Icons.image_rounded),
+              label: Text('This sprite'),
+            ),
+            ButtonSegment<bool>(
+              value: true,
+              icon: Icon(Icons.select_all_rounded),
+              label: Text('All sprites'),
+            ),
+          ],
+          selected: <bool>{_applyAll},
+          onSelectionChanged: (Set<bool> s) => setState(() => _applyAll = s.first),
+          showSelectedIcon: false,
+        ),
         const SizedBox(height: 12),
-        Row(children: <Widget>[
-          Expanded(
-            child: FilledButton.icon(
-              onPressed: () => _apply(allSprites: false),
-              icon: const Icon(Icons.crop_rounded),
-              label: const Text('Apply'),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: FilledButton.tonalIcon(
-              onPressed: () => _apply(allSprites: true),
-              icon: const Icon(Icons.select_all_rounded),
-              label: const Text('All sprites'),
-            ),
-          ),
-        ]),
+        FilledButton.icon(
+          onPressed: _apply,
+          icon: Icon(_applyAll
+              ? Icons.select_all_rounded
+              : Icons.crop_rounded),
+          label: Text(_applyAll ? 'Apply to all sprites' : 'Apply to this sprite'),
+        ),
         const SizedBox(height: 6),
         const Text(
-          'Crop/auto-trim apply the same box to every frame and to (a)/(b)/(c) '
-          'of an emote, so animations and idle/talk stay aligned.',
+          'Crop / grow / auto-trim apply the same box to every frame and to '
+          '(a)/(b)/(c) of an emote, so animations and idle/talk stay aligned.',
           style: TextStyle(fontSize: 12, color: Colors.white60),
         ),
       ],
     );
   }
 
-  Widget _slider(String name, double v, double min, double max,
+  /// A bidirectional crop/grow control for one side: a centred slider (negative
+  /// = grow, positive = crop) flanked by `−` / `+` stepper buttons (the QoL
+  /// mouse nudges). The label spells out which way it's going.
+  Widget _sideControl(String name, double v, void Function(double) assign) {
+    const double min = -CropLimits.maxPadFraction;
+    const double max = CropLimits.maxCropFraction;
+    final double cur = v.clamp(min, max);
+
+    void apply(double nv) {
+      setState(() => assign(nv.clamp(min, max)));
+      _schedule();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('$name: ${_sideLabel(cur)}'),
+          Row(
+            children: <Widget>[
+              IconButton(
+                tooltip: 'Grow / less crop (−1%)',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.remove_circle_outline, size: 20),
+                onPressed: () => apply(cur - CropLimits.stepFraction),
+              ),
+              Expanded(
+                child: Slider(
+                  value: cur,
+                  min: min,
+                  max: max,
+                  onChanged: apply,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Crop / less grow (+1%)',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.add_circle_outline, size: 20),
+                onPressed: () => apply(cur + CropLimits.stepFraction),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _sideLabel(double v) {
+    if (v > 0.0005) return '${(v * 100).round()}% crop';
+    if (v < -0.0005) return '${(-v * 100).round()}% grow';
+    return '0% (unchanged)';
+  }
+
+  Widget _simpleSlider(String name, double v, double min, double max,
       void Function(double) assign, {String? label}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

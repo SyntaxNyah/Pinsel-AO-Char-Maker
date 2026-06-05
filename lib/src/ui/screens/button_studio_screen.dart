@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/ao_constants.dart';
@@ -66,15 +68,24 @@ class _ButtonStudioScreenState extends State<ButtonStudioScreen> {
     _iconDebounce = Timer(const Duration(milliseconds: 90), _computeIcon);
   }
 
+  /// Preview render resolution: at least [CharFolder.buttonPreviewRenderPx] so a
+  /// small (e.g. 40px) export still frames crisply on screen, but never below
+  /// the chosen export size when that's larger (so big buttons show full
+  /// detail). The exported file still uses the chosen size — this only affects
+  /// the on-screen preview.
   Future<void> _computeBtn() async {
     final AppState app = context.read<AppState>();
-    final Uint8List? b = await app.previewAutoButton(app.buttonSize);
+    final int previewPx =
+        math.max(app.buttonSize, CharFolder.buttonPreviewRenderPx);
+    final Uint8List? b = await app.previewAutoButton(previewPx);
     if (mounted) _btnPreview.value = b;
   }
 
   Future<void> _computeIcon() async {
     final AppState app = context.read<AppState>();
-    final Uint8List? b = await app.previewCharIcon();
+    final int previewPx =
+        math.max(app.iconSize, CharFolder.buttonPreviewRenderPx);
+    final Uint8List? b = await app.previewCharIcon(previewPx);
     if (mounted) _iconPreview.value = b;
   }
 
@@ -93,9 +104,11 @@ class _ButtonStudioScreenState extends State<ButtonStudioScreen> {
           'frame each sprite — Head / face (default) shows the expression, Full '
           'body squares the whole sprite. Drag a slider for a quick adjust, or '
           'type an exact value in the box beside it (size, zoom, and ±100% '
-          'move X/Y). Output is lossless PNG, crisply downscaled from the '
-          'full-res sprite (never upscaled), so bigger sizes just mean "as sharp '
-          'as the source allows".',
+          'move X/Y). Output is lossless PNG, area-averaged down from the '
+          'full-res sprite (never upscaled). The default is the classic '
+          '40×40 AO button: exporting at the size the theme shows it means no '
+          'blurry theme-side rescale in-game. The on-screen preview is rendered '
+          'larger so framing stays crisp — the file is still the size you pick.',
         ),
         const SizedBox(height: 16),
 
@@ -168,12 +181,17 @@ class _CropBoxEditor extends StatefulWidget {
     required this.revision,
     required this.box,
     required this.onChanged,
+    this.height = 240,
   });
   final AppState app;
   final Emote? emote;
   final int revision;
   final CropBox box;
   final ValueChanged<CropBox> onChanged;
+
+  /// Editor canvas height. The button card passes a big value (KFO-style large
+  /// framing area) so you can place boxes precisely; the icon card stays small.
+  final double height;
 
   @override
   State<_CropBoxEditor> createState() => _CropBoxEditorState();
@@ -212,7 +230,7 @@ class _CropBoxEditorState extends State<_CropBoxEditor> {
   Widget build(BuildContext context) {
     if (_bytes == null) {
       return SizedBox(
-        height: 200,
+        height: widget.height,
         child: Center(
           child: _loading
               ? const CircularProgressIndicator()
@@ -224,7 +242,7 @@ class _CropBoxEditorState extends State<_CropBoxEditor> {
         (_aspect == null || _aspect! <= 0) ? 1.0 : _aspect!;
     final CropBox box = widget.box;
     return SizedBox(
-      height: 240,
+      height: widget.height,
       child: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints c) {
           double dw = c.maxWidth;
@@ -824,6 +842,93 @@ class _BtnCardState extends State<_BtnCard> {
     }
   }
 
+  /// Keyboard focus for the manual framing area, so you can step through a whole
+  /// cast and frame each pose without ever reaching for the navigation rail —
+  /// the KFO complaint ("had to move the mouse to the top to pick the next
+  /// sprite"). Shortcuts only fire while this node has primary focus, so typing
+  /// in a value box never triggers them.
+  final FocusNode _kbFocus = FocusNode(debugLabel: 'btnFramingKeys');
+
+  @override
+  void dispose() {
+    _kbFocus.dispose();
+    super.dispose();
+  }
+
+  /// Single-key framing shortcuts (active while the framing area is focused —
+  /// click the sprite once to focus it). Documented in the F1 cheat-sheet and
+  /// docs/SHORTCUTS.md. `[`/`]` step sprites, Enter/Space "make it & go next"
+  /// (boxes commit live, so advancing *is* finishing the current one), R resets
+  /// the current sprite to its auto face crop, A stamps the current box onto
+  /// every sprite, F cycles Face → Full → Manual.
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (!node.hasPrimaryFocus) return KeyEventResult.ignored;
+    final AppState app = widget.app;
+    final int n = app.character?.emotes.length ?? 0;
+    if (n == 0) return KeyEventResult.ignored;
+    final int i = app.selectedEmote.clamp(0, n - 1);
+    final LogicalKeyboardKey k = event.logicalKey;
+
+    if (k == LogicalKeyboardKey.bracketRight ||
+        k == LogicalKeyboardKey.enter ||
+        k == LogicalKeyboardKey.numpadEnter ||
+        k == LogicalKeyboardKey.space) {
+      _gotoEmote(i + 1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.bracketLeft) {
+      _gotoEmote(i - 1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.keyR) {
+      final Emote? e = app.current;
+      if (e != null) {
+        app.resetButtonCropFor(e).then((_) {
+          if (mounted) {
+            setState(() {});
+            widget.onChanged();
+          }
+        });
+      }
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.keyA) {
+      final Emote? e = app.current;
+      if (e != null) {
+        app.applyButtonCropToAll(app.buttonCropFor(e.sprite));
+        setState(() {});
+        widget.onChanged();
+      }
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.keyF) {
+      const List<CropFraming> order = <CropFraming>[
+        CropFraming.head,
+        CropFraming.full,
+        CropFraming.manual,
+      ];
+      final CropFraming next =
+          order[(order.indexOf(app.buttonFraming) + 1) % order.length];
+      setState(() => app.buttonFraming = next);
+      if (next == CropFraming.manual) _seedManual();
+      widget.onChanged();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  Widget _manualHint() => const Text(
+        'Each sprite has its OWN box. Click the sprite to focus, then fly with '
+        'the keyboard:  [ / ]  previous / next sprite · Enter = make it & next · '
+        'R reset this sprite to auto · A apply this box to all · F cycle framing. '
+        'Drag the box to move it, the corner to resize; sprites you never touch '
+        'auto-frame the face.',
+        style: TextStyle(fontSize: 12, color: Colors.white60),
+      );
+
   /// Seed the **current sprite's** manual box from its own auto head-square the
   /// first time it's shown in Manual mode (each sprite keeps its own box). If no
   /// emote is selected yet, point at the first one so the editor + preview have
@@ -898,7 +1003,7 @@ class _BtnCardState extends State<_BtnCard> {
                       }),
                       const SizedBox(height: 12),
                       _ValueSlider(
-                        label: 'Button size (default 128)',
+                        label: 'Button size (default 40 · AO classic)',
                         value: app.buttonSize.toDouble(),
                         min: CharFolder.minButtonSize.toDouble(),
                         max: CharFolder.maxButtonSize.toDouble(),
@@ -909,42 +1014,53 @@ class _BtnCardState extends State<_BtnCard> {
                           widget.onChanged();
                         },
                       ),
-                      if (app.buttonFraming == CropFraming.manual) ...<Widget>[
-                        const SizedBox(height: 4),
-                        const Text(
-                          'Each sprite has its OWN box — step through them with '
-                          '◀ ▶ and frame every pose by hand. Drag the box to '
-                          'move it, drag the corner to resize. Sprites you never '
-                          'touch auto-frame the face. (Sliders below for exact '
-                          'values.)',
-                          style: TextStyle(fontSize: 12, color: Colors.white60),
-                        ),
-                        const SizedBox(height: 6),
-                        _SpriteNav(app: app, onGoto: _gotoEmote),
-                        const SizedBox(height: 6),
-                        _CropBoxEditor(
-                          app: app,
-                          emote: cur,
-                          revision: app.spriteRevision,
-                          box: app.buttonCropFor(curSprite),
-                          onChanged: (CropBox b) {
-                            setState(() => app.setButtonCrop(curSprite, b));
-                            widget.onChanged();
-                          },
-                        ),
-                        _cropSliders(app.buttonCropFor(curSprite), (CropBox b) {
-                          setState(() => app.setButtonCrop(curSprite, b));
-                          widget.onChanged();
-                        }),
-                        _ManualCropActions(
-                          app: app,
-                          emote: cur,
-                          onChanged: () {
-                            setState(() {});
-                            widget.onChanged();
-                          },
-                        ),
-                      ] else ...<Widget>[
+                      if (app.buttonFraming == CropFraming.manual)
+                        Focus(
+                          focusNode: _kbFocus,
+                          autofocus: true,
+                          onKeyEvent: _onKey,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              const SizedBox(height: 4),
+                              _manualHint(),
+                              const SizedBox(height: 6),
+                              _SpriteNav(app: app, onGoto: _gotoEmote),
+                              const SizedBox(height: 6),
+                              // Pointer-down on the big framing canvas grabs
+                              // keyboard focus, so [ ] / Enter / R / A / F work
+                              // straight after you click a sprite to frame it.
+                              Listener(
+                                onPointerDown: (_) => _kbFocus.requestFocus(),
+                                child: _CropBoxEditor(
+                                  app: app,
+                                  emote: cur,
+                                  revision: app.spriteRevision,
+                                  box: app.buttonCropFor(curSprite),
+                                  height: 440,
+                                  onChanged: (CropBox b) {
+                                    setState(() => app.setButtonCrop(curSprite, b));
+                                    widget.onChanged();
+                                  },
+                                ),
+                              ),
+                              _cropSliders(app.buttonCropFor(curSprite),
+                                  (CropBox b) {
+                                setState(() => app.setButtonCrop(curSprite, b));
+                                widget.onChanged();
+                              }),
+                              _ManualCropActions(
+                                app: app,
+                                emote: cur,
+                                onChanged: () {
+                                  setState(() {});
+                                  widget.onChanged();
+                                },
+                              ),
+                            ],
+                          ),
+                        )
+                      else ...<Widget>[
                         if (app.buttonFraming == CropFraming.head)
                           _ValueSlider(
                             label: 'Face zoom (1.00× default · >1 tighter)',
