@@ -637,13 +637,18 @@ The central model.
   - **Preview cache + lag fix**: `previewSprite(rel)` memoises the plain (no-op
     pipeline) PNG per `rel@maxEdge`; `_decodeButtonSource(rel)` caches a
     **≤640px downscaled** first frame used ONLY for button previews/thumbnails
-    (`previewButtonForEmote`) so a manual-crop commit + 100+ list thumbnails crop
-    a small image, not a full-res sprite (export still uses full res);
-    `_invalidateImageCaches()` clears the decode + **button-source** + preview
-    caches and bumps `spriteRevision` whenever sprite pixels/paths change (also
-    cleared on fresh import/reset via `_clearWorkspaceFiles`). The Emotes screen
-    watches `spriteRevision` (not every notify) so typing a field never re-bakes
-    the preview.
+    (`previewButtonForEmote`) so cropping/framing a small image is cheap (export
+    uses full res); **`buttonThumb(e)` / `cachedButtonThumb(e)` cache the rendered
+    thumbnail PNG per sprite** (keyed by `buttonThumbKey`) — the fix for **scroll
+    lag**: the list `ListView` recycles rows, so without this every thumbnail
+    re-decoded+re-rendered each time it scrolled back in; now a re-appearing row
+    is an instant **sync** cache hit (`_ButtonThumb` reads `cachedButtonThumb` in
+    init/`didUpdateWidget`). `headCropFor` also uses the downscaled source (its
+    `headSquare` silhouette scan was a per-pixel hotspot on full-res when seeding
+    boxes during rapid nav). `_invalidateImageCaches()` clears the decode +
+    button-source + thumb + preview caches and bumps `spriteRevision` (also on
+    fresh import/reset via `_clearWorkspaceFiles`). The Emotes screen watches
+    `spriteRevision` (not every notify) so typing a field never re-bakes.
 - `screens/` — home, **ini_builder** (the `[Options]`/char.ini editor), editor,
   color_lab, animation_studio, button_studio, edit, mixer, bulk, plugins,
   **sprite_ripper** (sheet → sprites), **theme_maker** (AO2 theme editor).
@@ -788,8 +793,12 @@ The central model.
     sprite list is a sibling `Consumer` (not rebuilt mid-drag) and uses the
     per-sprite `buttonThumbKey`, so a drag re-renders at most one thumbnail.
     Keyboard `_onKey` reads the same `framingKeys` (prev/next/make/reset/all; no
-    F-cycle — the editor is Manual-only) and navigates via `navigateButtonFraming`.
-    The sidebar also has the **button overlay controls** (`_OverlayControls` for
+    F-cycle — the editor is Manual-only) and navigates via `navigateButtonFraming`;
+    **Shift+arrows nudge the box** precisely (`_nudgeBox`, +Ctrl/⌘ = bigger step —
+    checked before the framing dispatch so plain arrows still step sprites).
+    `_ManualCanvasLoader` **debounces** the sprite decode/encode (70ms) so blasting
+    through sprites only loads the one you settle on. The sidebar also has the
+    **button overlay controls** (`_OverlayControls` for
     `buttonFg`/`buttonBg` — Presets / Build… / Import…) so you can **add or build
     a KFO-style border without leaving the big editor**; the live preview shows it
     and the list thumbnails refresh via `_overlayRevision` (bumped in `setOverlay`,

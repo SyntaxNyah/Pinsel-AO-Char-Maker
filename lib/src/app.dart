@@ -342,7 +342,8 @@ class _HomeShellState extends State<HomeShell> {
                       ],
                     ),
                     const Text(
-                      'Click the sprite in the Buttons screen to focus it, then:',
+                      'Click the sprite in the Buttons screen to focus it, then '
+                      '(plus Shift + arrows to nudge the crop box precisely):',
                       style: TextStyle(fontSize: 12, color: Colors.white60),
                     ),
                     const SizedBox(height: 4),

@@ -382,6 +382,7 @@ class AppState extends ChangeNotifier {
     _decodeCache.clear();
     _buttonSrcCache.clear();
     _previewCache.clear();
+    _thumbCache.clear();
   }
 
   /// Sanitise a picked folder name into a usable character/folder name, or null
@@ -1086,6 +1087,42 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Rendered button-thumbnail cache, keyed by sprite base → (thumbKey, png).
+  /// **The fix for scroll lag on a big cast:** the sprite-list `ListView`
+  /// recycles rows, so without this each thumbnail re-decodes + re-renders the
+  /// framed button every time it scrolls back into view. With it, a re-appearing
+  /// row is an instant cache hit; a row only actually renders when ITS framing
+  /// inputs change ([buttonThumbKey] mismatches). One entry per sprite (bounded).
+  final Map<String, ({int key, Uint8List bytes})> _thumbCache =
+      <String, ({int key, Uint8List bytes})>{};
+
+  /// **Synchronous** cache lookup — returns [e]'s thumbnail PNG instantly if it's
+  /// current, else null. Lets a recycled list row paint immediately on scroll
+  /// with no placeholder flash and no async work.
+  Uint8List? cachedButtonThumb(Emote? e) {
+    if (e == null) return null;
+    final ({int key, Uint8List bytes})? cached = _thumbCache[e.sprite];
+    return (cached != null && cached.key == buttonThumbKey(e))
+        ? cached.bytes
+        : null;
+  }
+
+  /// A cached rendered button thumbnail for [e] (96px). Returns the cached PNG
+  /// instantly when [e]'s framing inputs are unchanged; otherwise renders once
+  /// (from the downscaled source) and caches it.
+  Future<Uint8List?> buttonThumb(Emote? e, {int size = 96}) async {
+    if (e == null) return null;
+    final String base = e.sprite;
+    final int key = buttonThumbKey(e);
+    final ({int key, Uint8List bytes})? cached = _thumbCache[base];
+    if (cached != null && cached.key == key) return cached.bytes;
+    final Uint8List? bytes = await previewButtonForEmote(e, size);
+    if (bytes != null && base.isNotEmpty) {
+      _thumbCache[base] = (key: key, bytes: bytes);
+    }
+    return bytes;
+  }
+
   /// A cheap per-sprite signature of everything that changes [e]'s rendered
   /// button thumbnail. The list passes this as each thumbnail's reload key, so a
   /// thumbnail only re-renders when **its own** framing inputs change — dragging
@@ -1127,11 +1164,17 @@ class AppState extends ChangeNotifier {
 
   /// A [CropBox] seeded from [e]'s auto head-square, so Manual mode starts at the
   /// detected face and you adjust from there. Falls back to [CropBox.initial].
+  ///
+  /// Perf: uses the **downscaled** (≤640px) source — `headSquare` is a per-pixel
+  /// silhouette scan, and the result is a *fraction* (resolution-independent), so
+  /// detecting the face on a small copy is identical but ~10× cheaper. This is
+  /// what made rapidly pressing "make it & next" through a cast jank — every
+  /// arrival on an un-framed sprite ran this synchronously on the full-res image.
   Future<CropBox> headCropFor(Emote? e) async {
     if (e == null) return CropBox.initial;
     final String? rel = spriteRelFor(e);
     if (rel == null) return CropBox.initial;
-    final img.Image? im = await decodeFirstFrame(rel);
+    final img.Image? im = await _decodeButtonSource(rel);
     if (im == null) return CropBox.initial;
     return CropBox.fromPixels(ButtonMaker.headSquare(im), im.width, im.height);
   }
@@ -2375,6 +2418,7 @@ class AppState extends ChangeNotifier {
     _decodeCache.clear();
     _buttonSrcCache.clear();
     _previewCache.clear();
+    _thumbCache.clear();
     spriteRevision++;
   }
 

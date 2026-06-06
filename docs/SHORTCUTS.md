@@ -69,14 +69,17 @@ speed, then fine-tune with the keyboard:
   | `R` | Reset this sprite to its auto face crop |
   | `A` | Apply the current box to **all** sprites |
   | `F` | Cycle framing **Face → Full → Manual** |
+  | `Shift` + `←/→/↑/↓` | **Nudge the crop box** precisely (add `Ctrl/⌘` for a bigger step) |
 
   Drag the box to move it, the corner to resize. These only fire while the
   framing area is focused — typing in a value box never triggers them. Rebind any
   of them (and they persist) from the **F1** keyboard-shortcuts dialog.
 - **Buttons → the BIG framing editor.** In Manual mode, **“Open the BIG framing
   editor”** gives a full-screen DRO-style workspace: **scroll** to zoom, **drag
-  the sprite** to pan, **drag the box / its corner** to frame, and the same
-  ←/→/Enter/R/A keyboard flow. +/−/Reset-view buttons sit bottom-right.
+  the sprite** to pan, **drag the box / its corner** to frame, **Shift + arrows**
+  to nudge the box precisely, and the same ←/→/Enter/R/A keyboard flow.
+  +/−/Reset-view buttons sit bottom-right, and the side panel has the **border /
+  background overlay** controls so you can skin the buttons without leaving.
   **Advancing keeps your framing:** pressing `Enter`/`→` (or clicking a later
   sprite) **carries your current box** onto the next sprite if it hasn't been
   framed yet — so the box doesn't reset to that sprite's auto face. Already-framed

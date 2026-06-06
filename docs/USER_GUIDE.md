@@ -394,7 +394,9 @@ and **Manual**.
     sensible keys** (no `[`/`]` nonsense): **← / →** previous / next sprite,
     **Enter** "make it & go to the next", **R** reset this sprite to its auto
     face, **A** apply the current box to every sprite, **F** cycle Face → Full →
-    Manual. (Boxes save as you go, so advancing *is* finishing the current one.)
+    Manual, and **Shift + arrows** to **nudge the box pixel-precisely** (hold
+    **Ctrl/⌘** with it for a bigger step). (Boxes save as you go, so advancing
+    *is* finishing the current one.)
     **Every one of these keys is rebindable** — open the **F1** keyboard-shortcuts
     dialog, press **Set**, and tap the key you want. Your choices are **saved and
     restored next time you launch the app**.

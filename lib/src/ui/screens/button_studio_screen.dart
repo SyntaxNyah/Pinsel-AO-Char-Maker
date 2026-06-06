@@ -352,18 +352,28 @@ class _ButtonThumbState extends State<_ButtonThumb> {
   @override
   void initState() {
     super.initState();
-    _load();
+    // Paint instantly from the cache (the common case while scrolling) — only
+    // render if this sprite's framing isn't cached yet.
+    _bytes = context.read<AppState>().cachedButtonThumb(widget.emote);
+    if (_bytes == null) _load();
   }
 
   @override
   void didUpdateWidget(_ButtonThumb old) {
     super.didUpdateWidget(old);
-    if (old.emote != widget.emote || old.revision != widget.revision) _load();
+    if (old.emote != widget.emote || old.revision != widget.revision) {
+      final Uint8List? hit =
+          context.read<AppState>().cachedButtonThumb(widget.emote);
+      if (hit != null) {
+        setState(() => _bytes = hit); // instant, no re-render
+      } else {
+        _load();
+      }
+    }
   }
 
   Future<void> _load() async {
-    final Uint8List? b =
-        await context.read<AppState>().previewButtonForEmote(widget.emote, 96);
+    final Uint8List? b = await context.read<AppState>().buttonThumb(widget.emote);
     if (mounted) setState(() => _bytes = b);
   }
 
@@ -1255,6 +1265,36 @@ class _BtnCardState extends State<_BtnCard> {
     if (n == 0) return KeyEventResult.ignored;
     final int i = app.selectedEmote.clamp(0, n - 1);
     final LogicalKeyboardKey k = event.logicalKey;
+
+    // Shift + arrows nudge the crop box precisely (plain arrows step sprites).
+    if (HardwareKeyboard.instance.isShiftPressed) {
+      final double step = (HardwareKeyboard.instance.isControlPressed ||
+              HardwareKeyboard.instance.isMetaPressed)
+          ? 0.02
+          : 0.005;
+      double dx = 0, dy = 0;
+      if (k == LogicalKeyboardKey.arrowLeft) dx = -step;
+      if (k == LogicalKeyboardKey.arrowRight) dx = step;
+      if (k == LogicalKeyboardKey.arrowUp) dy = -step;
+      if (k == LogicalKeyboardKey.arrowDown) dy = step;
+      if (dx != 0 || dy != 0) {
+        final Emote? e = app.current;
+        if (e != null && e.sprite.isNotEmpty) {
+          final CropBox b = app.buttonCropFor(e.sprite);
+          final double maxXY = (1 - b.side).clamp(0.0, 1.0);
+          app.setButtonCrop(
+              e.sprite,
+              b.copyWith(
+                x: (b.x + dx).clamp(0.0, maxXY),
+                y: (b.y + dy).clamp(0.0, maxXY),
+              ));
+          setState(() {});
+          widget.onChanged();
+        }
+        return KeyEventResult.handled;
+      }
+    }
+
     final Map<String, LogicalKeyboardKey> keys = app.framingKeys;
 
     // Match the pressed key against a bound action (Numpad Enter counts as Enter
@@ -1322,7 +1362,8 @@ class _BtnCardState extends State<_BtnCard> {
       'keyboard:  ${lbl('prev')} / ${lbl('next')} previous / next sprite · '
       '${lbl('make')} make it & next · ${lbl('reset')} reset this sprite to '
       'auto · ${lbl('all')} apply this box to all · ${lbl('framing')} cycle '
-      'framing. Drag the box to move it, the corner to resize; sprites you '
+      'framing. Drag the box to move it, the corner to resize, or **Shift + '
+      'arrows** to nudge it precisely (add Ctrl for a bigger step); sprites you '
       'never touch auto-frame the face. Rebind these keys in the F1 shortcuts '
       'dialog.',
       style: const TextStyle(fontSize: 12, color: Colors.white60),
@@ -1869,6 +1910,23 @@ class _FramingPaneState extends State<_FramingPane> {
     }
   }
 
+  /// Move the current sprite's crop box by ([dx],[dy]) fractions, clamped in
+  /// bounds — the keyboard fine-nudge.
+  void _nudgeBox(double dx, double dy) {
+    final AppState app = widget.app;
+    final Emote? e = app.current;
+    if (e == null || e.sprite.isEmpty) return;
+    final CropBox b = app.buttonCropFor(e.sprite);
+    final double maxXY = (1 - b.side).clamp(0.0, 1.0);
+    final CropBox next = b.copyWith(
+      x: (b.x + dx).clamp(0.0, maxXY),
+      y: (b.y + dy).clamp(0.0, maxXY),
+    );
+    app.setButtonCrop(e.sprite, next);
+    setState(() {});
+    _schedule();
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -1879,6 +1937,25 @@ class _FramingPaneState extends State<_FramingPane> {
     if (n == 0) return KeyEventResult.ignored;
     final int i = app.selectedEmote.clamp(0, n - 1);
     final LogicalKeyboardKey k = event.logicalKey;
+
+    // Shift + arrows **nudge the pink box precisely** (plain arrows step
+    // sprites). Held = repeats; add Ctrl/⌘ for a bigger 2% jump.
+    if (HardwareKeyboard.instance.isShiftPressed) {
+      final double step = (HardwareKeyboard.instance.isControlPressed ||
+              HardwareKeyboard.instance.isMetaPressed)
+          ? 0.02
+          : 0.005;
+      double dx = 0, dy = 0;
+      if (k == LogicalKeyboardKey.arrowLeft) dx = -step;
+      if (k == LogicalKeyboardKey.arrowRight) dx = step;
+      if (k == LogicalKeyboardKey.arrowUp) dy = -step;
+      if (k == LogicalKeyboardKey.arrowDown) dy = step;
+      if (dx != 0 || dy != 0) {
+        _nudgeBox(dx, dy);
+        return KeyEventResult.handled;
+      }
+    }
+
     final Map<String, LogicalKeyboardKey> keys = app.framingKeys;
     bool isAction(String id) {
       final LogicalKeyboardKey? bound = keys[id];
@@ -1990,8 +2067,9 @@ class _FramingPaneState extends State<_FramingPane> {
                     const SizedBox(height: 12),
                     const Text(
                       'Scroll to zoom · drag the sprite to pan · drag the box to '
-                      'move it, its corner to resize. Sliders below always work '
-                      'if you prefer exact values.',
+                      'move it, its corner to resize · Shift + arrows nudge the '
+                      'box precisely (Ctrl for a bigger step). Sliders below '
+                      'always work if you prefer exact values.',
                       style: TextStyle(fontSize: 11, color: Colors.white60),
                     ),
                     const SizedBox(height: 8),
@@ -2081,6 +2159,7 @@ class _ManualCanvasLoaderState extends State<_ManualCanvasLoader> {
   Uint8List? _bytes;
   double? _aspect;
   bool _loading = false;
+  Timer? _loadTimer;
 
   @override
   void initState() {
@@ -2089,9 +2168,21 @@ class _ManualCanvasLoaderState extends State<_ManualCanvasLoader> {
   }
 
   @override
+  void dispose() {
+    _loadTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(_ManualCanvasLoader old) {
     super.didUpdateWidget(old);
-    if (old.emote != widget.emote || old.revision != widget.revision) _load();
+    if (old.emote != widget.emote || old.revision != widget.revision) {
+      // Debounce: when you blast through sprites with the keyboard, only the
+      // sprite you settle on decodes/encodes — not every one you pass (the
+      // canvas keeps showing the previous sprite until then).
+      _loadTimer?.cancel();
+      _loadTimer = Timer(const Duration(milliseconds: 70), _load);
+    }
   }
 
   Future<void> _load() async {

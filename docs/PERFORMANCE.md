@@ -51,6 +51,15 @@ frame:
 - **Thumbnails invalidate per-sprite.** Editing one sprite's crop box re-renders
   exactly that one thumbnail (keyed by `AppState.buttonThumbKey`), not every
   visible thumbnail in the list.
+- **Thumbnails are cached, so scrolling is cheap.** The sprite-list `ListView`
+  recycles rows; without a cache, every thumbnail re-decoded + re-rendered the
+  framed button each time it scrolled back into view (the scroll lag on a big
+  cast). `AppState.buttonThumb`/`cachedButtonThumb` cache the rendered PNG per
+  sprite, so a re-appearing row is an **instant, synchronous** cache hit — it only
+  actually renders when that sprite's framing changes. The big editor also
+  **debounces** the canvas sprite decode (70 ms) so blasting through the cast with
+  the keyboard only decodes the sprite you settle on, and `headSquare` (the
+  face-detect used to seed a box) runs on the ≤640px source, not full-res.
 - **The overlay "Big editor" preview is debounced** (it re-draws the 512px
   overlay 60 ms after you stop, not on every slider tick).
 
