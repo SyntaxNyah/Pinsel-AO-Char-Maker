@@ -132,10 +132,101 @@ class TalkStyle {
       );
 }
 
+/// A drawn **open-mouth shape** ("anime mouth") composited into the mouth box
+/// and scaled by the talk cadence, so the lips open and close. Procedural (no
+/// art files) → it works on any sprite and stays crisp at any size. For the
+/// most art-accurate result instead, use the **mesh** path
+/// ([LipSync.talkMeshed]) — cut a real open mouth from another sprite. Plain
+/// data, so it JSON-round-trips and is isolate-safe.
+class MouthShape {
+  const MouthShape(
+    this.name,
+    this.category, {
+    this.widthFrac = 0.70,
+    this.heightFrac = 0.60,
+    this.curve = 0.0,
+    this.fill = 0xFF2A1418,
+    this.teeth = false,
+    this.tongue = false,
+    this.yOffset = 0.50,
+  });
+
+  final String name;
+  final String category;
+
+  /// Opening width as a fraction of the region width.
+  final double widthFrac;
+
+  /// Max opening height as a fraction of the region height (full openness).
+  final double heightFrac;
+
+  /// -1..1 — bows the shape: smile (+) raises the corners, frown (-) lowers them.
+  final double curve;
+
+  /// Mouth-interior ARGB.
+  final int fill;
+
+  /// Draw an upper teeth band.
+  final bool teeth;
+
+  /// Draw a lower tongue.
+  final bool tongue;
+
+  /// Vertical centre of the opening within the region (0 = top, 1 = bottom).
+  final double yOffset;
+
+  MouthShape copyWith({
+    String? name,
+    String? category,
+    double? widthFrac,
+    double? heightFrac,
+    double? curve,
+    int? fill,
+    bool? teeth,
+    bool? tongue,
+    double? yOffset,
+  }) =>
+      MouthShape(
+        name ?? this.name,
+        category ?? this.category,
+        widthFrac: widthFrac ?? this.widthFrac,
+        heightFrac: heightFrac ?? this.heightFrac,
+        curve: curve ?? this.curve,
+        fill: fill ?? this.fill,
+        teeth: teeth ?? this.teeth,
+        tongue: tongue ?? this.tongue,
+        yOffset: yOffset ?? this.yOffset,
+      );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'name': name,
+        'category': category,
+        'widthFrac': widthFrac,
+        'heightFrac': heightFrac,
+        'curve': curve,
+        'fill': fill,
+        'teeth': teeth,
+        'tongue': tongue,
+        'yOffset': yOffset,
+      };
+
+  static MouthShape fromJson(Map<String, Object?> m) => MouthShape(
+        (m['name'] as String?) ?? 'Round',
+        (m['category'] as String?) ?? 'Open',
+        widthFrac: (m['widthFrac'] as num?)?.toDouble() ?? 0.70,
+        heightFrac: (m['heightFrac'] as num?)?.toDouble() ?? 0.60,
+        curve: (m['curve'] as num?)?.toDouble() ?? 0.0,
+        fill: (m['fill'] as num?)?.toInt() ?? 0xFF2A1418,
+        teeth: (m['teeth'] as bool?) ?? false,
+        tongue: (m['tongue'] as bool?) ?? false,
+        yOffset: (m['yOffset'] as num?)?.toDouble() ?? 0.50,
+      );
+}
+
 /// Builds talking ("(b)") animations so users can add lip-sync without knowing
 /// anything about animation.
 ///
-/// Five modes, easiest first:
+/// Modes, easiest first:
 ///  0. [talkStyled] — pick one of hundreds of named [TalkStyle]s ("Calm",
 ///     "Excited", "Whisper", "Robotic", "Sobbing"…) and it bakes a natural,
 ///     seamless VN-style talking loop. This is the headline path for "make this
@@ -226,12 +317,16 @@ class LipSync {
     int frames = 10,
     int fps = 12,
     double? openAmount,
+    MouthShape? shape,
   }) {
     final img.Image src = _rgba(base);
     final IntRect region = _clampRegion(mouth ?? defaultMouthRegion(src), src);
     final int delay = math.max(1, (100 / fps).round());
     final int n = math.max(2, frames);
     final double amp = openAmount ?? style.openAmount;
+    // For a drawn shape, the slider scales the shape's height relative to its
+    // natural open amount (so the openness slider still does something).
+    final double shapeScale = amp / defaultOpenAmount;
     // You can't render more distinct mouth-opens than ~half the frame count
     // (Nyquist) — beyond that fast styles alias into noise instead of reading as
     // fast. Cap the *rendered* syllables to n/2 (the name/seed are unchanged, so
@@ -247,7 +342,15 @@ class LipSync {
     final List<AnimFrame> out = <AnimFrame>[];
     for (int i = 0; i < n; i++) {
       final double o = styleOpenness(eff, i / n);
-      img.Image frame = _openMouth(src, region, o * amp);
+      img.Image frame;
+      if (shape != null) {
+        // Draw the chosen "anime mouth" opening, scaled by the cadence.
+        frame = src.clone();
+        _drawShapeMouth(frame, region, (o * shapeScale).clamp(0.0, 1.0), shape);
+      } else {
+        // Procedural jaw-drop + feathered cavity.
+        frame = _openMouth(src, region, o * amp);
+      }
       if (bobMax > 0) {
         frame = _shiftV(frame, ((o - 0.5) * bobMax).round());
       }
@@ -523,14 +626,262 @@ class LipSync {
 
   /// Stretch the mouth region taller by [open] (fraction of its height) and
   /// composite it back, nudged down — a cheap but convincing open mouth.
-  static img.Image _openMouth(img.Image src, IntRect r, double open) {
+  /// Default mouth-interior colour (a dark, slightly warm cavity).
+  static const int _interiorArgb = 0xFF2A1418;
+
+  /// Open the mouth in [r] by [open] (0..1 of the region height): the lower lip
+  /// + jaw **drops**, revealing a soft, horizontally-feathered dark cavity
+  /// between the lips — so it reads as the lips actually parting and closing,
+  /// not the chin stretching. Operates on a clone.
+  static img.Image _openMouth(img.Image src, IntRect r, double open,
+      {int interior = _interiorArgb}) {
     final img.Image frame = src.clone();
     if (open <= 0.001) return frame;
+    final int gap = math.max(1, (open * r.h).round());
+    // Lip line a touch above the box centre (the upper lip is thinner).
+    final int lipY = (r.y + r.h * 0.42).round().clamp(0, src.height - 1);
+    final int lowerH = (r.y + r.h - lipY).clamp(1, src.height - lipY);
+    // The lower-lip + jaw strip, cut from the original.
+    final img.Image lower =
+        img.copyCrop(src, x: r.x, y: lipY, width: r.w, height: lowerH);
+    // Paint a soft cavity over the lip area (erasing the old closed lip), then
+    // drop the lower strip down by `gap` — the band it leaves bare is the open
+    // mouth.
+    _paintCavity(frame, r.x, lipY, r.w, lowerH + gap, interior);
+    return img.compositeImage(frame, lower, dstX: r.x, dstY: lipY + gap);
+  }
+
+  /// Blend a rectangle toward [argb] (the mouth interior), only on opaque pixels
+  /// (so it never paints outside the silhouette) and **feathered at the left/
+  /// right edges** so it melts into the lips instead of being a hard dark box.
+  static void _paintCavity(img.Image im, int x0, int y0, int w, int h, int argb) {
+    final int ir = (argb >> 16) & 0xff;
+    final int ig = (argb >> 8) & 0xff;
+    final int ib = argb & 0xff;
+    for (int yy = 0; yy < h; yy++) {
+      final int y = y0 + yy;
+      if (y < 0 || y >= im.height) continue;
+      for (int xx = 0; xx < w; xx++) {
+        final int x = x0 + xx;
+        if (x < 0 || x >= im.width) continue;
+        final img.Pixel px = im.getPixel(x, y);
+        if (px.a <= 0) continue; // stay inside the face
+        final double k = w <= 1 ? 1.0 : _bump(xx / (w - 1));
+        im.setPixelRgba(
+          x,
+          y,
+          (px.r + (ir - px.r) * k).round(),
+          (px.g + (ig - px.g) * k).round(),
+          (px.b + (ib - px.b) * k).round(),
+          px.a,
+        );
+      }
+    }
+  }
+
+  /// A 0→1→0 bump over `u ∈ [0,1]` (1 in the middle, 0 at the edges) — the
+  /// horizontal feather for the cavity.
+  static double _bump(double u) => math.sin(math.pi * u.clamp(0.0, 1.0));
+
+  // ===========================================================================
+  // Drawn "anime mouth" shapes (preset open mouths)
+  // ===========================================================================
+
+  /// Draw [shape]'s open mouth into [region] at [openness] (0..1): an ellipse
+  /// (optionally bowed by `curve`, with a teeth band / tongue), blended on top,
+  /// feathered at the rim and clipped to opaque pixels so it stays on the face.
+  /// Openness ≈ 0 draws nothing (the closed mouth shows).
+  static void _drawShapeMouth(
+      img.Image frame, IntRect region, double openness, MouthShape shape) {
+    if (openness <= 0.02) return;
+    final double rx = math.max(1, shape.widthFrac * region.w / 2);
+    final double ry = math.max(0.5, openness * shape.heightFrac * region.h / 2);
+    final double cx = region.x + region.w / 2;
+    final double cy = region.y + shape.yOffset * region.h;
+    final int fr = (shape.fill >> 16) & 0xff;
+    final int fg = (shape.fill >> 8) & 0xff;
+    final int fb = shape.fill & 0xff;
+    final int x0 = (cx - rx - 1).floor().clamp(0, frame.width - 1);
+    final int x1 = (cx + rx + 1).ceil().clamp(0, frame.width - 1);
+    final int y0 = (cy - ry - 1).floor().clamp(0, frame.height - 1);
+    final int y1 = (cy + ry + 1).ceil().clamp(0, frame.height - 1);
+    for (int y = y0; y <= y1; y++) {
+      for (int x = x0; x <= x1; x++) {
+        final double nx = (x - cx) / rx;
+        final double cyc = cy - shape.curve * ry * (nx * nx); // smile/frown bow
+        final double ny = (y - cyc) / ry;
+        final double d2 = nx * nx + ny * ny;
+        if (d2 > 1.0) continue;
+        final img.Pixel px = frame.getPixel(x, y);
+        if (px.a <= 0) continue; // stay on the face
+        final double k = ((1.0 - d2) / 0.15).clamp(0.0, 1.0); // soft rim
+        int tr = fr, tg = fg, tb = fb;
+        if (shape.teeth && ny < -0.35) {
+          tr = 0xEF;
+          tg = 0xEF;
+          tb = 0xE8; // upper teeth (off-white)
+        } else if (shape.tongue && ny > 0.45) {
+          tr = 0xC2;
+          tg = 0x6B;
+          tb = 0x77; // lower tongue (soft pink)
+        }
+        frame.setPixelRgba(
+          x,
+          y,
+          (px.r + (tr - px.r) * k).round(),
+          (px.g + (tg - px.g) * k).round(),
+          (px.b + (tb - px.b) * k).round(),
+          px.a,
+        );
+      }
+    }
+  }
+
+  /// The drawn open-mouth catalogue: ~14 archetypes × {base, Small, Big, Wide,
+  /// Narrow, Teeth, Tongue, Smiley} = **over a hundred** preset anime mouths.
+  static final List<MouthShape> mouthShapes = _buildMouthShapes();
+
+  /// Catalogue categories in order (for a grouped picker).
+  static List<String> get mouthShapeCategories {
+    final List<String> out = <String>[];
+    for (final MouthShape s in mouthShapes) {
+      if (!out.contains(s.category)) out.add(s.category);
+    }
+    return out;
+  }
+
+  /// Look up a drawn mouth by [name]; null when not found (caller falls back to
+  /// the procedural cavity).
+  static MouthShape? mouthShapeByName(String? name) {
+    if (name == null) return null;
+    for (final MouthShape s in mouthShapes) {
+      if (s.name == name) return s;
+    }
+    return null;
+  }
+
+  static List<MouthShape> _buildMouthShapes() {
+    const List<MouthShape> archetypes = <MouthShape>[
+      MouthShape('Round', 'Open', widthFrac: 0.6, heightFrac: 0.6),
+      MouthShape('Small o', 'Open', widthFrac: 0.4, heightFrac: 0.5),
+      MouthShape('Wide', 'Open', widthFrac: 0.85, heightFrac: 0.55),
+      MouthShape('Tall gasp', 'Open', widthFrac: 0.5, heightFrac: 0.9),
+      MouthShape('Agape', 'Open', widthFrac: 0.7, heightFrac: 0.8),
+      MouthShape('Soft', 'Soft', widthFrac: 0.6, heightFrac: 0.45, curve: 0.1),
+      MouthShape('Pout', 'Soft', widthFrac: 0.45, heightFrac: 0.4, curve: -0.4, yOffset: 0.55),
+      MouthShape('Frown open', 'Soft', widthFrac: 0.6, heightFrac: 0.5, curve: -0.5),
+      MouthShape('Smile open', 'Smile', widthFrac: 0.8, heightFrac: 0.55, curve: 0.5, teeth: true, yOffset: 0.45),
+      MouthShape('Grin', 'Smile', widthFrac: 0.9, heightFrac: 0.5, curve: 0.6, teeth: true, yOffset: 0.45),
+      MouthShape('Beam', 'Smile', widthFrac: 0.85, heightFrac: 0.45, curve: 0.8, teeth: true, yOffset: 0.42),
+      MouthShape('Toothy', 'Smile', widthFrac: 0.8, heightFrac: 0.6, curve: 0.4, teeth: true, yOffset: 0.45),
+      MouthShape('Tongue out', 'Playful', widthFrac: 0.7, heightFrac: 0.65, curve: 0.2, tongue: true, yOffset: 0.55),
+      MouthShape('Lick', 'Playful', widthFrac: 0.6, heightFrac: 0.6, curve: 0.1, tongue: true, yOffset: 0.55),
+    ];
+    final List<MouthShape> out = <MouthShape>[];
+    for (final MouthShape a in archetypes) {
+      out.add(a);
+      out.add(a.copyWith(
+          name: '${a.name} (Small)',
+          widthFrac: (a.widthFrac * 0.85).clamp(0.1, 1.0),
+          heightFrac: (a.heightFrac * 0.6).clamp(0.1, 1.0)));
+      out.add(a.copyWith(
+          name: '${a.name} (Big)',
+          widthFrac: (a.widthFrac * 1.1).clamp(0.1, 1.0),
+          heightFrac: (a.heightFrac * 1.35).clamp(0.1, 1.0)));
+      out.add(a.copyWith(
+          name: '${a.name} (Wide)',
+          widthFrac: (a.widthFrac * 1.3).clamp(0.1, 1.0)));
+      out.add(a.copyWith(
+          name: '${a.name} (Narrow)',
+          widthFrac: (a.widthFrac * 0.6).clamp(0.1, 1.0)));
+      out.add(a.copyWith(name: '${a.name} (Teeth)', teeth: true));
+      out.add(a.copyWith(name: '${a.name} (Tongue)', tongue: true));
+      out.add(a.copyWith(
+          name: '${a.name} (Smiley)', curve: (a.curve + 0.4).clamp(-1.0, 1.0)));
+    }
+    return out;
+  }
+
+  // ===========================================================================
+  // Mesh — cut a real open mouth from another sprite and blend it in
+  // ===========================================================================
+
+  /// Cut the mouth out of an **open-mouth** sprite at [region], with an
+  /// elliptical alpha **feather** so its edges blend ("mesh") when composited
+  /// onto a closed-mouth sprite. [feather] (0..1) is the fraction of the radius
+  /// over which the edge fades. The returned piece is `region`-sized.
+  static img.Image cutMouthPiece(img.Image openSprite, IntRect region,
+      {double feather = 0.35}) {
+    final img.Image src = _rgba(openSprite);
+    final IntRect r = _clampRegion(region, src);
     final img.Image piece =
         img.copyCrop(src, x: r.x, y: r.y, width: r.w, height: r.h);
-    final int newH = math.max(r.h, (r.h * (1 + open)).round());
-    final img.Image stretched = img.copyResize(piece,
-        width: r.w, height: newH, interpolation: img.Interpolation.cubic);
-    return img.compositeImage(frame, stretched, dstX: r.x, dstY: r.y);
+    final double cx = (piece.width - 1) / 2;
+    final double cy = (piece.height - 1) / 2;
+    final double rx = math.max(1, piece.width / 2);
+    final double ry = math.max(1, piece.height / 2);
+    final double inner = (1 - feather).clamp(0.0, 0.99);
+    for (int y = 0; y < piece.height; y++) {
+      for (int x = 0; x < piece.width; x++) {
+        final img.Pixel px = piece.getPixel(x, y);
+        if (px.a <= 0) continue;
+        final double nx = (x - cx) / rx;
+        final double ny = (y - cy) / ry;
+        final double d = math.sqrt(nx * nx + ny * ny);
+        final double k = d <= inner
+            ? 1.0
+            : d >= 1.0
+                ? 0.0
+                : 1 - (d - inner) / (1 - inner);
+        piece.setPixelRgba(x, y, px.r, px.g, px.b, (px.a * k).round());
+      }
+    }
+    return piece;
+  }
+
+  /// Build a talking loop by **meshing a real open mouth** ([openPiece], cut via
+  /// [cutMouthPiece]) onto the closed-mouth sprite [closed] at [region], with the
+  /// open mouth cross-fading in and out on [style]'s cadence — so the character
+  /// talks using actual open-mouth art, blended at the seams.
+  static AnimClip talkMeshed(
+    img.Image closed,
+    img.Image openPiece,
+    IntRect region,
+    TalkStyle style, {
+    int frames = 10,
+    int fps = 12,
+    double? openAmount,
+  }) {
+    final img.Image base = _rgba(closed);
+    final IntRect r = _clampRegion(region, base);
+    final int delay = math.max(1, (100 / fps).round());
+    final int n = math.max(2, frames);
+    final double scale = (openAmount ?? style.openAmount) / defaultOpenAmount;
+    final List<AnimFrame> out = <AnimFrame>[];
+    for (int i = 0; i < n; i++) {
+      final double o = (styleOpenness(style, i / n) * scale).clamp(0.0, 1.0);
+      final img.Image frame = base.clone();
+      if (o > 0.02) {
+        img.compositeImage(frame, _withOpacity(openPiece, o),
+            dstX: r.x, dstY: r.y);
+      }
+      out.add(AnimFrame(frame, delayCentis: delay));
+    }
+    return AnimClip(out);
+  }
+
+  /// A copy of [piece] with its alpha multiplied by [o] (0..1) — the cross-fade
+  /// for [talkMeshed].
+  static img.Image _withOpacity(img.Image piece, double o) {
+    final img.Image c = piece.clone();
+    for (int y = 0; y < c.height; y++) {
+      for (int x = 0; x < c.width; x++) {
+        final img.Pixel px = c.getPixel(x, y);
+        if (px.a > 0) {
+          c.setPixelRgba(x, y, px.r, px.g, px.b, (px.a * o).round());
+        }
+      }
+    }
+    return c;
   }
 }

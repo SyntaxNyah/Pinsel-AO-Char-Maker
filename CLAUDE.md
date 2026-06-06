@@ -67,7 +67,7 @@ lib/src/
                bulk folders → many characters)
   imaging/     codecs, colour ops, region edit, sprite edit (crop/trim/bg),
                compositor, buttons, bulk, webp, **sprite sheet ripper**
-  animation/   clip, easing, recipe engine, keyframe timeline, lipsync
+  animation/   clip, easing, recipe engine, keyframe timeline, lipsync, jiggle
   theme/       **AO2 client theme model + defaults catalogue + randomizer**
   presets/     built-in preset library
   plugins/     JSON pack model + extension registry
@@ -421,9 +421,27 @@ The central model.
   sideStep, figure8, tiltShake, zoomBounce, fadeBlink, desaturatePulse,
   colorFlash, ghostFloat, rainbowGlow, matrixGlitch, emphasisPop, breatheHeavy,
   sheen, anticipate, springIn, shiver, gallop, peek, dropIn, breatheSway, pant,
-  sparkle, chromaPulse, outlinePulse, auraGlow, shadowDance, focusPull, …
-  (discover at runtime via `AnimEngine.recipeTypes`). outlinePulse/auraGlow/
-  shadowDance animate the spatial outline/glow/dropShadow colour ops.
+  sparkle, chromaPulse, outlinePulse, auraGlow, shadowDance, focusPull,
+  **jigglePhysics**, … (discover at runtime via `AnimEngine.recipeTypes`).
+  outlinePulse/auraGlow/shadowDance animate the spatial outline/glow/dropShadow
+  colour ops. **`jigglePhysics`** (region recipe) is the engine behind the Jiggle
+  tab — reads `amplitude`(px)/`frequency`/`bounciness`/`squash`/`sway`/
+  `direction`(deg, 0=vertical)/`phase` from `p`; a looping springy oscillation
+  (base sine + overshoot harmonic). See `animation/jiggle.dart`.
+
+### animation/jiggle.dart  ← customizable jiggle physics (see docs/JIGGLE.md)
+- **`class JiggleSpec`** — a jiggle **region** (x/y/w/h as fractions) + physics:
+  `amplitude` (frac of region height), `frequency` (int bounces/loop),
+  `bounciness`, `squash`, `sway` (deg), **`direction`** (deg — bounce along ANY
+  angle: 0=up/down, 90=left/right), `phase`. Plain data → `copyWith`,
+  `toJson/fromJson`, isolate-safe. **`toRecipe(imgW,imgH)`** → an
+  `AnimRecipe('jigglePhysics', region: px, p: {...})` (amplitude becomes px =
+  frac × region-height-px, so preview == bake). Drive via `AnimEngine.render`.
+- **`jigglePresets`** — ~112 presets (16 archetypes × {base,Soft,Big,Fast,Slow,
+  Springy,Extreme}) across Soft/Bounce/Jelly/Sway/Wild. `jiggleCategories`,
+  `jiggleByName(name)`. Surfaced in the Animation Studio **Jiggle** tab (draggable
+  box + sliders + preset picker) and `AppState` (`previewJiggle`/`saveJiggle`
+  (saves `(a)` idle)/`bulkJiggleAll`).
 
 ### animation/timeline.dart
 - `class Keyframe({time,dx,dy,scale,angle,opacity,hue,ease})` — `.toJson/fromJson`.
@@ -441,13 +459,25 @@ The central model.
   / Loud / Soft / Emotional / Stylised. `styleCategories`, `styleByName(name)`
   (→ falls back to `defaultStyle` = "Natural"). Generated once in `_buildCatalogue`
   from the const `_archetypes` list — **add new feels there**.
-- **`LipSync.talkStyled(base, style, {mouth,frames,fps,openAmount})`** — the
+- **`LipSync.talkStyled(base, style, {mouth,frames,fps,openAmount,shape})`** — the
   headline VN path: bake a **seamless-looping** talking clip from ONE static
   sprite using `style`'s cadence + a subtle head `bob`. `openAmount` overrides
-  the style's jaw drop. Clones internally (never mutates the source).
+  the style's jaw drop. With `shape` (a `MouthShape`) it draws that anime mouth;
+  without, the procedural **open/close cavity** (`_openMouth`: the lower lip drops
+  and a horizontally-feathered dark cavity opens — real lips parting, not a
+  stretched chin; `_paintCavity`). Clones internally (never mutates the source).
+- **Three mouth looks** (see docs/LIPSYNC.md): (1) cavity (default), (2) drawn
+  **`MouthShape`** — `class MouthShape(name,category,{widthFrac,heightFrac,curve,
+  fill,teeth,tongue,yOffset})`; **`LipSync.mouthShapes`** is ~112 preset anime
+  mouths (14 archetypes × {Small,Big,Wide,Narrow,Teeth,Tongue,Smiley}),
+  `mouthShapeCategories`/`mouthShapeByName`, drawn by `_drawShapeMouth`; (3)
+  **mesh** — `LipSync.cutMouthPiece(openSprite, region, {feather})` (elliptical
+  alpha-feathered cut) + **`LipSync.talkMeshed(closed, openPiece, region, style,
+  …)`** (cross-fades a REAL open mouth in on the cadence).
 - `LipSync.styleOpenness(style,t)` — speech-like openness `0..1` over `t∈[0,1)`
   (per-syllable Gaussian pulses, jittered/silenced deterministically, × a slow
-  breath dip). Periodic so `t=0`==`t=1` (no seam). `_shiftV` = head bob.
+  breath dip). Periodic so `t=0`==`t=1` (no seam). `_shiftV` = head bob (capped
+  to a few px).
 - `LipSync.talk(base,{mouth,openAmount,frames,fps})` / `talkOpenness(t)` — the
   original default cadence, kept for back-compat (`talkStyled` is the superset).
 - `LipSync.defaultMouthRegion(image)` — face-derived mouth box (uses
@@ -456,10 +486,12 @@ The central model.
   `.auto(base,...)` (original single-pulse jaw-drop, kept for back-compat).
 - `class MouthRegion(x,y,w,h)` — the box as **fractions** 0..1; `.toPixels(w,h)`,
   `.copyWith`, `MouthRegion.defaultFor(image)`. Surfaced in the Animation
-  Studio's **Mouth** tab (a **Way of talking** picker = `showTalkStylePicker`,
-  searchable+grouped, + live preview + adjustable box) and `AppState`
-  (`previewMouthTalk`/`saveMouthTalk`/`bulkMouthTalkAll` all take an optional
-  `TalkStyle style`; `defaultMouthRegionFor`).
+  Studio's **Mouth** tab (a **Way of talking** picker = `showTalkStylePicker`, an
+  **Auto/Anime/Mesh** opening selector, a generic `showCataloguePicker<T>` for
+  shapes, + a **draggable/resizable box** `_MouthBoxOverlay` on the live preview)
+  and `AppState` (`previewMouthTalk`/`saveMouthTalk`/`bulkMouthTalkAll` take
+  `style`/`shape`/`mesh`; `setMeshSprite`/`hasMeshSprite`/`meshOpenSprite`;
+  `_buildTalkClip` dispatches cavity/shape/mesh; `defaultMouthRegionFor`).
 
 ### theme/ao2_theme.dart  ← AO2 client theme model
 - The real AO2 theme format (Qt `QSettings` flat INIs): design = `name = x,y,w,h`,
@@ -709,19 +741,27 @@ The central model.
     preview. `_baseBytes` is the plain sprite (reloaded after Apply); the GPU
     filter is applied to the image only (via `CheckerImage.colorFilter`), never
     the checker.
-  - `animation_studio`: **three** modes via a `SegmentedButton<_StudioMode>` —
+  - `animation_studio`: **four** modes via a `SegmentedButton<_StudioMode>` —
     **Effects** (procedural recipes; **Animate ALL sprites** → `bulkAnimateAll`),
     **Mouth** (VN talking lip-sync: a **Way of talking** style picker
-    (`showTalkStylePicker`) + a mouth box you **drag/resize directly on the
-    looping preview** via `_MouthBoxOverlay` — drag to move, bottom-right corner =
-    resize both, right/bottom edge = width/height; one GestureDetector with
-    coordinate-based hit-testing, a local `_live` box during drag + `onCommit` on
-    release so dragging doesn't rebuild the controls. X/Y/W/H sliders kept for
-    precise nudging; open amount + frames/fps; **Save (b)/(a)** →
+    (`showTalkStylePicker`) + an **Auto/Anime/Mesh** opening selector
+    (`_MouthSource`; Anime → `showCataloguePicker<MouthShape>`, Mesh → file-pick
+    an open-mouth sprite → `setMeshSprite`) + a mouth box you **drag/resize
+    directly on the looping preview** via `_MouthBoxOverlay` — drag to move,
+    bottom-right corner = resize both, right/bottom edge = width/height; one
+    GestureDetector with coordinate-based hit-testing, a local `_live` box during
+    drag + `onCommit` on release so dragging doesn't rebuild the controls. X/Y/W/H
+    sliders kept for precise nudging; open amount + frames/fps; **Save (b)/(a)** →
     `saveMouthTalk`, **all sprites** → `bulkMouthTalkAll`; seeds via
-    `_ensureMouthSeed`/`defaultMouthRegionFor`/`currentSpriteAspect`), and
+    `_ensureMouthSeed`/`defaultMouthRegionFor`/`currentSpriteAspect`),
+    **Jiggle** (`_jiggleControls`: the **same draggable box** over the chest/body,
+    a `jigglePresets` picker, and sliders for **direction (any angle)/bounce
+    amount/speed/bounciness/squash/sway** → `previewJiggle`/`saveJiggle` ((a)
+    idle)/`bulkJiggleAll`), and
     **Frames** (frame-by-frame: pick/reorder, fps/reverse/ping-pong/align, save).
-    All share the debounced render + `ValueNotifier` playback loop.
+    All share the debounced render + `ValueNotifier` playback loop. The preview's
+    `_MouthBoxOverlay` is shared by Mouth + Jiggle; `showCataloguePicker<T>` is the
+    generic grouped/searchable picker (mouth shapes + jiggle presets).
   - `ini_builder`: dedicated **char.ini `[Options]` editor** — name, showname,
     needs_showname (tri-state), side, blips, chat, category, scaling, stretch,
     effects, realization; preserves imported `extra` keys. Same no-lag pattern as

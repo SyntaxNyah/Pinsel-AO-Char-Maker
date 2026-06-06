@@ -169,6 +169,7 @@ class AnimEngine {
     'auraGlow': _auraGlow,
     'shadowDance': _shadowDance,
     'focusPull': _focusPull,
+    'jigglePhysics': _jigglePhysics,
   };
 
   static List<String> get recipeTypes => _registry.keys.toList()..sort();
@@ -789,5 +790,42 @@ class AnimEngine {
     return FrameSpec()
       ..scale = 1 + r.n('intensity', 4) / 100.0 * k
       ..colorOps.add(ColorOp('sharpen', nums: <String, double>{'amount': 0.4 + 1.2 * k}));
+  }
+
+  /// **Jiggle physics** — a looping oscillation tuned to *feel* springy (it is
+  /// not an impulse/settle simulation; a true damped spring wouldn't loop). Drive
+  /// it on a `region` (a chest/body box) to get bounce. Params (all read from
+  /// `p`):
+  ///  * `amplitude` — peak travel **in pixels** of the rendered image (the
+  ///    `JiggleSpec` derives this from a fraction × image height, so preview and
+  ///    full-res bake match).
+  ///  * `frequency` — bounces per loop (keep integer so it loops seamlessly).
+  ///  * `bounciness` 0..1 — weight of a 2× overshoot harmonic (the "spring" feel).
+  ///  * `squash` 0..1 — squash-&-stretch coupled to velocity.
+  ///  * `sway` — rotation degrees (a sideways wobble).
+  ///  * `direction` — the **angle** (degrees) the bounce travels along: 0 = up/
+  ///    down (default), 90 = left/right, anything in between = diagonal.
+  ///  * `phase` 0..1 — offset, so two regions can bounce out of sync.
+  static FrameSpec _jigglePhysics(double t, AnimRecipe r) {
+    final double amp = r.n('amplitude', 6);
+    final double freq = r.n('frequency', 2);
+    final double bounce = r.n('bounciness', 0.5);
+    final double squash = r.n('squash', 0.5);
+    final double sway = r.n('sway', 0);
+    final double phase = r.n('phase', 0) * 2 * math.pi;
+    final double dir = r.n('direction', 0) * math.pi / 180.0;
+    final double w = 2 * math.pi * freq * t + phase;
+    // Base sine + a higher harmonic (the overshoot) = the springy "jiggle".
+    final double osc = math.sin(w) + bounce * 0.45 * math.sin(2 * w + 0.5);
+    final FrameSpec s = FrameSpec()
+      // Travel along the chosen direction (0° = vertical, 90° = horizontal).
+      ..dx = amp * osc * math.sin(dir)
+      ..dy = amp * osc * math.cos(dir);
+    // Squash & stretch with velocity: tallest as it whips through the middle.
+    final double sq = squash * 0.16 * math.cos(w);
+    s.scaleY = 1 + sq;
+    s.scaleX = 1 - sq * 0.6;
+    if (sway != 0) s.angle = sway * math.sin(w);
+    return s;
   }
 }

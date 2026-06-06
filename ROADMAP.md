@@ -114,6 +114,16 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   archetypes × {base,Soft,Intense,Fast,Slow}) with a searchable picker in the
   Mouth tab; `LipSync.talkStyled` bakes a seamless VN-style loop (speech-like
   syllabic cadence + pauses + subtle head bob) onto any static sprite
+- ✅ **Real open/close mouth + anime mouth presets + mesh** — the lips actually
+  part (feathered cavity, not a stretched chin); ~112 drawn **anime mouth shapes**
+  (`LipSync.mouthShapes`); and a **mesh** path (`cutMouthPiece` + `talkMeshed`)
+  that cuts a real open mouth from another sprite and blends it in. Auto/Anime/
+  Mesh toggle in the Mouth tab; a **drag/resize box** on the live preview
+- ✅ **Jiggle physics** — bounce any region (chest/body/hair) in **any direction**
+  with amount/speed/bounciness/squash/sway (`JiggleSpec` + the `jigglePhysics`
+  recipe; ~112 presets), a draggable box, preview + Save as `(a)` idle +
+  all-sprites — see docs/JIGGLE.md
+- ⬜ Multiple jiggle regions at once + a dedicated feathered/anchored renderer
 - ⬜ Onion-skinning + scrubbable timeline UI
 - ⬜ Per-frame SFX/realization/screenshake authoring UI (model supports it)
 

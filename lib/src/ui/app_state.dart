@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../animation/anim_clip.dart';
 import '../animation/anim_engine.dart';
+import '../animation/jiggle.dart';
 import '../animation/lipsync.dart';
 import '../core/ao_constants.dart';
 import '../core/character.dart';
@@ -1553,8 +1554,173 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------------
+  // Jiggle physics — bounce a region (chest/body/hair/anything)
+  // ---------------------------------------------------------------------------
+
+  /// Preview the jiggle [specs] on the **selected** sprite: decode → downscale →
+  /// render the region bounce → return looping PNG frames. The recipes are built
+  /// against the *downscaled* dimensions so the box lines up with the preview.
+  Future<List<Uint8List>> previewJiggle(
+    List<JiggleSpec> specs, {
+    int frames = 18,
+    int fps = 16,
+    int maxEdge = 360,
+  }) async {
+    final Emote? e = current;
+    if (e == null || specs.isEmpty) return const <Uint8List>[];
+    final String? rel = spriteRelFor(e);
+    if (rel == null) return const <Uint8List>[];
+    img.Image? base = await decodeFirstFrame(rel);
+    if (base == null) return const <Uint8List>[];
+    final int longest = base.width > base.height ? base.width : base.height;
+    if (longest > maxEdge) {
+      final double s = maxEdge / longest;
+      base = img.copyResize(base,
+          width: (base.width * s).round(),
+          height: (base.height * s).round(),
+          interpolation: img.Interpolation.average);
+    }
+    final List<AnimRecipe> recipes = <AnimRecipe>[
+      for (final JiggleSpec j in specs) j.toRecipe(base.width, base.height),
+    ];
+    final AnimClip clip =
+        AnimEngine.render(base, recipes, frames: frames, fps: fps);
+    return clip.frames.map((AnimFrame f) => Codecs.encodePng(f.image)).toList();
+  }
+
+  /// Bake the jiggle [specs] onto the **selected** sprite at full resolution and
+  /// save it. Jiggle is an **idle** motion, so it saves as the `(a)` sprite by
+  /// default (so it plays while the character is just standing there). WebP,
+  /// APNG fallback.
+  Future<String?> saveJiggle(
+    List<JiggleSpec> specs, {
+    int frames = 18,
+    int fps = 16,
+    String prefix = SpritePrefix.idle,
+    bool lossless = true,
+    int quality = 95,
+  }) async {
+    final Emote? e = current;
+    if (e == null || specs.isEmpty) return null;
+    final String? rel = spriteRelFor(e);
+    if (rel == null) return null;
+    final img.Image? base = await decodeFirstFrame(rel);
+    if (base == null) return null;
+    final List<AnimRecipe> recipes = <AnimRecipe>[
+      for (final JiggleSpec j in specs) j.toRecipe(base.width, base.height),
+    ];
+    // Reuse the tested full-res render+encode+write path.
+    return saveAnimation(recipes,
+        frames: frames,
+        fps: fps,
+        prefix: prefix,
+        lossless: lossless,
+        quality: quality);
+  }
+
+  /// **Jiggle every sprite** with the same fractional [specs] (a chest box sits
+  /// in roughly the same place across a character's poses). Each sprite's recipe
+  /// is built from its own dimensions, then rendered + encoded across all CPU
+  /// cores. Saves as `(a)` idle by default. Returns how many were animated.
+  Future<int> bulkJiggleAll(
+    List<JiggleSpec> specs, {
+    int frames = 18,
+    int fps = 16,
+    String prefix = SpritePrefix.idle,
+    bool lossless = true,
+    int quality = 95,
+  }) async {
+    if (specs.isEmpty || scan == null) return 0;
+    final List<SpriteGroup> groups = scan!.groups.toList();
+    if (groups.isEmpty) return 0;
+    _setBusy(true, 'Jiggling ${groups.length} sprites…');
+
+    final List<SpriteGroup> jobGroups = <SpriteGroup>[];
+    final List<_AnimJob> jobs = <_AnimJob>[];
+    for (final SpriteGroup g in groups) {
+      final String? rel = g.representative?.relPath;
+      if (rel == null || !await workspace.exists(rel)) continue;
+      // Per-sprite dims → per-sprite pixel regions (fractions are shared).
+      final img.Image? dims = await decodeFirstFrame(rel);
+      if (dims == null) continue;
+      final List<Map<String, dynamic>> recipeJson = <Map<String, dynamic>>[
+        for (final JiggleSpec j in specs)
+          j.toRecipe(dims.width, dims.height).toJson(),
+      ];
+      jobGroups.add(g);
+      jobs.add(_AnimJob(
+        bytes: await workspace.readBytes(rel),
+        ext: p.extension(rel).replaceFirst('.', ''),
+        recipes: recipeJson,
+        frames: frames,
+        fps: fps,
+        lossless: lossless,
+        quality: quality,
+      ));
+    }
+
+    final List<({Uint8List bytes, String ext, String? webpError})> results =
+        await mapParallel<_AnimJob,
+            ({Uint8List bytes, String ext, String? webpError})>(
+      jobs,
+      _computeAnim,
+      concurrency: maxConcurrency,
+      onProgress: (int d, int t) => _progress(d, t, 'Jiggle all'),
+    );
+
+    int ok = 0;
+    for (int i = 0; i < jobGroups.length; i++) {
+      final SpriteGroup g = jobGroups[i];
+      final ({Uint8List bytes, String ext, String? webpError}) r = results[i];
+      if (r.bytes.isEmpty || r.ext == 'none') continue;
+      final String outRel = '$prefix${g.base}.${r.ext}';
+      final SpriteFile? existing = switch (prefix) {
+        SpritePrefix.idle => g.idle,
+        SpritePrefix.talk => g.talk,
+        SpritePrefix.post => g.post,
+        _ => null,
+      };
+      if (existing != null &&
+          existing.relPath != outRel &&
+          await workspace.exists(existing.relPath)) {
+        await workspace.delete(existing.relPath);
+      }
+      await workspace.writeBytes(outRel, r.bytes);
+      ok++;
+    }
+
+    _invalidateImageCaches();
+    scan = _scanner.fromPaths(await _projectFiles());
+    _setBusy(false, 'Jiggled $ok sprite(s).');
+    return ok;
+  }
+
+  // ---------------------------------------------------------------------------
   // Mouth / lip-sync animation — fake a talking (b) sprite from one drawing
   // ---------------------------------------------------------------------------
+
+  /// An optional **open-mouth sprite** to *mesh* in: when set, the talking
+  /// animation cross-fades this real open mouth (cut at the mouth box, feathered)
+  /// onto the closed sprite, instead of the procedural cavity / drawn shape. Use
+  /// it when you have art of the same character with their mouth open.
+  img.Image? meshOpenSprite;
+
+  /// Thumbnail bytes of the loaded mesh sprite (for the UI), null when unset.
+  Uint8List? meshOpenThumb;
+
+  bool get hasMeshSprite => meshOpenSprite != null;
+
+  /// Load an open-mouth sprite to mesh from (its first frame). Null clears it.
+  void setMeshSprite(Uint8List? bytes, {String ext = 'png'}) {
+    if (bytes == null) {
+      meshOpenSprite = null;
+      meshOpenThumb = null;
+    } else {
+      meshOpenSprite = Codecs.decodeFirstFrame(bytes, ext: ext);
+      meshOpenThumb = meshOpenSprite == null ? null : bytes;
+    }
+    notifyListeners();
+  }
 
   /// The face-derived default mouth box for sprite [rel], as fractions (so it
   /// survives previews/resizes). Used to seed the Mouth tab so most sprites need
@@ -1587,6 +1753,8 @@ class AppState extends ChangeNotifier {
     int fps = 10,
     double openAmount = LipSync.defaultOpenAmount,
     TalkStyle? style,
+    MouthShape? shape,
+    bool mesh = false,
     int maxEdge = 360,
   }) async {
     final Emote? e = current;
@@ -1595,15 +1763,51 @@ class AppState extends ChangeNotifier {
     if (rel == null) return const <Uint8List>[];
     final img.Image? decoded = await decodeFirstFrame(rel);
     if (decoded == null) return const <Uint8List>[];
-    // Downscale for a snappy preview; `talkStyled` clones internally so the
-    // cached decode is never mutated even when `_fitEdge` returns it unchanged.
+    // Downscale for a snappy preview; the engine clones internally so the cached
+    // decode is never mutated even when `_fitEdge` returns it unchanged.
     final img.Image base = _fitEdge(decoded, maxEdge);
-    final AnimClip clip = LipSync.talkStyled(base, style ?? LipSync.defaultStyle,
-        mouth: mouth.toPixels(base.width, base.height),
+    final IntRect regionPx = mouth.toPixels(base.width, base.height);
+    final AnimClip clip = _buildTalkClip(base, regionPx, mouth,
+        style: style ?? LipSync.defaultStyle,
+        shape: shape,
+        mesh: mesh,
         frames: frames,
         fps: fps,
-        openAmount: openAmount);
+        openAmount: openAmount,
+        maxEdge: maxEdge);
     return clip.frames.map((AnimFrame f) => Codecs.encodePng(f.image)).toList();
+  }
+
+  /// Build a talking clip for [base] (already sized): mesh a real open mouth if
+  /// one is loaded, else a drawn [shape], else the procedural cavity. [maxEdge]
+  /// is used to scale the mesh sprite to match a downscaled preview ([base]); for
+  /// the full-res save pass `maxEdge: 0` so the mesh sprite is used at full size.
+  AnimClip _buildTalkClip(
+    img.Image base,
+    IntRect regionPx,
+    MouthRegion mouthFrac, {
+    required TalkStyle style,
+    MouthShape? shape,
+    bool mesh = false,
+    required int frames,
+    required int fps,
+    required double openAmount,
+    int maxEdge = 0,
+  }) {
+    if (mesh && meshOpenSprite != null) {
+      final img.Image open =
+          maxEdge > 0 ? _fitEdge(meshOpenSprite!, maxEdge) : meshOpenSprite!;
+      final img.Image piece = LipSync.cutMouthPiece(
+          open, mouthFrac.toPixels(open.width, open.height));
+      return LipSync.talkMeshed(base, piece, regionPx, style,
+          frames: frames, fps: fps, openAmount: openAmount);
+    }
+    return LipSync.talkStyled(base, style,
+        mouth: regionPx,
+        frames: frames,
+        fps: fps,
+        openAmount: openAmount,
+        shape: shape);
   }
 
   /// Bake the talking-mouth animation for the **selected** sprite at full
@@ -1615,6 +1819,8 @@ class AppState extends ChangeNotifier {
     int fps = 10,
     double openAmount = LipSync.defaultOpenAmount,
     TalkStyle? style,
+    MouthShape? shape,
+    bool mesh = false,
     String prefix = SpritePrefix.talk,
     bool lossless = true,
     int quality = 95,
@@ -1626,8 +1832,12 @@ class AppState extends ChangeNotifier {
     final img.Image? base = await decodeFirstFrame(rel);
     if (base == null) return null;
     _setBusy(true, 'Rendering mouth animation…');
-    final AnimClip clip = LipSync.talkStyled(base, style ?? LipSync.defaultStyle,
-        mouth: mouth.toPixels(base.width, base.height),
+    // Full-res: mesh sprite used at full size (maxEdge: 0).
+    final AnimClip clip = _buildTalkClip(
+        base, mouth.toPixels(base.width, base.height), mouth,
+        style: style ?? LipSync.defaultStyle,
+        shape: shape,
+        mesh: mesh,
         frames: frames,
         fps: fps,
         openAmount: openAmount);
@@ -1653,6 +1863,7 @@ class AppState extends ChangeNotifier {
     int fps = 10,
     double openAmount = LipSync.defaultOpenAmount,
     TalkStyle? style,
+    MouthShape? shape,
     String prefix = SpritePrefix.talk,
     bool lossless = true,
     int quality = 95,
@@ -1675,6 +1886,7 @@ class AppState extends ChangeNotifier {
         fps: fps,
         openAmount: openAmount,
         style: style ?? LipSync.defaultStyle,
+        shape: shape,
         lossless: lossless,
         quality: quality,
       ));
@@ -2591,6 +2803,7 @@ class _MouthJob {
     required this.fps,
     required this.openAmount,
     required this.style,
+    required this.shape,
     required this.lossless,
     required this.quality,
   });
@@ -2600,6 +2813,7 @@ class _MouthJob {
   final int fps;
   final double openAmount;
   final TalkStyle style;
+  final MouthShape? shape;
   final bool lossless;
   final int quality;
 }
@@ -2614,6 +2828,9 @@ Future<({Uint8List bytes, String ext, String? webpError})> _mouthWorker(
     return (bytes: Uint8List(0), ext: 'none', webpError: 'could not decode sprite');
   }
   final AnimClip clip = LipSync.talkStyled(base, job.style,
-      frames: job.frames, fps: job.fps, openAmount: job.openAmount);
+      frames: job.frames,
+      fps: job.fps,
+      openAmount: job.openAmount,
+      shape: job.shape);
   return clip.encodePreferWebp(lossless: job.lossless, quality: job.quality);
 }

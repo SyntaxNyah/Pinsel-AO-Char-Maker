@@ -133,4 +133,65 @@ void main() {
     expect(back.openAmount, closeTo(s.openAmount, 1e-9));
     expect(back.bob, closeTo(s.bob, 1e-9));
   });
+
+  // ---- Anime mouth shapes --------------------------------------------------
+
+  test('mouth-shape catalogue is large with unique names', () {
+    expect(LipSync.mouthShapes.length, greaterThanOrEqualTo(80));
+    expect(LipSync.mouthShapes.map((MouthShape s) => s.name).toSet().length,
+        LipSync.mouthShapes.length);
+    expect(LipSync.mouthShapeCategories.length, greaterThanOrEqualTo(3));
+  });
+
+  test('talkStyled with a drawn shape makes same-size frames, no mutation', () {
+    final img.Image base = _sprite();
+    final img.Pixel before = base.getPixel(20, 30);
+    final int r = before.r.toInt(), g = before.g.toInt(), b = before.b.toInt();
+    final AnimClip clip = LipSync.talkStyled(base, LipSync.defaultStyle,
+        frames: 8, shape: LipSync.mouthShapes.first);
+    expect(clip.frames.length, 8);
+    for (final AnimFrame f in clip.frames) {
+      expect(f.image.width, base.width);
+      expect(f.image.height, base.height);
+    }
+    final img.Pixel after = base.getPixel(20, 30);
+    expect(<int>[after.r.toInt(), after.g.toInt(), after.b.toInt()],
+        <int>[r, g, b]);
+  });
+
+  test('MouthShape JSON round-trips', () {
+    final MouthShape s = LipSync.mouthShapes.first;
+    final MouthShape back = MouthShape.fromJson(s.toJson());
+    expect(back.name, s.name);
+    expect(back.widthFrac, closeTo(s.widthFrac, 1e-9));
+    expect(back.teeth, s.teeth);
+  });
+
+  // ---- Mesh (cut a real open mouth, blend it) ------------------------------
+
+  test('cutMouthPiece returns a region-sized, edge-feathered piece', () {
+    final img.Image base = _sprite();
+    final IntRect r = LipSync.defaultMouthRegion(base);
+    final img.Image piece = LipSync.cutMouthPiece(base, r);
+    expect(piece.width, r.w);
+    expect(piece.height, r.h);
+    // The rim is feathered, so a corner pixel is no more opaque than the centre.
+    final int corner = piece.getPixel(0, 0).a.toInt();
+    final int centre =
+        piece.getPixel(piece.width ~/ 2, piece.height ~/ 2).a.toInt();
+    expect(corner, lessThanOrEqualTo(centre));
+  });
+
+  test('talkMeshed produces the requested same-size frames', () {
+    final img.Image base = _sprite();
+    final IntRect r = LipSync.defaultMouthRegion(base);
+    final img.Image piece = LipSync.cutMouthPiece(base, r);
+    final AnimClip clip =
+        LipSync.talkMeshed(base, piece, r, LipSync.defaultStyle, frames: 6);
+    expect(clip.frames.length, 6);
+    for (final AnimFrame f in clip.frames) {
+      expect(f.image.width, base.width);
+      expect(f.image.height, base.height);
+    }
+  });
 }

@@ -1,19 +1,25 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide Easing; // our Easing (Flutter 3.29+ also has one)
 import 'package:provider/provider.dart';
 
 import '../../animation/anim_engine.dart';
 import '../../animation/easing.dart';
+import '../../animation/jiggle.dart';
 import '../../animation/lipsync.dart';
 import '../../plugins/extension_registry.dart';
 import '../../presets/presets.dart';
 import '../app_state.dart';
 import '../widgets/checker_image.dart';
 
-/// The three studio workflows.
-enum _StudioMode { effects, mouth, frames }
+/// The studio workflows.
+enum _StudioMode { effects, mouth, jiggle, frames }
+
+/// How the talking mouth is drawn: a procedural jaw-drop cavity, a drawn
+/// "anime mouth" shape, or a real open mouth meshed from another sprite.
+enum _MouthSource { cavity, shape, mesh }
 
 /// Animation studio with two modes:
 ///  * **Effects** — one-click procedural recipes (sway, glow, …), stackable.
@@ -49,6 +55,12 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
   double? _mouthAspect; // selected sprite w/h, for the region overlay box
   String? _mouthSeededRel; // sprite the auto mouth box was last seeded for
   TalkStyle _talkStyle = LipSync.defaultStyle; // the chosen "way of talking"
+  _MouthSource _mouthSource = _MouthSource.cavity;
+  MouthShape _mouthShape = LipSync.mouthShapes.first; // chosen anime mouth
+
+  // jiggle mode
+  JiggleSpec _jiggle = const JiggleSpec();
+  int _jiggleFrames = 18;
 
   // frames mode
   final List<String> _seq = <String>[];
@@ -97,7 +109,13 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
           frames: _mouthFrames,
           fps: _fps,
           openAmount: _openAmount,
-          style: _talkStyle);
+          style: _talkStyle,
+          shape: _mouthSource == _MouthSource.shape ? _mouthShape : null,
+          mesh: _mouthSource == _MouthSource.mesh);
+    } else if (_mode == _StudioMode.jiggle) {
+      await _ensureMouthSeed(app); // also seeds the sprite aspect for the box
+      imgs = await app.previewJiggle(<JiggleSpec>[_jiggle],
+          frames: _jiggleFrames, fps: _fps);
     } else {
       final int n = _recipes.isEmpty ? 1 : _frames;
       imgs = await app.renderAnimationPreview(_recipes, frames: n, fps: _fps);
@@ -226,6 +244,8 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
         return '${_seq.length} frame(s)  ·  ${_frameImgs.length} shown';
       case _StudioMode.mouth:
         return 'Drag the pink box onto the lips — corner/edge handles resize it';
+      case _StudioMode.jiggle:
+        return 'Drag the box over what should jiggle (chest/body) — resize to fit';
       case _StudioMode.effects:
         return _recipes.isEmpty
             ? 'No effects yet — pick a preset or add effects →'
@@ -233,12 +253,14 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
     }
   }
 
-  /// The looping preview. In Mouth mode it overlays a **draggable, resizable**
-  /// mouth box (aligned to the sprite via [_mouthAspect]) so you can place it on
-  /// the lips with the mouse instead of fiddling with sliders.
+  /// The looping preview. In Mouth/Jiggle mode it overlays a **draggable,
+  /// resizable** box (aligned to the sprite via [_mouthAspect]) so you place the
+  /// mouth / jiggle region with the mouse instead of fiddling with sliders.
   Widget _previewContent() {
+    final bool boxMode =
+        _mode == _StudioMode.mouth || _mode == _StudioMode.jiggle;
     // Effects / Frames mode (or no sprite yet): just the looping image.
-    if (_mode != _StudioMode.mouth || _mouthAspect == null) {
+    if (!boxMode || _mouthAspect == null) {
       return ValueListenableBuilder<int>(
         valueListenable: _frameIdx,
         builder: (_, int idx, __) {
@@ -248,9 +270,12 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
         },
       );
     }
-    // Mouth mode: looping talk preview + an interactive mouth box on top. The
-    // image animates (its own ValueListenableBuilder) while the box overlay only
-    // rebuilds when you drag it or it's re-seeded — so dragging stays smooth.
+    final MouthRegion box = _mode == _StudioMode.mouth
+        ? _mouth
+        : MouthRegion(_jiggle.x, _jiggle.y, _jiggle.w, _jiggle.h);
+    // Box mode: looping preview + an interactive box on top. The image animates
+    // (its own ValueListenableBuilder) while the box overlay only rebuilds when
+    // you drag it or it's re-seeded — so dragging stays smooth.
     return Center(
       child: AspectRatio(
         aspectRatio: _mouthAspect!,
@@ -274,10 +299,17 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
                   child: _MouthBoxOverlay(
                     width: w,
                     height: h,
-                    mouth: _mouth,
+                    mouth: box,
                     // Live drag: write the value but don't rebuild the controls
                     // (the overlay redraws itself).
-                    onChanged: (MouthRegion m) => _mouth = m,
+                    onChanged: (MouthRegion m) {
+                      if (_mode == _StudioMode.mouth) {
+                        _mouth = m;
+                      } else {
+                        _jiggle = _jiggle
+                            .copyWith(x: m.x, y: m.y, w: m.w, h: m.h);
+                      }
+                    },
                     // One rebuild (sync sliders) + re-render the loop on release.
                     onCommit: () {
                       setState(() {});
@@ -309,6 +341,10 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
                 label: Text('Mouth'),
                 icon: Icon(Icons.record_voice_over_outlined)),
             ButtonSegment<_StudioMode>(
+                value: _StudioMode.jiggle,
+                label: Text('Jiggle'),
+                icon: Icon(Icons.vibration)),
+            ButtonSegment<_StudioMode>(
                 value: _StudioMode.frames,
                 label: Text('Frames'),
                 icon: Icon(Icons.burst_mode_outlined)),
@@ -323,6 +359,7 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
         ...switch (_mode) {
           _StudioMode.frames => _frameControls(app),
           _StudioMode.mouth => _mouthControls(app),
+          _StudioMode.jiggle => _jiggleControls(app),
           _StudioMode.effects => _effectControls(app),
         },
       ],
@@ -557,6 +594,90 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
         'angry, sobbing, robotic, singing…',
         style: const TextStyle(fontSize: 11, color: Colors.white38),
       ),
+      const Divider(height: 18),
+      // How the open mouth looks: procedural cavity, a drawn anime mouth, or a
+      // real open mouth meshed from another sprite.
+      Text('Mouth opening', style: Theme.of(context).textTheme.labelLarge),
+      const SizedBox(height: 4),
+      SegmentedButton<_MouthSource>(
+        showSelectedIcon: false,
+        segments: const <ButtonSegment<_MouthSource>>[
+          ButtonSegment<_MouthSource>(
+              value: _MouthSource.cavity, label: Text('Auto')),
+          ButtonSegment<_MouthSource>(
+              value: _MouthSource.shape, label: Text('Anime')),
+          ButtonSegment<_MouthSource>(
+              value: _MouthSource.mesh, label: Text('Mesh')),
+        ],
+        selected: <_MouthSource>{_mouthSource},
+        onSelectionChanged: (Set<_MouthSource> s) {
+          setState(() => _mouthSource = s.first);
+          _schedule();
+        },
+      ),
+      if (_mouthSource == _MouthSource.cavity)
+        const Padding(
+          padding: EdgeInsets.only(top: 4),
+          child: Text(
+            'Auto: the jaw drops and a soft dark mouth opens — works on any '
+            'sprite, no art needed.',
+            style: TextStyle(fontSize: 11, color: Colors.white38),
+          ),
+        ),
+      if (_mouthSource == _MouthSource.shape) ...<Widget>[
+        const SizedBox(height: 6),
+        OutlinedButton.icon(
+          onPressed: _pickMouthShape,
+          icon: const Icon(Icons.emoji_emotions_outlined),
+          label: Align(
+            alignment: Alignment.centerLeft,
+            child: Text('${_mouthShape.name}  ·  ${_mouthShape.category}',
+                overflow: TextOverflow.ellipsis),
+          ),
+          style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(40),
+              alignment: Alignment.centerLeft),
+        ),
+        Text(
+          '${LipSync.mouthShapes.length} drawn anime mouths — o, gasp, grin, '
+          'tongue, smile…',
+          style: const TextStyle(fontSize: 11, color: Colors.white38),
+        ),
+      ],
+      if (_mouthSource == _MouthSource.mesh) ...<Widget>[
+        const SizedBox(height: 6),
+        const Text(
+          'Mesh a REAL open mouth cut from another sprite (the same character '
+          'with their mouth open). It is feathered onto this sprite and '
+          'cross-fades in as the mouth "opens". Position the box on the mouth '
+          'first — the same box is cut from the open-mouth sprite.',
+          style: TextStyle(fontSize: 11, color: Colors.white54),
+        ),
+        const SizedBox(height: 4),
+        Row(children: <Widget>[
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _pickMeshSprite,
+              icon: const Icon(Icons.image_outlined),
+              label: Text(
+                app.hasMeshSprite
+                    ? 'Open-mouth sprite loaded ✓'
+                    : 'Pick open-mouth sprite…',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+          if (app.hasMeshSprite)
+            IconButton(
+              tooltip: 'Clear',
+              onPressed: () {
+                app.setMeshSprite(null);
+                _schedule();
+              },
+              icon: const Icon(Icons.close),
+            ),
+        ]),
+      ],
       const SizedBox(height: 10),
       OutlinedButton.icon(
         onPressed: () => _autoPlaceMouth(app),
@@ -610,6 +731,8 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
                     fps: _fps,
                     openAmount: _openAmount,
                     style: _talkStyle,
+                    shape: _mouthSource == _MouthSource.shape ? _mouthShape : null,
+                    mesh: _mouthSource == _MouthSource.mesh,
                     prefix: '(b)'),
             icon: const Icon(Icons.save_rounded),
             label: const Text('Save as (b) talk'),
@@ -625,6 +748,8 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
                   fps: _fps,
                   openAmount: _openAmount,
                   style: _talkStyle,
+                  shape: _mouthSource == _MouthSource.shape ? _mouthShape : null,
+                  mesh: _mouthSource == _MouthSource.mesh,
                   prefix: '(a)'),
           icon: const Icon(Icons.bedtime_outlined),
         ),
@@ -724,6 +849,9 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
         fps: _fps,
         openAmount: _openAmount,
         style: _talkStyle,
+        // Mesh is per-sprite (one specific open mouth), so bulk uses the drawn
+        // shape (if chosen) or the procedural cavity.
+        shape: _mouthSource == _MouthSource.shape ? _mouthShape : null,
         prefix: '(b)');
   }
 
@@ -738,6 +866,226 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
       _openAmount = picked.openAmount;
     });
     _schedule();
+  }
+
+  Future<void> _pickMouthShape() async {
+    final MouthShape? picked = await showCataloguePicker<MouthShape>(
+      context,
+      title: 'Pick an anime mouth',
+      hint: 'Search mouths (o, gasp, grin, tongue, smile)…',
+      items: LipSync.mouthShapes,
+      categories: LipSync.mouthShapeCategories,
+      nameOf: (MouthShape m) => m.name,
+      categoryOf: (MouthShape m) => m.category,
+      subtitleOf: (MouthShape m) =>
+          'w ${(m.widthFrac * 100).round()}% · h ${(m.heightFrac * 100).round()}%'
+          '${m.teeth ? ' · teeth' : ''}${m.tongue ? ' · tongue' : ''}',
+      selectedName: _mouthShape.name,
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _mouthShape = picked);
+    _schedule();
+  }
+
+  Future<void> _pickMeshSprite() async {
+    final FilePickerResult? res = await FilePicker.platform
+        .pickFiles(withData: true, type: FileType.image);
+    if (res == null || res.files.isEmpty) return;
+    final PlatformFile f = res.files.first;
+    if (f.bytes == null || !mounted) return;
+    context
+        .read<AppState>()
+        .setMeshSprite(f.bytes!, ext: (f.extension ?? 'png').toLowerCase());
+    setState(() {});
+    _schedule();
+  }
+
+  // ===========================================================================
+  // Jiggle mode — bounce a region (chest / body / hair / anything)
+  // ===========================================================================
+  List<Widget> _jiggleControls(AppState app) {
+    return <Widget>[
+      Text('Jiggle physics', style: Theme.of(context).textTheme.titleMedium),
+      const Text(
+        'Bounce a part of the sprite — boobs, hair, belly, anything. Drag the '
+        'box over it, then dial in the direction, how much it bounces and how '
+        'fast. Saved as an animated (a) idle so it plays while the character is '
+        'just standing there. (A looping motion tuned to feel springy, not a '
+        'true physics sim.)',
+        style: TextStyle(fontSize: 12, color: Colors.white60),
+      ),
+      const SizedBox(height: 10),
+      Text('Preset', style: Theme.of(context).textTheme.labelLarge),
+      const SizedBox(height: 4),
+      OutlinedButton.icon(
+        onPressed: _pickJiggle,
+        icon: const Icon(Icons.tune),
+        label: Align(
+          alignment: Alignment.centerLeft,
+          child: Text('${_jiggle.name}  ·  ${_jiggle.category}',
+              overflow: TextOverflow.ellipsis),
+        ),
+        style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(40),
+            alignment: Alignment.centerLeft),
+      ),
+      Text(
+        '${jigglePresets.length} presets — subtle, bouncy, jelly, sway, wild…',
+        style: const TextStyle(fontSize: 11, color: Colors.white38),
+      ),
+      const SizedBox(height: 8),
+      const Text('Drag the box in the preview over what should jiggle.',
+          style: TextStyle(fontSize: 11, color: Colors.white54)),
+      const SizedBox(height: 6),
+      _jiggleSlider('Direction', _jiggle.direction, 0, 180,
+          (double v) => _jiggle = _jiggle.copyWith(direction: v),
+          suffix: '°', divisions: 36, hint: '0° = up/down · 90° = left/right'),
+      _jiggleSlider('Bounce amount', _jiggle.amplitude * 100, 2, 60,
+          (double v) => _jiggle = _jiggle.copyWith(amplitude: v / 100),
+          suffix: '%', divisions: 58),
+      _jiggleSliderInt('Speed (bounces per loop)', _jiggle.frequency, 1, 8,
+          (int v) => _jiggle = _jiggle.copyWith(frequency: v)),
+      _jiggleSlider('Bounciness', _jiggle.bounciness, 0, 1,
+          (double v) => _jiggle = _jiggle.copyWith(bounciness: v)),
+      _jiggleSlider('Softness (squash & stretch)', _jiggle.squash, 0, 1,
+          (double v) => _jiggle = _jiggle.copyWith(squash: v)),
+      _jiggleSlider('Sway (rotation)', _jiggle.sway, 0, 20,
+          (double v) => _jiggle = _jiggle.copyWith(sway: v),
+          suffix: '°', divisions: 40),
+      Text('Frames: $_jiggleFrames'),
+      Slider(
+        value: _jiggleFrames.toDouble().clamp(4, 32),
+        min: 4,
+        max: 32,
+        divisions: 28,
+        onChanged: (double v) {
+          setState(() => _jiggleFrames = v.round());
+          _schedule();
+        },
+      ),
+      _fpsSlider(),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed: app.current == null
+              ? null
+              : () => app.saveJiggle(<JiggleSpec>[_jiggle],
+                  frames: _jiggleFrames, fps: _fps),
+          icon: const Icon(Icons.save_rounded),
+          label: const Text('Save as (a) idle'),
+        ),
+      ),
+      const SizedBox(height: 6),
+      SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: !app.hasProject ? null : () => _jiggleAll(app),
+          icon: const Icon(Icons.auto_awesome_motion),
+          label: const Text('Jiggle ALL sprites'),
+        ),
+      ),
+      const Padding(
+        padding: EdgeInsets.only(top: 2),
+        child: Text(
+          'Applies this box + settings to every sprite, baked across all CPU '
+          'cores.',
+          style: TextStyle(fontSize: 11, color: Colors.white60),
+        ),
+      ),
+      const SizedBox(height: 24),
+    ];
+  }
+
+  Widget _jiggleSlider(String label, double value, double min, double max,
+      void Function(double) assign,
+      {String suffix = '', int? divisions, String? hint}) {
+    final bool whole = suffix == '%' || suffix == '°';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text('$label: ${whole ? value.round() : value.toStringAsFixed(2)}$suffix'),
+        if (hint != null)
+          Text(hint, style: const TextStyle(fontSize: 10, color: Colors.white38)),
+        Slider(
+          value: value.clamp(min, max),
+          min: min,
+          max: max,
+          divisions: divisions,
+          onChanged: (double v) {
+            setState(() => assign(v));
+            _schedule();
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _jiggleSliderInt(
+      String label, int value, int min, int max, void Function(int) assign) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text('$label: $value'),
+        Slider(
+          value: value.toDouble().clamp(min.toDouble(), max.toDouble()),
+          min: min.toDouble(),
+          max: max.toDouble(),
+          divisions: max - min,
+          onChanged: (double v) {
+            setState(() => assign(v.round()));
+            _schedule();
+          },
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pickJiggle() async {
+    final JiggleSpec? picked = await showCataloguePicker<JiggleSpec>(
+      context,
+      title: 'Pick a jiggle preset',
+      hint: 'Search (bouncy, jelly, sway, heavy, wild)…',
+      items: jigglePresets,
+      categories: jiggleCategories,
+      nameOf: (JiggleSpec j) => j.name,
+      categoryOf: (JiggleSpec j) => j.category,
+      subtitleOf: (JiggleSpec j) =>
+          'amount ${(j.amplitude * 100).round()}% · speed ${j.frequency} · '
+          'bounce ${(j.bounciness * 100).round()}%',
+      selectedName: _jiggle.name,
+    );
+    if (picked == null || !mounted) return;
+    // Keep the box the user placed; adopt the preset's physics.
+    setState(() => _jiggle = picked.copyWith(
+        x: _jiggle.x, y: _jiggle.y, w: _jiggle.w, h: _jiggle.h));
+    _schedule();
+  }
+
+  Future<void> _jiggleAll(AppState app) async {
+    final int count = app.spriteBases().length;
+    final bool? go = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        title: const Text('Jiggle all sprites?'),
+        content: Text(
+          'Apply this jiggle box + settings to all $count sprite(s) and save '
+          'each as an animated (a) idle, replacing existing idles. Baked across '
+          'all CPU cores.',
+        ),
+        actions: <Widget>[
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Do all')),
+        ],
+      ),
+    );
+    if (go != true) return;
+    await app.bulkJiggleAll(<JiggleSpec>[_jiggle],
+        frames: _jiggleFrames, fps: _fps);
   }
 
   // ===========================================================================
@@ -1176,6 +1524,160 @@ class _TalkStylePickerState extends State<_TalkStylePicker> {
                                 style: const TextStyle(fontSize: 11),
                               ),
                               onTap: () => Navigator.pop(context, s),
+                            ),
+                        ],
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+      ],
+    );
+  }
+}
+
+/// A generic searchable, category-grouped catalogue picker (used by the mouth
+/// shapes and the jiggle presets). Returns the chosen item, or null.
+Future<T?> showCataloguePicker<T>(
+  BuildContext context, {
+  required String title,
+  required String hint,
+  required List<T> items,
+  required List<String> categories,
+  required String Function(T) nameOf,
+  required String Function(T) categoryOf,
+  required String Function(T) subtitleOf,
+  String? selectedName,
+}) =>
+    showDialog<T>(
+      context: context,
+      builder: (BuildContext ctx) => _CataloguePicker<T>(
+        title: title,
+        hint: hint,
+        items: items,
+        categories: categories,
+        nameOf: nameOf,
+        categoryOf: categoryOf,
+        subtitleOf: subtitleOf,
+        selectedName: selectedName,
+      ),
+    );
+
+class _CataloguePicker<T> extends StatefulWidget {
+  const _CataloguePicker({
+    required this.title,
+    required this.hint,
+    required this.items,
+    required this.categories,
+    required this.nameOf,
+    required this.categoryOf,
+    required this.subtitleOf,
+    this.selectedName,
+  });
+  final String title;
+  final String hint;
+  final List<T> items;
+  final List<String> categories;
+  final String Function(T) nameOf;
+  final String Function(T) categoryOf;
+  final String Function(T) subtitleOf;
+  final String? selectedName;
+
+  @override
+  State<_CataloguePicker<T>> createState() => _CataloguePickerState<T>();
+}
+
+class _CataloguePickerState<T> extends State<_CataloguePicker<T>> {
+  String _query = '';
+  String? _category;
+
+  @override
+  Widget build(BuildContext context) {
+    final String q = _query.trim().toLowerCase();
+    final List<T> matches = <T>[
+      for (final T it in widget.items)
+        if ((_category == null || widget.categoryOf(it) == _category) &&
+            (q.isEmpty ||
+                widget.nameOf(it).toLowerCase().contains(q) ||
+                widget.categoryOf(it).toLowerCase().contains(q)))
+          it,
+    ];
+    final Map<String, List<T>> grouped = <String, List<T>>{};
+    for (final T it in matches) {
+      (grouped[widget.categoryOf(it)] ??= <T>[]).add(it);
+    }
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SizedBox(
+        width: 460,
+        height: 540,
+        child: Column(
+          children: <Widget>[
+            TextField(
+              autofocus: true,
+              decoration: InputDecoration(
+                isDense: true,
+                prefixIcon: const Icon(Icons.search),
+                hintText: widget.hint,
+              ),
+              onChanged: (String v) => setState(() => _query = v),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 36,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: <Widget>[
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ChoiceChip(
+                      label: const Text('All'),
+                      selected: _category == null,
+                      onSelected: (_) => setState(() => _category = null),
+                    ),
+                  ),
+                  for (final String c in widget.categories)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text(c),
+                        selected: _category == c,
+                        onSelected: (_) => setState(() => _category = c),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 16),
+            Expanded(
+              child: matches.isEmpty
+                  ? const Center(child: Text('Nothing matches.'))
+                  : ListView(
+                      children: <Widget>[
+                        for (final MapEntry<String, List<T>> g
+                            in grouped.entries) ...<Widget>[
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
+                            child: Text(g.key.toUpperCase(),
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    letterSpacing: 1,
+                                    color: Colors.white54)),
+                          ),
+                          for (final T it in g.value)
+                            ListTile(
+                              dense: true,
+                              selected: widget.nameOf(it) == widget.selectedName,
+                              title: Text(widget.nameOf(it)),
+                              subtitle: Text(widget.subtitleOf(it),
+                                  style: const TextStyle(fontSize: 11)),
+                              onTap: () => Navigator.pop(context, it),
                             ),
                         ],
                       ],
