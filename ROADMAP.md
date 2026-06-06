@@ -57,7 +57,9 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ✅ 43 colour ops incl. split-tone, vignette, scanlines, grain, chroma shift,
   pixelate, solarize, dither, cross-process, bleach-bypass, sharpen, blur
 - ✅ Custom colour wheel/picker → recolour / tint / solid / gradient (blendable)
-- ✅ Crop, auto-trim & background removal (frame-aware; uniform across (a)/(b))
+- ✅ Crop, **grow**, **resize** (width/height — slider + −/+ + typeable px box,
+  lock-aspect; `SpriteEditSpec.scaleX/scaleY` → `SpriteEdit.resize`), auto-trim &
+  background removal (frame-aware; uniform across (a)/(b))
 - ✅ Sprite compositor / mixer (snip + stack layers; head-on-body) with a
   two-folder workflow (load a 2nd character's folder to graft parts from),
   **multiple snips at once**, **mouse drag/scale/rotate**, and a **Layers mode**

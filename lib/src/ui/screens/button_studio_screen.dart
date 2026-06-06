@@ -299,8 +299,7 @@ class _ButtonSpriteListState extends State<_ButtonSpriteList> {
                           selected: i == app.selectedEmote,
                           leading: _ButtonThumb(
                             emote: e,
-                            revision:
-                                app.spriteRevision + app.buttonStyleRevision,
+                            revision: app.buttonThumbKey(e),
                           ),
                           title: Text(
                             e.comment.trim().isEmpty ? e.sprite : e.comment,
@@ -1931,9 +1930,18 @@ class _FramingPaneState extends State<_FramingPane> {
                             emote: cur,
                             revision: app.spriteRevision,
                             box: app.buttonCropFor(curSprite),
-                            onChanged: (CropBox b) {
-                              setState(() => app.setButtonCrop(curSprite, b));
-                              _schedule();
+                            // Live drag: write the box but DON'T rebuild the pane
+                            // (the canvas renders the drag itself) — this is what
+                            // keeps dragging smooth on a big cast.
+                            onChanged: (CropBox b) =>
+                                app.setButtonCrop(curSprite, b),
+                            // Drag end: one rebuild (slider sync) + debounced
+                            // preview, instead of doing it every frame.
+                            onCommit: () {
+                              if (mounted) {
+                                setState(() {});
+                                _schedule();
+                              }
                             },
                           ),
                         ),
@@ -2006,12 +2014,14 @@ class _ManualCanvasLoader extends StatefulWidget {
     required this.revision,
     required this.box,
     required this.onChanged,
+    this.onCommit,
   });
   final AppState app;
   final Emote? emote;
   final int revision;
   final CropBox box;
   final ValueChanged<CropBox> onChanged;
+  final VoidCallback? onCommit;
 
   @override
   State<_ManualCanvasLoader> createState() => _ManualCanvasLoaderState();
@@ -2063,6 +2073,7 @@ class _ManualCanvasLoaderState extends State<_ManualCanvasLoader> {
       aspect: (_aspect == null || _aspect! <= 0) ? 1.0 : _aspect!,
       box: widget.box,
       onChanged: widget.onChanged,
+      onCommit: widget.onCommit,
     );
   }
 }
@@ -2081,11 +2092,19 @@ class _ManualCanvas extends StatefulWidget {
     required this.aspect,
     required this.box,
     required this.onChanged,
+    this.onCommit,
   });
   final Uint8List bytes;
   final double aspect; // width / height
   final CropBox box;
+
+  /// Called live while dragging the box (writes the new box to app state, but
+  /// the caller should NOT rebuild on this — the canvas shows the drag itself).
   final ValueChanged<CropBox> onChanged;
+
+  /// Called once when a box drag ends — the caller does the heavy refresh
+  /// (slider sync + debounced preview) here, not per frame.
+  final VoidCallback? onCommit;
 
   @override
   State<_ManualCanvas> createState() => _ManualCanvasState();
@@ -2094,6 +2113,11 @@ class _ManualCanvas extends StatefulWidget {
 class _ManualCanvasState extends State<_ManualCanvas> {
   static const double _minScale = 0.25, _maxScale = 12.0;
   double _scale = 1.0;
+
+  /// The box being dragged. While non-null the canvas renders THIS (so a drag is
+  /// smooth without rebuilding the sidebar/preview every frame); it's cleared
+  /// when the committed box arrives back via [didUpdateWidget].
+  CropBox? _live;
   Offset? _pan; // viewport px; null until first layout (then centred)
   Size _viewport = Size.zero;
   double _baseW = 1, _baseH = 1;
@@ -2120,10 +2144,11 @@ class _ManualCanvasState extends State<_ManualCanvas> {
   }
 
   void _onDown(Offset local) {
+    final CropBox b = _live ?? widget.box;
     final Offset pan = _pan ?? _centerPan(_scale);
-    final double sLeft = pan.dx + widget.box.x * _baseW * _scale;
-    final double sTop = pan.dy + widget.box.y * _baseH * _scale;
-    final double sSide = widget.box.side * _baseW * _scale;
+    final double sLeft = pan.dx + b.x * _baseW * _scale;
+    final double sTop = pan.dy + b.y * _baseH * _scale;
+    final double sSide = b.side * _baseW * _scale;
     final Offset corner = Offset(sLeft + sSide, sTop + sSide);
     if ((local - corner).distance <= 28) {
       _mode = 3; // resize
@@ -2137,6 +2162,14 @@ class _ManualCanvasState extends State<_ManualCanvas> {
     }
   }
 
+  @override
+  void didUpdateWidget(_ManualCanvas old) {
+    super.didUpdateWidget(old);
+    // A committed/slider/sprite-switch box arrived — the external value is now
+    // authoritative, so drop the transient drag copy.
+    if (!identical(old.box, widget.box)) _live = null;
+  }
+
   void _onMove(Offset delta) {
     if (_mode == 1) {
       setState(() => _pan = (_pan ?? _centerPan(_scale)) + delta);
@@ -2144,20 +2177,33 @@ class _ManualCanvasState extends State<_ManualCanvas> {
     }
     final double denomW = _baseW * _scale, denomH = _baseH * _scale;
     if (denomW <= 0 || denomH <= 0) return;
-    final CropBox b = widget.box;
+    // Accumulate off the LIVE box (or the current box at drag start) — NOT
+    // widget.box, which is intentionally frozen during the drag.
+    final CropBox b = _live ?? widget.box;
+    CropBox next;
     if (_mode == 2) {
       final double nx =
           (b.x + delta.dx / denomW).clamp(0.0, (1 - b.side).clamp(0.0, 1.0));
       final double maxY = (1 - b.side * widget.aspect).clamp(0.0, 1.0);
       final double ny = (b.y + delta.dy / denomH).clamp(0.0, maxY);
-      widget.onChanged(b.copyWith(x: nx, y: ny));
+      next = b.copyWith(x: nx, y: ny);
     } else if (_mode == 3) {
       final double ns = (b.side + delta.dx / denomW).clamp(0.05, 1.0);
       final double nx = b.x.clamp(0.0, (1 - ns).clamp(0.0, 1.0));
       final double maxY = (1 - ns * widget.aspect).clamp(0.0, 1.0);
       final double ny = b.y.clamp(0.0, maxY);
-      widget.onChanged(b.copyWith(side: ns, x: nx, y: ny));
+      next = b.copyWith(side: ns, x: nx, y: ny);
+    } else {
+      return;
     }
+    setState(() => _live = next); // re-render only the canvas (cheap)
+    widget.onChanged(next); // write app state live, but DON'T rebuild the pane
+  }
+
+  void _onUp() {
+    final bool wasBox = _mode == 2 || _mode == 3;
+    _mode = 0;
+    if (wasBox) widget.onCommit?.call(); // heavy refresh happens once, here
   }
 
   @override
@@ -2175,7 +2221,7 @@ class _ManualCanvasState extends State<_ManualCanvas> {
         _baseH = bh;
         _pan ??= _centerPan(_scale);
         final Offset pan = _pan!;
-        final CropBox box = widget.box;
+        final CropBox box = _live ?? widget.box; // show the live drag if any
         final double dispW = bw * _scale, dispH = bh * _scale;
         final double boxLeft = box.x * dispW,
             boxTop = box.y * dispH,
@@ -2190,6 +2236,8 @@ class _ManualCanvasState extends State<_ManualCanvas> {
             behavior: HitTestBehavior.opaque,
             onPanDown: (DragDownDetails d) => _onDown(d.localPosition),
             onPanUpdate: (DragUpdateDetails d) => _onMove(d.delta),
+            onPanEnd: (_) => _onUp(),
+            onPanCancel: _onUp,
             child: ClipRect(
               child: Stack(
                 children: <Widget>[

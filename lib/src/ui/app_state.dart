@@ -822,6 +822,18 @@ class AppState extends ChangeNotifier {
   // Crop / trim / background removal
   // ---------------------------------------------------------------------------
 
+  /// The selected sprite's pixel dimensions (first frame), for the Edit screen's
+  /// resize fields. Null if no sprite. Uses the decode cache.
+  Future<({int w, int h})?> currentSpriteSize() async {
+    final Emote? e = current;
+    if (e == null) return null;
+    final String? rel = spriteRelFor(e);
+    if (rel == null) return null;
+    final img.Image? im = await decodeFirstFrame(rel);
+    if (im == null) return null;
+    return (w: im.width, h: im.height);
+  }
+
   /// PNG preview of the selected sprite with [spec] applied (downscaled).
   Future<Uint8List?> previewEdit(String rel, SpriteEditSpec spec,
       {int maxEdge = 640}) async {
@@ -873,7 +885,8 @@ class AppState extends ChangeNotifier {
       final IntRect rect = SpriteEdit.computeRect(decoded.values.toList(), spec);
 
       for (final MapEntry<String, img.Image> e in decoded.entries) {
-        final img.Image out = SpriteEdit.cropTo(e.value, rect);
+        img.Image out = SpriteEdit.cropTo(e.value, rect);
+        out = SpriteEdit.resize(out, spec.scaleX, spec.scaleY);
         await _writeSpriteInPlace(e.key, out);
         edited++;
       }
@@ -1022,15 +1035,40 @@ class AppState extends ChangeNotifier {
   }
 
   /// Bumped (debounced by the studio) whenever a button *style* setting changes
-  /// — framing mode, size, zoom, offsets, a manual box, or an overlay — so the
-  /// sprite-list's button thumbnails know to re-render. Kept separate from
-  /// [spriteRevision] (pixels) so typing/recolour and framing don't cross-bust.
+  /// — framing mode, size, zoom, offsets, a manual box, or an overlay. Its only
+  /// job now is to **notify** so the sprite list rebuilds; which thumbnails
+  /// actually re-render is decided per-sprite by [buttonThumbKey] (so editing
+  /// one sprite's box no longer re-renders the whole visible list = the freeze).
   int buttonStyleRevision = 0;
 
   /// Tell the button thumbnails to refresh (after a debounced settings change).
   void bumpButtonStyle() {
     buttonStyleRevision++;
     notifyListeners();
+  }
+
+  /// A cheap per-sprite signature of everything that changes [e]'s rendered
+  /// button thumbnail. The list passes this as each thumbnail's reload key, so a
+  /// thumbnail only re-renders when **its own** framing inputs change — dragging
+  /// one sprite's crop box re-renders exactly one thumbnail, not all the visible
+  /// ones (the fix for the drag-stop freeze on a big cast).
+  int buttonThumbKey(Emote e) {
+    int h = spriteRevision;
+    h = h * 31 + buttonFraming.index;
+    h = h * 31 + (buttonZoom * 100).round();
+    h = h * 31 + (buttonOffsetX * 100).round();
+    h = h * 31 + (buttonOffsetY * 100).round();
+    h = h * 31 + (buttonFg.isSet ? 1 : 0);
+    h = h * 31 + (buttonBg.isSet ? 1 : 0);
+    if (buttonFraming == CropFraming.manual) {
+      final CropBox? box = buttonCropRaw(e.sprite);
+      if (box != null) {
+        h = h * 31 + (box.x * 1000).round();
+        h = h * 31 + (box.y * 1000).round();
+        h = h * 31 + (box.side * 1000).round();
+      }
+    }
+    return h;
   }
 
   /// The plain base sprite (bytes + aspect) for the manual crop-box editor, for

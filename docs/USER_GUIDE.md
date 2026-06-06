@@ -485,10 +485,17 @@ overlays (or none).
 
 ---
 
-## 9. Edit — crop, **grow**, trim & remove background
+## 9. Edit — crop, **grow**, **resize**, trim & remove background
 
 Open the **Edit** tab (pick an emote first).
 
+- **Resize the whole image** — make a sprite bigger or smaller by **width and
+  height**. Each axis has a **slider**, **`−` / `+`** buttons, **and a typeable
+  exact-pixel box** (it shows the original size → the new size, e.g. *512×768 →
+  256×384*). **Lock aspect ratio** (on by default) scales width and height
+  together; unlock it to **stretch** them independently. The **25 / 50 / 100 /
+  150 / 200 %** buttons are quick presets. (Resizing an animated sprite scales
+  every frame.)
 - **Auto-trim transparent margins** — tightens the sprite to its visible pixels.
 - **Remove background** — flood-fills from the four corners and makes a flat/near-
   flat background transparent. Use the **BG tolerance** slider if it removes too
@@ -503,9 +510,10 @@ Open the **Edit** tab (pick an emote first).
 - **Apply to** — a **This sprite / All sprites** toggle picks the target; then
   press **Apply**.
 
-Crop, grow and auto-trim apply the **same box to every frame and to an emote's
-`(a)`/`(b)`/`(c)` sprites**, so animations and idle/talk stay perfectly aligned.
-(The result is baked into the sprite files — use Export afterwards.)
+Crop, grow, resize and auto-trim apply the **same box and scale to every frame
+and to an emote's `(a)`/`(b)`/`(c)` sprites**, so animations and idle/talk stay
+perfectly aligned. (The result is baked into the sprite files — use Export
+afterwards.)
 
 ---
 

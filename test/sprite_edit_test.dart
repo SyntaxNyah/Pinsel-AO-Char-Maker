@@ -18,6 +18,36 @@ void main() {
       expect(const SpriteEditSpec(cropLeft: 0.1).isNoop, isFalse);
       expect(const SpriteEditSpec(padRight: 0.1).isNoop, isFalse);
       expect(const SpriteEditSpec(autoTrim: true).isNoop, isFalse);
+      expect(const SpriteEditSpec(scaleX: 0.5).isNoop, isFalse);
+      expect(const SpriteEditSpec(scaleY: 2.0).isNoop, isFalse);
+    });
+  });
+
+  group('resize', () {
+    test('scales width and height by the factors', () {
+      final img.Image out = SpriteEdit.resize(_solid(40, 20), 0.5, 2.0);
+      expect(out.width, 20);
+      expect(out.height, 40);
+    });
+
+    test('scale 1×1 is a no-op (returns the same instance)', () {
+      final img.Image src = _solid(10, 10);
+      expect(identical(SpriteEdit.resize(src, 1.0, 1.0), src), isTrue);
+    });
+
+    test('apply() resizes after cropping (crop then scale)', () {
+      // 20×20, crop 50% off the right → 10×20, then 2× → 20×40.
+      final img.Image out = SpriteEdit.apply(
+          _solid(20, 20), const SpriteEditSpec(cropRight: 0.5, scaleX: 2, scaleY: 2));
+      expect(out.width, 20);
+      expect(out.height, 40);
+    });
+
+    test('preserves frame count for an animation', () {
+      final img.Image anim = _solid(10, 10)..addFrame(_solid(10, 10));
+      final img.Image out = SpriteEdit.resize(anim, 2.0, 2.0);
+      expect(out.frames.length, 2);
+      expect(out.width, 20);
     });
   });
 

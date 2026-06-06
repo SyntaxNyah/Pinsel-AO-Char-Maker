@@ -23,6 +23,8 @@ class SpriteEditSpec {
     this.eraseColorEnabled = false,
     this.eraseColorValue = 0xFFFFFFFF,
     this.bgTolerance = 40,
+    this.scaleX = 1.0,
+    this.scaleY = 1.0,
   });
 
   /// Crop insets as fractions of width/height (0..0.49 each) — reduce the canvas
@@ -55,6 +57,12 @@ class SpriteEditSpec {
   /// Colour-distance tolerance for background/colour removal (0..441).
   final double bgTolerance;
 
+  /// **Resize** the whole sprite by these factors (1.0 = unchanged). Applied
+  /// *after* crop/grow, so the final pixel size is the cropped box × scale.
+  /// Independent X/Y lets you stretch width and height separately.
+  final double scaleX;
+  final double scaleY;
+
   bool get isNoop =>
       cropLeft == 0 &&
       cropTop == 0 &&
@@ -66,7 +74,9 @@ class SpriteEditSpec {
       padBottom == 0 &&
       !autoTrim &&
       !removeBgCorners &&
-      !eraseColorEnabled;
+      !eraseColorEnabled &&
+      scaleX == 1.0 &&
+      scaleY == 1.0;
 }
 
 class SpriteEdit {
@@ -190,10 +200,38 @@ class SpriteEdit {
     return out;
   }
 
-  /// Full single-image edit (preview path): remove background, then crop/trim.
-  /// Pass [rect] to force a shared crop across a whole emote group.
+  /// **Resize** every frame by [sx]×[sy] (1.0 = no change), preserving frame
+  /// durations so an animation stays intact. Good filters (cubic up / average
+  /// down) keep it crisp. Uniform across frames so the animation stays aligned.
+  static img.Image resize(img.Image image, double sx, double sy) {
+    if (sx == 1.0 && sy == 1.0) return image;
+    final List<img.Image> frames =
+        image.frames.isEmpty ? <img.Image>[image] : image.frames.toList();
+    final int w = math.max(1, (frames.first.width * sx).round());
+    final int h = math.max(1, (frames.first.height * sy).round());
+    if (w == frames.first.width && h == frames.first.height) return image;
+    final img.Interpolation interp = (sx < 1.0 || sy < 1.0)
+        ? img.Interpolation.average
+        : img.Interpolation.cubic;
+    final List<img.Image> out = frames
+        .map((img.Image f) =>
+            img.copyResize(f, width: w, height: h, interpolation: interp))
+        .toList();
+    final img.Image first = out.first;
+    first.frameDuration = frames.first.frameDuration;
+    for (int i = 1; i < out.length; i++) {
+      out[i].frameDuration = frames[i].frameDuration;
+      first.addFrame(out[i]);
+    }
+    return first;
+  }
+
+  /// Full single-image edit (preview path): remove background, crop/trim, then
+  /// resize. Pass [rect] to force a shared crop across a whole emote group.
   static img.Image apply(img.Image image, SpriteEditSpec spec, {IntRect? rect}) {
     removeBg(image, spec);
-    return cropTo(image, rect ?? computeRect(<img.Image>[image], spec));
+    final img.Image cropped =
+        cropTo(image, rect ?? computeRect(<img.Image>[image], spec));
+    return resize(cropped, spec.scaleX, spec.scaleY);
   }
 }

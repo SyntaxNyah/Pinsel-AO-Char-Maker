@@ -266,21 +266,25 @@ The central model.
   `removeBackgroundFromCorners(image,{tolerance,feather})`,
   `eraseColor(image,argb,{tolerance})`.
 
-### imaging/sprite_edit.dart  ← crop / **grow** / trim / background removal
+### imaging/sprite_edit.dart  ← crop / **grow** / **resize** / trim / bg removal
 - `class SpriteEditSpec({cropLeft,cropTop,cropRight,cropBottom,
   **padLeft,padTop,padRight,padBottom** (all fractions), autoTrim, removeBgCorners,
-  eraseColorEnabled, eraseColorValue, bgTolerance})` — `.isNoop`. **crop\* reduce
-  a side; pad\* grow (extend) it with transparency.** A side is never both (the
-  Edit UI maps one bidirectional slider per side to exactly one).
+  eraseColorEnabled, eraseColorValue, bgTolerance, **scaleX, scaleY** (resize
+  factors, 1.0 = unchanged)})` — `.isNoop` (now also requires scale == 1).
+  **crop\* reduce a side; pad\* grow (extend) it with transparency; scale\* resize
+  the whole image.** A side is never both crop+pad (the Edit UI maps one
+  bidirectional slider per side to exactly one).
 - `class SpriteEdit` — `computeRect(images, spec)` (one shared box for a whole
   emote group: inward crop + union auto-trim, **then grows outward by pad\*** so
   the returned `IntRect` may have a **negative origin / exceed the image**),
   `removeBg(image, spec)` (in place, no size change), `cropTo(image, rect)`
   (frame-aware; when `rect` is inside it crops, when it overflows it paints each
-  frame onto a transparent canvas = the pad/grow), `apply(image, spec, {rect})`
-  (preview: removeBg → crop/grow). Geometry is uniform across frames and across
-  an emote's (a)/(b)/(c) so animations/idle-talk stay aligned. See
-  `test/sprite_edit_test.dart`.
+  frame onto a transparent canvas = the pad/grow), **`resize(image, sx, sy)`**
+  (frame-aware `copyResize` by factors — cubic up / average down — preserving
+  frame durations; 1×1 returns the same instance), `apply(image, spec, {rect})`
+  (preview: removeBg → crop/grow → **resize**). Geometry/scale are uniform across
+  frames and across an emote's (a)/(b)/(c) so animations/idle-talk stay aligned.
+  See `test/sprite_edit_test.dart`.
 
 ### imaging/sprite_sheet.dart  ← rip a sheet into sprites
 - `enum SheetMode { auto, grid }`; `class SheetCell(rect,{enabled,name})`.
@@ -519,7 +523,9 @@ The central model.
   use: import (files/folder), **addSprites** (grow an existing character without
   losing emotes/edits — appends an emote per *new* sprite group), scan/build,
   edit, undo/redo, previews, live pipeline, apply/bulk, **bulkRename**,
-  **crop/trim/bg via previewEdit/applyEdit**, animation render/save (WebP
+  **crop/grow/resize/trim/bg via previewEdit/applyEdit** (`SpriteEditSpec` now
+  carries `scaleX/scaleY`; `currentSpriteSize()` feeds the Edit screen's px
+  fields), animation render/save (WebP
   default) + **bulkAnimateAll** (one effect stack baked onto every sprite, each
   saved as animated WebP; renders+encodes **off the UI isolate via `compute`** so
   it stays responsive, **lossless** — bulk must not degrade quality),
@@ -599,10 +605,13 @@ The central model.
     (async) feeds the Emotes sound picker; `saveCharIcon()` bakes `char_icon.png`
     into the project; `buildOutput()` feeds them all into `OrganizeConfig` and wraps
     `ButtonMaker.renderAutoOverlaid` in `buttonRenderer`/`iconRenderer` closures.
-    `buttonStyleRevision` + `bumpButtonStyle()` (called debounced from the
-    studio's `_computeBtn`) tell those list thumbnails to re-render after a
-    framing/size/box/overlay change — kept **separate** from `spriteRevision`
-    (pixels) so framing tweaks and recolour/typing don't cross-bust each other.
+    `bumpButtonStyle()` (debounced from the studio's `_computeBtn`) just
+    **notifies** so the list rebuilds; which thumbnails actually re-render is
+    decided **per-sprite** by **`buttonThumbKey(e)`** (a cheap hash of
+    framing/zoom/offsets/overlays + *that sprite's* box, passed as each
+    `_ButtonThumb`'s reload key) — so editing one sprite's box re-renders **one**
+    thumbnail, not the whole visible list (the fix for the drag-stop freeze on a
+    big cast). Kept separate from `spriteRevision` (pixels).
     **Export:** `exportZip()` (`.zip`), **`exportFolder()`** (writes the built
     character to a picked directory via the `folder_export` seam — no zip, falls
     back to `exportZip` on web), `exportIni()` (just `char.ini`). All three build
@@ -760,16 +769,24 @@ The central model.
     onPointerSignal scroll-zooms about the cursor; +/−/reset buttons + the **Box
     X/Y/Size sliders** (sidebar) are an **independent** path that works even if a
     drag feels off (the deliberate safety net — it's an untested gesture canvas).
-    Box drags rebuild only `_FramingPane` (the sprite list is a sibling `Consumer`,
-    not rebuilt mid-drag). Keyboard `_onKey` reads the same `framingKeys`
-    (prev/next/make/reset/all; no F-cycle — the editor is Manual-only) and
-    navigates via `navigateButtonFraming`.
-  - `edit`: crop / **grow** / auto-trim / background removal (drives `SpriteEdit`).
-    Each of L/T/R/B is **one bidirectional slider** (`_sideControl`): >0 crops the
-    edge in, <0 grows the canvas out (mapped to `crop*`/`pad*` in `_spec`), with
-    **`−`/`+` stepper `IconButton`s** (`CropLimits.stepFraction` = 1% nudges).
-    Range −`maxPadFraction`..+`maxCropFraction`. A **This sprite / All sprites**
-    `SegmentedButton` (`_applyAll`) drives one Apply button.
+    **Perf (no freeze on a big cast)**: during a box drag the canvas holds a
+    **local `_live` box** — it re-renders only itself (cheap) and calls `onChanged`
+    to write app state **without** rebuilding the pane; the heavy refresh (slider
+    sync + debounced preview) runs **once** via `onCommit` on `onPanEnd`. The
+    sprite list is a sibling `Consumer` (not rebuilt mid-drag) and uses the
+    per-sprite `buttonThumbKey`, so a drag re-renders at most one thumbnail.
+    Keyboard `_onKey` reads the same `framingKeys` (prev/next/make/reset/all; no
+    F-cycle — the editor is Manual-only) and navigates via `navigateButtonFraming`.
+  - `edit`: crop / **grow** / **resize** / auto-trim / background removal (drives
+    `SpriteEdit`). Each of L/T/R/B is **one bidirectional slider** (`_sideControl`):
+    >0 crops the edge in, <0 grows the canvas out (mapped to `crop*`/`pad*` in
+    `_spec`), with **`−`/`+` stepper `IconButton`s** (`CropLimits.stepFraction` =
+    1% nudges). **Resize the whole image** (`_resizeControls` + `_ResizeAxis`):
+    per-axis **Width/Height** with a **slider + −/+ steppers + a typeable exact-px
+    box** (each drives a scale factor → `_spec.scaleX/scaleY`), a **Lock aspect**
+    toggle (ties the axes), and 25/50/100/150/200% quick buttons; `_origW/_origH`
+    come from `AppState.currentSpriteSize()` so the px boxes are exact. A **This
+    sprite / All sprites** `SegmentedButton` (`_applyAll`) drives one Apply button.
   - `mixer`: frankensprite, **three modes** (`SegmentedButton`): **Arrange**
     (drag a snip to move, corner handle / scroll to scale, round handle to rotate),
     **Snip** (drag the crop box / corner handles on the source), **Layers** ("link

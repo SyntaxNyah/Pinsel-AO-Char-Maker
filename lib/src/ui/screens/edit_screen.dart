@@ -32,6 +32,12 @@ class _EditScreenState extends State<EditScreen> {
   bool _removeBg = false;
   double _tol = 40;
 
+  /// Resize: per-axis scale factors (1.0 = unchanged), whether width/height are
+  /// locked together, and the current sprite's pixel size (for the px fields).
+  double _scaleX = 1.0, _scaleY = 1.0;
+  bool _lockAspect = true;
+  int _origW = 0, _origH = 0;
+
   /// Apply target: false = just the selected emote's sprite, true = every
   /// sprite. Surfaced as a toggle so it's obvious which one Apply will hit.
   bool _applyAll = false;
@@ -54,6 +60,8 @@ class _EditScreenState extends State<EditScreen> {
         autoTrim: _autoTrim,
         removeBgCorners: _removeBg,
         bgTolerance: _tol,
+        scaleX: _scaleX,
+        scaleY: _scaleY,
       );
 
   @override
@@ -83,6 +91,14 @@ class _EditScreenState extends State<EditScreen> {
       _preview.value = null;
       return;
     }
+    // Keep the sprite's real pixel size handy so the resize px fields are exact.
+    final ({int w, int h})? size = await app.currentSpriteSize();
+    if (mounted && size != null && (size.w != _origW || size.h != _origH)) {
+      setState(() {
+        _origW = size.w;
+        _origH = size.h;
+      });
+    }
     final Uint8List? bytes = await app.previewEdit(rel, _spec);
     if (mounted) _preview.value = bytes;
   }
@@ -92,6 +108,26 @@ class _EditScreenState extends State<EditScreen> {
       _l = _t = _r = _b = 0;
       _autoTrim = false;
       _removeBg = false;
+      _scaleX = 1.0;
+      _scaleY = 1.0;
+    });
+    _schedule();
+  }
+
+  void _setScaleX(double sx) {
+    final double v = sx.clamp(0.05, 8.0);
+    setState(() {
+      _scaleX = v;
+      if (_lockAspect) _scaleY = v;
+    });
+    _schedule();
+  }
+
+  void _setScaleY(double sy) {
+    final double v = sy.clamp(0.05, 8.0);
+    setState(() {
+      _scaleY = v;
+      if (_lockAspect) _scaleX = v;
     });
     _schedule();
   }
@@ -174,6 +210,8 @@ class _EditScreenState extends State<EditScreen> {
         _sideControl('Right', _r, (double v) => _r = v),
         _sideControl('Bottom', _b, (double v) => _b = v),
         const Divider(height: 24),
+        _resizeControls(),
+        const Divider(height: 24),
         Text('Apply to', style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 6),
         SegmentedButton<bool>(
@@ -203,8 +241,9 @@ class _EditScreenState extends State<EditScreen> {
         ),
         const SizedBox(height: 6),
         const Text(
-          'Crop / grow / auto-trim apply the same box to every frame and to '
-          '(a)/(b)/(c) of an emote, so animations and idle/talk stay aligned.',
+          'Crop / grow / resize / auto-trim apply the same box and scale to every '
+          'frame and to (a)/(b)/(c) of an emote, so animations and idle/talk stay '
+          'aligned.',
           style: TextStyle(fontSize: 12, color: Colors.white60),
         ),
       ],
@@ -265,6 +304,66 @@ class _EditScreenState extends State<EditScreen> {
     return '0% (unchanged)';
   }
 
+  /// Resize the whole sprite — by **width and height**, with a slider, `−/+`
+  /// steppers, AND a typeable exact-pixel box for each axis. Lock the aspect
+  /// ratio to scale both together, or unlock to stretch independently.
+  Widget _resizeControls() {
+    final int targetW = (_origW * _scaleX).round();
+    final int targetH = (_origH * _scaleY).round();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text('Resize the whole image',
+            style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 2),
+        Text(
+          _origW > 0
+              ? 'Original ${_origW}×$_origH px  →  new ${targetW}×$targetH px. '
+                  'Drag the slider, use −/+, or type the exact pixels.'
+              : 'Select a sprite to resize it.',
+          style: const TextStyle(fontSize: 12, color: Colors.white60),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text('Lock aspect ratio'),
+          subtitle: const Text('keep width & height in proportion'),
+          value: _lockAspect,
+          onChanged: (bool v) => setState(() => _lockAspect = v),
+        ),
+        _ResizeAxis(
+          label: 'Width',
+          scale: _scaleX,
+          origPx: _origW,
+          onScale: _setScaleX,
+        ),
+        _ResizeAxis(
+          label: 'Height',
+          scale: _scaleY,
+          origPx: _origH,
+          onScale: _setScaleY,
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Wrap(
+            spacing: 6,
+            children: <Widget>[
+              for (final int pct in <int>[25, 50, 100, 150, 200])
+                OutlinedButton(
+                  onPressed: () => _setScaleX(pct / 100),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  child: Text('$pct%'),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _simpleSlider(String name, double v, double min, double max,
       void Function(double) assign, {String? label}) {
     return Column(
@@ -281,6 +380,119 @@ class _EditScreenState extends State<EditScreen> {
           },
         ),
       ],
+    );
+  }
+}
+
+/// One resize axis (Width or Height): a **slider** + **−/+ steppers** (mouse)
+/// and a **typeable exact-pixel box** (numbers), all driving the same
+/// [onScale] (a new scale factor). The px box shows `origPx × scale` and, when
+/// you type an exact pixel size, converts it back to a scale factor.
+class _ResizeAxis extends StatefulWidget {
+  const _ResizeAxis({
+    required this.label,
+    required this.scale,
+    required this.origPx,
+    required this.onScale,
+  });
+  final String label;
+  final double scale;
+  final int origPx;
+  final ValueChanged<double> onScale;
+
+  @override
+  State<_ResizeAxis> createState() => _ResizeAxisState();
+}
+
+class _ResizeAxisState extends State<_ResizeAxis> {
+  late final TextEditingController _ctrl =
+      TextEditingController(text: _px().toString());
+  final FocusNode _focus = FocusNode();
+
+  int _px() => (widget.origPx * widget.scale).round();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (!_focus.hasFocus) _commit();
+    });
+  }
+
+  @override
+  void didUpdateWidget(_ResizeAxis old) {
+    super.didUpdateWidget(old);
+    // Reflect slider / external changes in the field unless it's being edited.
+    if (!_focus.hasFocus && _ctrl.text != _px().toString()) {
+      _ctrl.text = _px().toString();
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _commit() {
+    final int? px = int.tryParse(_ctrl.text.trim());
+    if (px == null || widget.origPx <= 0) {
+      _ctrl.text = _px().toString(); // revert garbage
+      return;
+    }
+    widget.onScale(px / widget.origPx);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final double s = widget.scale;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('${widget.label}: ${(s * 100).round()}%'),
+          Row(
+            children: <Widget>[
+              IconButton(
+                tooltip: 'Smaller (−5%)',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.remove_circle_outline, size: 20),
+                onPressed: () => widget.onScale(s - 0.05),
+              ),
+              Expanded(
+                child: Slider(
+                  value: s.clamp(0.1, 4.0),
+                  min: 0.1,
+                  max: 4.0,
+                  onChanged: widget.onScale,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Bigger (+5%)',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.add_circle_outline, size: 20),
+                onPressed: () => widget.onScale(s + 0.05),
+              ),
+              SizedBox(
+                width: 64,
+                child: TextField(
+                  controller: _ctrl,
+                  focusNode: _focus,
+                  textAlign: TextAlign.right,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    suffixText: 'px',
+                  ),
+                  onSubmitted: (_) => _commit(),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
