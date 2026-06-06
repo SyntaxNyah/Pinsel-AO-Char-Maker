@@ -2020,6 +2020,29 @@ class _FramingPaneState extends State<_FramingPane> {
                         _schedule();
                       },
                     ),
+                    const Divider(height: 24),
+                    // Apply a KFO-style border / background to the buttons right
+                    // here — pick a preset, build one (its own big editor), or
+                    // import a PNG — so you can frame AND skin in one pass.
+                    const Text('Overlays (KFO-style borders)',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    const Text(
+                      'Applied to every button — see it live in the preview above.',
+                      style: TextStyle(fontSize: 11, color: Colors.white54),
+                    ),
+                    _OverlayControls(
+                      label: 'Border (on top)',
+                      slot: app.buttonFg,
+                      kind: OverlayKind.border,
+                      onChanged: _schedule,
+                    ),
+                    _OverlayControls(
+                      label: 'Background',
+                      slot: app.buttonBg,
+                      kind: OverlayKind.background,
+                      onChanged: _schedule,
+                    ),
                   ],
                 ),
               ),

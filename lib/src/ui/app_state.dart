@@ -281,6 +281,11 @@ class AppState extends ChangeNotifier {
   final OverlaySlot iconBg = OverlaySlot();
   final OverlaySlot iconFg = OverlaySlot();
 
+  /// Bumped whenever a button overlay (border/background) **content** changes, so
+  /// the sprite-list thumbnails re-render to show the new border (their per-sprite
+  /// [buttonThumbKey] only tracks whether an overlay is *set*, not which one).
+  int _overlayRevision = 0;
+
   /// Load (or clear, with null [bytes]) an overlay [slot]. [ext] helps decode.
   /// Pass [spec] when the art came from a preset/builder (so it can be re-edited);
   /// it's cleared for imported PNGs.
@@ -289,6 +294,7 @@ class AppState extends ChangeNotifier {
     slot.bytes = bytes;
     slot.image = bytes == null ? null : Codecs.decodeFirstFrame(bytes, ext: ext);
     slot.spec = bytes == null ? null : spec;
+    _overlayRevision++;
     notifyListeners();
   }
 
@@ -1093,6 +1099,7 @@ class AppState extends ChangeNotifier {
     h = h * 31 + (buttonOffsetY * 100).round();
     h = h * 31 + (buttonFg.isSet ? 1 : 0);
     h = h * 31 + (buttonBg.isSet ? 1 : 0);
+    h = h * 31 + _overlayRevision; // which border, not just whether one is set
     if (buttonFraming == CropFraming.manual) {
       final CropBox? box = buttonCropRaw(e.sprite);
       if (box != null) {

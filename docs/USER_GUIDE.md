@@ -384,6 +384,11 @@ and **Manual**.
     sprite to pan**, and place the box precisely — with the sprite list still on
     the left and the same keyboard flow. The +/−/Reset-view buttons (bottom-right)
     and the Box sliders work too. Press **Done** to go back.
+  - **Add borders right there too.** The big editor's side panel has the **Overlays**
+    controls — pick a **preset** border/background, **Build…** your own (with its
+    *own* big zoom editor), or **Import…** a PNG — so you can frame *and* skin the
+    buttons in one pass, watching the result live in the preview. (Same overlays as
+    the main Buttons screen; applied to every button.)
   - **Frame the whole cast from the keyboard — no mouse trip to the top.** Click
     the sprite once to focus the framing area, then fly through it with **plain,
     sensible keys** (no `[`/`]` nonsense): **← / →** previous / next sprite,

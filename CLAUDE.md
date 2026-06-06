@@ -789,6 +789,12 @@ The central model.
     per-sprite `buttonThumbKey`, so a drag re-renders at most one thumbnail.
     Keyboard `_onKey` reads the same `framingKeys` (prev/next/make/reset/all; no
     F-cycle — the editor is Manual-only) and navigates via `navigateButtonFraming`.
+    The sidebar also has the **button overlay controls** (`_OverlayControls` for
+    `buttonFg`/`buttonBg` — Presets / Build… / Import…) so you can **add or build
+    a KFO-style border without leaving the big editor**; the live preview shows it
+    and the list thumbnails refresh via `_overlayRevision` (bumped in `setOverlay`,
+    folded into `buttonThumbKey` since the per-sprite key only tracks whether an
+    overlay is *set*, not which one).
   - `edit`: crop / **grow** / **resize** / auto-trim / background removal (drives
     `SpriteEdit`). Each of L/T/R/B is **one bidirectional slider** (`_sideControl`):
     >0 crops the edge in, <0 grows the canvas out (mapped to `crop*`/`pad*` in
