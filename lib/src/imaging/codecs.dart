@@ -27,7 +27,20 @@ class Codecs {
   }
 
   /// Decode just the first frame (fast path for static previews and buttons).
+  ///
+  /// Perf: this asks the decoder for **frame 0 only** (`decodeImage(..,
+  /// frame: 0)`) instead of decoding the whole animation and throwing away the
+  /// rest. AO's default sprites are animated WebP, and previews / button
+  /// thumbnails / head-square + mouth seeding all funnel through here, so
+  /// skipping the other frames is a large saving on a big cast. Falls back to a
+  /// full decode (then the first frame) if the fast path can't handle the bytes.
   static img.Image? decodeFirstFrame(Uint8List bytes, {String? ext}) {
+    try {
+      final img.Image? first = img.decodeImage(bytes, frame: 0);
+      if (first != null) return first;
+    } catch (_) {
+      // Fall through to the tolerant full decode below.
+    }
     final img.Image? full = decode(bytes, ext: ext);
     if (full == null) return null;
     return full.frames.isNotEmpty ? full.frames.first : full;

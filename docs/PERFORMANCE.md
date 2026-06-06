@@ -63,6 +63,26 @@ frame:
 - **The overlay "Big editor" preview is debounced** (it re-draws the 512px
   overlay 60 ms after you stop, not on every slider tick).
 
+## Fast loading (decode only what you show)
+
+AO's default sprites are **animated WebP**, and most of the UI only ever needs a
+sprite's *first* frame — previews, the 100+ button thumbnails, the face-detect
+that seeds crop/mouth boxes, the icon. Two changes keep that cheap on a big cast:
+
+- **First-frame-only decode.** `Codecs.decodeFirstFrame` asks the decoder for
+  **frame 0 only** (`decodeImage(bytes, frame: 0)`) instead of decoding the
+  whole animation and discarding every frame but the first. On an 8-frame WebP
+  that's roughly an 8× saving on every preview/thumbnail decode. It falls back to
+  the tolerant full decode if the fast path can't handle the bytes, so nothing
+  regresses.
+- **Memoised face detection.** The head-square silhouette scan is a per-pixel
+  hotspot during rapid framing navigation and mouth seeding. Its result is a
+  resolution-independent fraction, so it's memoised per sprite path
+  (`AppState._headSquareCache`) — stepping back and forth through a cast is then a
+  map hit, not a re-scan. (It already ran on the ≤640px source, not full-res.)
+  The cache is cleared alongside the others whenever pixels change or on
+  import/reset.
+
 ## Multi-core baking
 
 The expensive operations — **Animate ALL sprites**, **Talking mouth on ALL

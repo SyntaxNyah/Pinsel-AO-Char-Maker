@@ -882,12 +882,32 @@ class _OverlayControls extends StatefulWidget {
     required this.label,
     required this.slot,
     required this.kind,
+    required this.onSet,
     required this.onChanged,
+    this.onApplyAll,
+    this.scopeNote,
   });
   final String label;
+
+  /// The slot to **display** (its current art/spec). For per-sprite button
+  /// overlays this is the *selected sprite's* slot; for the icon it's the single
+  /// icon slot. Mutations go through [onSet], not by writing the slot directly,
+  /// so the owner controls where the art is stored.
   final OverlaySlot slot;
   final OverlayKind kind;
+
+  /// Apply art to the slot (null [bytes] clears it). [spec] is set for
+  /// preset/built overlays so "Build…"/"Save" can re-open them.
+  final void Function(Uint8List? bytes, String ext, OverlaySpec? spec) onSet;
   final VoidCallback onChanged;
+
+  /// When non-null, an **"Apply to all sprites"** button is shown (per-sprite
+  /// button overlays); null for the single-slot icon.
+  final VoidCallback? onApplyAll;
+
+  /// Optional caption under the controls (e.g. "this sprite — k/N have a
+  /// border").
+  final String? scopeNote;
 
   @override
   State<_OverlayControls> createState() => _OverlayControlsState();
@@ -901,11 +921,7 @@ class _OverlayControlsState extends State<_OverlayControls> {
     final PlatformFile f = res.files.first;
     if (f.bytes == null) return;
     if (!mounted) return;
-    context.read<AppState>().setOverlay(
-          widget.slot,
-          f.bytes!,
-          ext: (f.extension ?? 'png').toLowerCase(),
-        );
+    widget.onSet(f.bytes!, (f.extension ?? 'png').toLowerCase(), null);
     setState(() {});
     widget.onChanged();
   }
@@ -917,7 +933,7 @@ class _OverlayControlsState extends State<_OverlayControls> {
   void _applySpec(OverlaySpec spec) {
     // Bake at a high-ish resolution; renderFramed/_fit scales it to the button.
     final Uint8List bytes = Codecs.encodePng(spec.build(256));
-    context.read<AppState>().setOverlay(widget.slot, bytes, ext: 'png', spec: spec);
+    widget.onSet(bytes, 'png', spec);
     setState(() {});
     widget.onChanged();
   }
@@ -930,7 +946,13 @@ class _OverlayControlsState extends State<_OverlayControls> {
       );
 
   void _clear() {
-    context.read<AppState>().setOverlay(widget.slot, null);
+    widget.onSet(null, 'png', null);
+    setState(() {});
+    widget.onChanged();
+  }
+
+  void _applyAll() {
+    widget.onApplyAll?.call();
     setState(() {});
     widget.onChanged();
   }
@@ -1000,8 +1022,21 @@ class _OverlayControlsState extends State<_OverlayControls> {
                   icon: const Icon(Icons.close_rounded, size: 16),
                   onPressed: _clear,
                 ),
+              // Per-sprite by default → offer copying this border to the cast.
+              if (widget.onApplyAll != null && set)
+                TextButton.icon(
+                  onPressed: _applyAll,
+                  icon: const Icon(Icons.select_all_rounded, size: 16),
+                  label: const Text('Apply to all sprites'),
+                ),
             ],
           ),
+          if (widget.scopeNote != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Text(widget.scopeNote!,
+                  style: const TextStyle(fontSize: 10, color: Colors.white38)),
+            ),
         ],
       ),
     );
@@ -1015,6 +1050,13 @@ final Map<String, Uint8List> _overlayThumbCache = <String, Uint8List>{};
 Uint8List _overlayThumb(OverlayPreset p) =>
     _overlayThumbCache.putIfAbsent('${p.kind}:${p.name}',
         () => Codecs.encodePng(p.build(56)));
+
+/// Caption for the per-sprite button overlay controls: how many sprites in the
+/// cast currently wear a border/background.
+String _overlayScopeNote(AppState app) {
+  final (int done, int total) = app.buttonOverlayCoverage;
+  return 'this sprite · $done/$total sprite(s) have an overlay';
+}
 
 /// Prompt for a name to save a built overlay as a user preset.
 Future<String?> _promptPresetName(BuildContext context) {
@@ -1568,16 +1610,30 @@ class _BtnCardState extends State<_BtnCard> {
                       const SizedBox(height: 8),
                       const Text('Overlays (KFO-style borders)',
                           style: TextStyle(fontWeight: FontWeight.w600)),
+                      const Text(
+                        'Applied to THIS sprite only — use "Apply to all '
+                        'sprites" to give the whole cast the same border.',
+                        style: TextStyle(fontSize: 11, color: Colors.white54),
+                      ),
                       _OverlayControls(
                         label: 'Border (on top)',
-                        slot: app.buttonFg,
+                        slot: app.buttonOverlaySlotFor(curSprite, fg: true),
                         kind: OverlayKind.border,
+                        onSet: (Uint8List? b, String e, OverlaySpec? s) => app
+                            .setButtonOverlay(curSprite, b, fg: true, ext: e, spec: s),
+                        onApplyAll: () =>
+                            app.applyButtonOverlayToAll(curSprite, fg: true),
+                        scopeNote: _overlayScopeNote(app),
                         onChanged: widget.onChanged,
                       ),
                       _OverlayControls(
                         label: 'Background',
-                        slot: app.buttonBg,
+                        slot: app.buttonOverlaySlotFor(curSprite, fg: false),
                         kind: OverlayKind.background,
+                        onSet: (Uint8List? b, String e, OverlaySpec? s) => app
+                            .setButtonOverlay(curSprite, b, fg: false, ext: e, spec: s),
+                        onApplyAll: () =>
+                            app.applyButtonOverlayToAll(curSprite, fg: false),
                         onChanged: widget.onChanged,
                       ),
                     ],
@@ -1744,12 +1800,16 @@ class _IconCardState extends State<_IconCard> {
                         label: 'Border (on top)',
                         slot: app.iconFg,
                         kind: OverlayKind.border,
+                        onSet: (Uint8List? b, String e, OverlaySpec? s) =>
+                            app.setOverlay(app.iconFg, b, ext: e, spec: s),
                         onChanged: widget.onChanged,
                       ),
                       _OverlayControls(
                         label: 'Background',
                         slot: app.iconBg,
                         kind: OverlayKind.background,
+                        onSet: (Uint8List? b, String e, OverlaySpec? s) =>
+                            app.setOverlay(app.iconBg, b, ext: e, spec: s),
                         onChanged: widget.onChanged,
                       ),
                       const SizedBox(height: 12),
@@ -2106,19 +2166,29 @@ class _FramingPaneState extends State<_FramingPane> {
                         style: TextStyle(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 2),
                     const Text(
-                      'Applied to every button — see it live in the preview above.',
+                      'This sprite only — "Apply to all sprites" gives the whole '
+                      'cast the same border. See it live in the preview above.',
                       style: TextStyle(fontSize: 11, color: Colors.white54),
                     ),
                     _OverlayControls(
                       label: 'Border (on top)',
-                      slot: app.buttonFg,
+                      slot: app.buttonOverlaySlotFor(curSprite, fg: true),
                       kind: OverlayKind.border,
+                      onSet: (Uint8List? b, String e, OverlaySpec? s) => app
+                          .setButtonOverlay(curSprite, b, fg: true, ext: e, spec: s),
+                      onApplyAll: () =>
+                          app.applyButtonOverlayToAll(curSprite, fg: true),
+                      scopeNote: _overlayScopeNote(app),
                       onChanged: _schedule,
                     ),
                     _OverlayControls(
                       label: 'Background',
-                      slot: app.buttonBg,
+                      slot: app.buttonOverlaySlotFor(curSprite, fg: false),
                       kind: OverlayKind.background,
+                      onSet: (Uint8List? b, String e, OverlaySpec? s) => app
+                          .setButtonOverlay(curSprite, b, fg: false, ext: e, spec: s),
+                      onApplyAll: () =>
+                          app.applyButtonOverlayToAll(curSprite, fg: false),
                       onChanged: _schedule,
                     ),
                   ],

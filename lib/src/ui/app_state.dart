@@ -71,7 +71,29 @@ class OverlaySlot {
   /// or null if it was an imported PNG. Lets "Build…" re-open and tweak it.
   OverlaySpec? spec;
 
+  /// Bumped whenever this slot's art changes. Per-sprite button thumbnails fold
+  /// the relevant slot's [rev] into their reload key, so changing **one**
+  /// sprite's overlay re-renders only that one thumbnail (not all visible ones).
+  int rev = 0;
+
   bool get isSet => image != null;
+
+  /// Replace this slot's art (decoding [bytes] with [ext]); null clears it.
+  void set(Uint8List? bytes, {String ext = 'png', OverlaySpec? spec}) {
+    this.bytes = bytes;
+    image = bytes == null ? null : Codecs.decodeFirstFrame(bytes, ext: ext);
+    this.spec = bytes == null ? null : spec;
+    rev++;
+  }
+
+  /// Copy [other]'s art into this slot (shares the decoded image — overlays are
+  /// read-only when composited, so sharing is safe and cheap).
+  void copyFrom(OverlaySlot? other) {
+    bytes = other?.bytes;
+    image = other?.image;
+    spec = other?.spec;
+    rev++;
+  }
 }
 
 /// The single source of UI truth. Holds the working project (an in-memory
@@ -114,6 +136,11 @@ class AppState extends ChangeNotifier {
   /// screen show a sprite without re-decoding/re-encoding on every rebuild — so
   /// typing in a field never re-bakes the preview.
   final Map<String, Uint8List?> _previewCache = <String, Uint8List?>{};
+
+  /// Memoised auto head-square (per sprite `rel`, as resolution-independent
+  /// fractions). The silhouette scan is a per-pixel hotspot during rapid framing
+  /// navigation / mouth seeding; cleared with the other caches on edit/reset.
+  final Map<String, CropBox> _headSquareCache = <String, CropBox>{};
 
   /// Bumps whenever sprite *pixels/paths* change (recolour, edit, convert,
   /// rename, new composite…). UI previews watch this to know when to reload,
@@ -273,28 +300,81 @@ class AppState extends ChangeNotifier {
     return (bases.where(buttonCrops.containsKey).length, bases.length);
   }
 
-  /// Optional art composited into every button: [buttonBg] sits behind the
-  /// sprite, [buttonFg] is laid **on top** (a KFO-style border/frame). The icon
-  /// has its own [iconBg]/[iconFg] so it can use a different (or no) border.
-  final OverlaySlot buttonBg = OverlaySlot();
-  final OverlaySlot buttonFg = OverlaySlot();
+  /// Optional art composited into a button: the **background** sits behind the
+  /// sprite, the **border/frame** is laid on top (KFO-style). **Per sprite by
+  /// default** — putting a border on one button only affects that sprite, so
+  /// different poses can wear different frames (mirrors [buttonCrops]); the
+  /// "Apply to all sprites" action copies one onto the whole cast. Keyed by the
+  /// emote's `sprite` base name. The char_icon keeps its own single
+  /// [iconBg]/[iconFg].
+  final Map<String, OverlaySlot> buttonFgBySprite = <String, OverlaySlot>{};
+  final Map<String, OverlaySlot> buttonBgBySprite = <String, OverlaySlot>{};
   final OverlaySlot iconBg = OverlaySlot();
   final OverlaySlot iconFg = OverlaySlot();
 
-  /// Bumped whenever a button overlay (border/background) **content** changes, so
-  /// the sprite-list thumbnails re-render to show the new border (their per-sprite
-  /// [buttonThumbKey] only tracks whether an overlay is *set*, not which one).
-  int _overlayRevision = 0;
+  /// The stored button overlay for [base] (`fg` = border on top, else
+  /// background), or null when that sprite has none. The renderer treats null as
+  /// "no overlay" — so an untouched sprite simply gets a plain button.
+  OverlaySlot? buttonOverlay(String? base, {required bool fg}) =>
+      (base == null || base.isEmpty)
+          ? null
+          : (fg ? buttonFgBySprite : buttonBgBySprite)[base];
 
-  /// Load (or clear, with null [bytes]) an overlay [slot]. [ext] helps decode.
-  /// Pass [spec] when the art came from a preset/builder (so it can be re-edited);
-  /// it's cleared for imported PNGs.
+  /// The decoded button overlay image for [base], or null.
+  img.Image? buttonOverlayImage(String? base, {required bool fg}) =>
+      buttonOverlay(base, fg: fg)?.image;
+
+  /// The button overlay slot for [base] to **edit** — created (and stored) on
+  /// first access so the controls always have something to mutate.
+  OverlaySlot buttonOverlaySlotFor(String? base, {required bool fg}) {
+    final String key = (base == null || base.isEmpty) ? '__none__' : base;
+    return (fg ? buttonFgBySprite : buttonBgBySprite)
+        .putIfAbsent(key, OverlaySlot.new);
+  }
+
+  /// Set (or clear, with null [bytes]) the button overlay for sprite [base].
+  /// Pass [spec] when the art came from a preset/builder (so "Build…" can
+  /// re-open it); it's cleared for imported PNGs.
+  void setButtonOverlay(String? base, Uint8List? bytes,
+      {required bool fg, String ext = 'png', OverlaySpec? spec}) {
+    if (base == null || base.isEmpty) return;
+    buttonOverlaySlotFor(base, fg: fg).set(bytes, ext: ext, spec: spec);
+    notifyListeners();
+  }
+
+  /// Copy sprite [fromBase]'s button overlay onto **every** sprite — the
+  /// "Apply this border to all sprites" action.
+  void applyButtonOverlayToAll(String? fromBase, {required bool fg}) {
+    final OverlaySlot? src = buttonOverlay(fromBase, fg: fg);
+    for (final Emote e in character?.emotes ?? const <Emote>[]) {
+      if (e.sprite.isEmpty) continue;
+      buttonOverlaySlotFor(e.sprite, fg: fg).copyFrom(src);
+    }
+    notifyListeners();
+  }
+
+  /// (customised, total) count of distinct sprite bases that have a button
+  /// overlay (border or background) — for the studio's caption.
+  (int, int) get buttonOverlayCoverage {
+    final Set<String> bases = <String>{
+      for (final Emote e in character?.emotes ?? const <Emote>[])
+        if (e.sprite.isNotEmpty) e.sprite,
+    };
+    int n = 0;
+    for (final String b in bases) {
+      if (buttonOverlay(b, fg: true)?.isSet == true ||
+          buttonOverlay(b, fg: false)?.isSet == true) {
+        n++;
+      }
+    }
+    return (n, bases.length);
+  }
+
+  /// Load (or clear, with null [bytes]) the **char_icon** overlay [slot]. [ext]
+  /// helps decode. Pass [spec] when the art came from a preset/builder.
   void setOverlay(OverlaySlot slot, Uint8List? bytes,
       {String ext = 'png', OverlaySpec? spec}) {
-    slot.bytes = bytes;
-    slot.image = bytes == null ? null : Codecs.decodeFirstFrame(bytes, ext: ext);
-    slot.spec = bytes == null ? null : spec;
-    _overlayRevision++;
+    slot.set(bytes, ext: ext, spec: spec);
     notifyListeners();
   }
 
@@ -379,6 +459,9 @@ class AppState extends ChangeNotifier {
     workspace.clear();
     mixSources.clear();
     buttonCrops.clear();
+    buttonFgBySprite.clear();
+    buttonBgBySprite.clear();
+    _headSquareCache.clear();
     _decodeCache.clear();
     _buttonSrcCache.clear();
     _previewCache.clear();
@@ -401,6 +484,8 @@ class AppState extends ChangeNotifier {
     workspace.clear();
     mixSources.clear();
     buttonCrops.clear();
+    buttonFgBySprite.clear();
+    buttonBgBySprite.clear();
     history.clear();
     character = null;
     scan = null;
@@ -1068,8 +1153,8 @@ class AppState extends ChangeNotifier {
         zoom: buttonZoom,
         offsetX: buttonOffsetX,
         offsetY: buttonOffsetY,
-        background: buttonBg.image,
-        foreground: buttonFg.image,
+        background: buttonOverlayImage(e.sprite, fg: false),
+        foreground: buttonOverlayImage(e.sprite, fg: true),
         manualCrop:
             buttonFraming == CropFraming.manual ? buttonCropRaw(e.sprite) : null);
   }
@@ -1134,9 +1219,10 @@ class AppState extends ChangeNotifier {
     h = h * 31 + (buttonZoom * 100).round();
     h = h * 31 + (buttonOffsetX * 100).round();
     h = h * 31 + (buttonOffsetY * 100).round();
-    h = h * 31 + (buttonFg.isSet ? 1 : 0);
-    h = h * 31 + (buttonBg.isSet ? 1 : 0);
-    h = h * 31 + _overlayRevision; // which border, not just whether one is set
+    // Per-sprite overlay: fold in THIS sprite's slot revisions so changing one
+    // sprite's border re-renders only its own thumbnail (not the whole list).
+    h = h * 31 + (buttonOverlay(e.sprite, fg: true)?.rev ?? 0);
+    h = h * 31 + (buttonOverlay(e.sprite, fg: false)?.rev ?? 0);
     if (buttonFraming == CropFraming.manual) {
       final CropBox? box = buttonCropRaw(e.sprite);
       if (box != null) {
@@ -1174,9 +1260,17 @@ class AppState extends ChangeNotifier {
     if (e == null) return CropBox.initial;
     final String? rel = spriteRelFor(e);
     if (rel == null) return CropBox.initial;
+    // The head-square is a per-pixel silhouette scan and the result is a
+    // resolution-independent fraction, so memoise it per sprite path: stepping
+    // back and forth through a cast (or re-seeding boxes) is then a map hit
+    // instead of re-scanning the image each time.
+    final CropBox? cached = _headSquareCache[rel];
+    if (cached != null) return cached;
     final img.Image? im = await _decodeButtonSource(rel);
     if (im == null) return CropBox.initial;
-    return CropBox.fromPixels(ButtonMaker.headSquare(im), im.width, im.height);
+    final CropBox box =
+        CropBox.fromPixels(ButtonMaker.headSquare(im), im.width, im.height);
+    return _headSquareCache[rel] = box;
   }
 
   /// The emote the char_icon is rendered from: [iconSourceEmote] (clamped), or
@@ -1492,6 +1586,7 @@ class AppState extends ChangeNotifier {
     int frames = 8,
     int fps = 10,
     double openAmount = LipSync.defaultOpenAmount,
+    TalkStyle? style,
     int maxEdge = 360,
   }) async {
     final Emote? e = current;
@@ -1500,10 +1595,10 @@ class AppState extends ChangeNotifier {
     if (rel == null) return const <Uint8List>[];
     final img.Image? decoded = await decodeFirstFrame(rel);
     if (decoded == null) return const <Uint8List>[];
-    // Downscale for a snappy preview; `talk` clones internally so the cached
-    // decode is never mutated even when `_fitEdge` returns it unchanged.
+    // Downscale for a snappy preview; `talkStyled` clones internally so the
+    // cached decode is never mutated even when `_fitEdge` returns it unchanged.
     final img.Image base = _fitEdge(decoded, maxEdge);
-    final AnimClip clip = LipSync.talk(base,
+    final AnimClip clip = LipSync.talkStyled(base, style ?? LipSync.defaultStyle,
         mouth: mouth.toPixels(base.width, base.height),
         frames: frames,
         fps: fps,
@@ -1519,6 +1614,7 @@ class AppState extends ChangeNotifier {
     int frames = 8,
     int fps = 10,
     double openAmount = LipSync.defaultOpenAmount,
+    TalkStyle? style,
     String prefix = SpritePrefix.talk,
     bool lossless = true,
     int quality = 95,
@@ -1530,7 +1626,7 @@ class AppState extends ChangeNotifier {
     final img.Image? base = await decodeFirstFrame(rel);
     if (base == null) return null;
     _setBusy(true, 'Rendering mouth animation…');
-    final AnimClip clip = LipSync.talk(base,
+    final AnimClip clip = LipSync.talkStyled(base, style ?? LipSync.defaultStyle,
         mouth: mouth.toPixels(base.width, base.height),
         frames: frames,
         fps: fps,
@@ -1556,6 +1652,7 @@ class AppState extends ChangeNotifier {
     int frames = 8,
     int fps = 10,
     double openAmount = LipSync.defaultOpenAmount,
+    TalkStyle? style,
     String prefix = SpritePrefix.talk,
     bool lossless = true,
     int quality = 95,
@@ -1577,6 +1674,7 @@ class AppState extends ChangeNotifier {
         frames: frames,
         fps: fps,
         openAmount: openAmount,
+        style: style ?? LipSync.defaultStyle,
         lossless: lossless,
         quality: quality,
       ));
@@ -2190,10 +2288,10 @@ class AppState extends ChangeNotifier {
                 zoom: z,
                 offsetX: buttonOffsetX,
                 offsetY: buttonOffsetY,
-                background: buttonBg.image,
-                foreground: buttonFg.image,
-                // Each button uses its own sprite's box; an untouched sprite
-                // (null) auto-frames its head in renderFramed.
+                // Each button uses its own sprite's overlay + box; an untouched
+                // sprite (null) gets a plain button auto-framed in renderFramed.
+                background: buttonOverlayImage(spriteBase, fg: false),
+                foreground: buttonOverlayImage(spriteBase, fg: true),
                 manualCrop:
                     f == CropFraming.manual ? buttonCropRaw(spriteBase) : null),
         iconRenderer: (Uint8List b, String e, int s, CropFraming f, double z,
@@ -2419,6 +2517,7 @@ class AppState extends ChangeNotifier {
     _buttonSrcCache.clear();
     _previewCache.clear();
     _thumbCache.clear();
+    _headSquareCache.clear();
     spriteRevision++;
   }
 
@@ -2491,6 +2590,7 @@ class _MouthJob {
     required this.frames,
     required this.fps,
     required this.openAmount,
+    required this.style,
     required this.lossless,
     required this.quality,
   });
@@ -2499,6 +2599,7 @@ class _MouthJob {
   final int frames;
   final int fps;
   final double openAmount;
+  final TalkStyle style;
   final bool lossless;
   final int quality;
 }
@@ -2512,7 +2613,7 @@ Future<({Uint8List bytes, String ext, String? webpError})> _mouthWorker(
   if (base == null) {
     return (bytes: Uint8List(0), ext: 'none', webpError: 'could not decode sprite');
   }
-  final AnimClip clip = LipSync.talk(base,
+  final AnimClip clip = LipSync.talkStyled(base, job.style,
       frames: job.frames, fps: job.fps, openAmount: job.openAmount);
   return clip.encodePreferWebp(lossless: job.lossless, quality: job.quality);
 }

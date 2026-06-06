@@ -218,6 +218,11 @@ The central model.
   `.frameCount(image)`, `.encodePng(image)` (APNG if multi-frame),
   `.encodeGif(image)`, `.encodeForExtension(image,ext)`,
   `.outputExtensionFor(sourceExt)` (webp/apng→apng fallback, gif→gif, else png).
+- **`decodeFirstFrame`** decodes **frame 0 only** via `img.decodeImage(bytes,
+  frame: 0)` (NOT the whole animation then `.frames.first`) — a big win since
+  AO's default sprites are animated WebP and most previews/thumbnails/face-detect
+  only need frame 0; falls back to the full `decode` on failure. See
+  docs/PERFORMANCE.md.
 
 ### imaging/color_ops.dart  ← add recolour features here
 - `class ColorOp(type,{nums,strs})` — `.n(k,[f])`, `.s(k,[f])`, `.color(k,[f])`,
@@ -358,8 +363,9 @@ The central model.
   the Button Studio: a **Presets** grid (with your **★ Saved** user presets first),
   an **Import…** path, **Build…** (the `overlay_builder.dart` editor) and **Save**
   (store the built spec as a reusable user preset — `AppState.saveOverlayPreset`,
-  persists). Applied via `AppState.setOverlay(..., spec:)` (baked to PNG at 256,
-  then `_fit` by `ButtonMaker.renderFramed`).
+  persists). Applied **per-sprite** for buttons via `AppState.setButtonOverlay(
+  spriteBase, ..., fg:, spec:)` (or `setOverlay(slot,...)` for the single icon
+  slots), baked to PNG at 256, then `_fit` by `ButtonMaker.renderFramed`.
 
 ### imaging/bulk_processor.dart
 - `enum OutputFormat { keep, png, apng, gif, webp }`.
@@ -424,19 +430,36 @@ The central model.
 - `class Timeline(keyframes)` — `.specAt(t)`, `.render(base,{frames,fps})`,
   `.toJson/fromJson`.
 
-### animation/lipsync.dart  ← talking mouths (see docs/LIPSYNC.md)
-- **`LipSync.talk(base,{mouth,openAmount,frames,fps})`** — the headline path: a
-  natural, **seamless-looping** talking clip faked from ONE sprite by dropping
-  the jaw inside `mouth` with a harmonic, speech-like cadence
-  (`talkOpenness(t)`). Clones internally (never mutates the source).
+### animation/lipsync.dart  ← VN talking mouths (see docs/LIPSYNC.md)
+- **`class TalkStyle(name,category,{syllables,openAmount,jitter,pause,tension,
+  bob})`** — a named "way of talking" (a parametric speech cadence). Plain data
+  (nums+strings) → `copyWith`, `toJson/fromJson`, **sendable to an isolate** (the
+  bulk-mouth job carries it). `seed` (from `name.hashCode`) drives deterministic
+  jitter so preview == bake == bulk.
+- **`LipSync.styleCatalogue`** — **hundreds** of styles (~60 expressive
+  archetypes × {base,Soft,Intense,Fast,Slow}) across categories Calm / Energetic
+  / Loud / Soft / Emotional / Stylised. `styleCategories`, `styleByName(name)`
+  (→ falls back to `defaultStyle` = "Natural"). Generated once in `_buildCatalogue`
+  from the const `_archetypes` list — **add new feels there**.
+- **`LipSync.talkStyled(base, style, {mouth,frames,fps,openAmount})`** — the
+  headline VN path: bake a **seamless-looping** talking clip from ONE static
+  sprite using `style`'s cadence + a subtle head `bob`. `openAmount` overrides
+  the style's jaw drop. Clones internally (never mutates the source).
+- `LipSync.styleOpenness(style,t)` — speech-like openness `0..1` over `t∈[0,1)`
+  (per-syllable Gaussian pulses, jittered/silenced deterministically, × a slow
+  breath dip). Periodic so `t=0`==`t=1` (no seam). `_shiftV` = head bob.
+- `LipSync.talk(base,{mouth,openAmount,frames,fps})` / `talkOpenness(t)` — the
+  original default cadence, kept for back-compat (`talkStyled` is the superset).
 - `LipSync.defaultMouthRegion(image)` — face-derived mouth box (uses
   `ButtonMaker.headSquare`, lower-third of the head). `defaultOpenAmount`=0.32.
 - `LipSync.twoState(closed,open,...)`, `.fromVisemes(list,...)` (real mouth art),
   `.auto(base,...)` (original single-pulse jaw-drop, kept for back-compat).
 - `class MouthRegion(x,y,w,h)` — the box as **fractions** 0..1; `.toPixels(w,h)`,
   `.copyWith`, `MouthRegion.defaultFor(image)`. Surfaced in the Animation
-  Studio's **Mouth** tab (live preview + adjustable box) and `AppState`
-  (`previewMouthTalk`/`saveMouthTalk`/`bulkMouthTalkAll`/`defaultMouthRegionFor`).
+  Studio's **Mouth** tab (a **Way of talking** picker = `showTalkStylePicker`,
+  searchable+grouped, + live preview + adjustable box) and `AppState`
+  (`previewMouthTalk`/`saveMouthTalk`/`bulkMouthTalkAll` all take an optional
+  `TalkStyle style`; `defaultMouthRegionFor`).
 
 ### theme/ao2_theme.dart  ← AO2 client theme model
 - The real AO2 theme format (Qt `QSettings` flat INIs): design = `name = x,y,w,h`,
@@ -593,8 +616,18 @@ The central model.
   - **Buttons & char_icon settings** (public fields, mutated directly by the
     studio for zero-rebuild lag): `generateButtons`, `buttonSize`, `buttonFraming`,
     `buttonZoom`, `button/iconOffsetX/Y`; `generateCharIcon`, `iconSize` (default
-    40), `iconFraming`, `iconZoom`, `iconSourceEmote`; overlay slots `buttonBg/Fg`
-    + `iconBg/Fg` (`OverlaySlot`, set via `setOverlay`). **User overlay presets**:
+    40), `iconFraming`, `iconZoom`, `iconSourceEmote`. **Button overlays are
+    PER-SPRITE by default** (mirrors `buttonCrops`): `buttonFgBySprite`/
+    `buttonBgBySprite` (`Map<spriteBase, OverlaySlot>`) — putting a border on one
+    button only affects that sprite. `buttonOverlay(base,{fg})`/
+    `buttonOverlayImage(base,{fg})` (null = plain button), `buttonOverlaySlotFor(
+    base,{fg})` (get-or-create, for the editor), `setButtonOverlay(base,bytes,{fg,
+    ext,spec})`, **`applyButtonOverlayToAll(fromBase,{fg})`** (the "Apply to all
+    sprites" action), `buttonOverlayCoverage` (→ `(customised,total)`). The
+    char_icon keeps **single** `iconBg/Fg` slots (set via `setOverlay`).
+    `OverlaySlot` now has `.rev` (bumped on `.set`/`.copyFrom`) so a sprite's
+    thumbnail invalidates only when ITS overlay changes. Maps cleared on
+    reset/import. **User overlay presets**:
     `userOverlayPresets` (`[{name, OverlaySpec}]`), `userOverlaysFor(kind)`,
     `saveOverlayPreset(name, spec)` / `deleteOverlayPreset(name)` — a built overlay
     can be **Saved** and reused; persisted via `settings_store`. `previewAutoButton(size)`
@@ -750,6 +783,14 @@ The central model.
     → `app.saveOverlayPreset`), and **Import…** (your own PNG). The applied
     `OverlaySpec` is remembered on the slot so Build…/Save re-use it. Icon
     "made from emote" picker + "Save char_icon.png".
+    **`_OverlayControls` is a callback widget** (`slot` to *display* + `onSet(
+    bytes,ext,spec)` / `onClear` / optional `onApplyAll` / `scopeNote`), so the
+    SAME widget drives the **per-sprite** button overlays (the inline card AND the
+    big framing editor pass the *current sprite's* `buttonOverlaySlotFor(curSprite,
+    fg:)` + `setButtonOverlay`/`applyButtonOverlayToAll`, with an **"Apply to all
+    sprites"** button + a coverage caption) and the **single** icon slots (pass
+    `app.iconFg/iconBg` + `setOverlay`, no apply-all). Button overlays are
+    per-sprite by default — set one and only that sprite's button gets it.
     Debounced `ValueNotifier` previews; settings live on `AppState` so export uses
     them. **Buttons render crisp**: `renderFramed` never upscales and area-averages
     on downscale (PNG is lossless — sharpness is purely the resample).

@@ -77,4 +77,60 @@ void main() {
     expect(m.w, inInclusiveRange(0.0, 1.0));
     expect(m.h, inInclusiveRange(0.0, 1.0));
   });
+
+  // ---- VN talk styles ------------------------------------------------------
+
+  test('the talk-style catalogue is large and has unique names', () {
+    final List<TalkStyle> all = LipSync.styleCatalogue;
+    // "Hundreds of ways of talking."
+    expect(all.length, greaterThanOrEqualTo(250));
+    expect(all.map((TalkStyle s) => s.name).toSet().length, all.length,
+        reason: 'style names must be unique');
+    expect(LipSync.styleCategories.length, greaterThanOrEqualTo(5));
+  });
+
+  test('every style openness stays in 0..1 and loops seamlessly', () {
+    for (final TalkStyle s in LipSync.styleCatalogue) {
+      for (int i = 0; i <= 8; i++) {
+        expect(LipSync.styleOpenness(s, i / 8), inInclusiveRange(0.0, 1.0),
+            reason: 'style "${s.name}" went out of range');
+      }
+      // t=0 equals t=1 → no seam when AO loops the (b) sprite.
+      expect(LipSync.styleOpenness(s, 0),
+          closeTo(LipSync.styleOpenness(s, 1), 1e-9),
+          reason: 'style "${s.name}" does not loop');
+    }
+  });
+
+  test('talkStyled produces same-size frames and never mutates the source', () {
+    final img.Image base = _sprite();
+    final img.Pixel before = base.getPixel(20, 30);
+    final int r = before.r.toInt(), g = before.g.toInt(), b = before.b.toInt();
+    final TalkStyle style = LipSync.styleByName('Excited');
+    final AnimClip clip = LipSync.talkStyled(base, style, frames: 10, fps: 12);
+    expect(clip.frames.length, 10);
+    for (final AnimFrame f in clip.frames) {
+      expect(f.image.width, base.width);
+      expect(f.image.height, base.height);
+    }
+    final img.Pixel after = base.getPixel(20, 30);
+    expect(<int>[after.r.toInt(), after.g.toInt(), after.b.toInt()],
+        <int>[r, g, b]);
+  });
+
+  test('styleByName falls back to the default for unknown names', () {
+    expect(LipSync.styleByName('not-a-real-style').name,
+        LipSync.defaultStyle.name);
+    expect(LipSync.styleByName(null).name, LipSync.defaultStyle.name);
+  });
+
+  test('TalkStyle survives a JSON round-trip', () {
+    final TalkStyle s = LipSync.styleByName('Whisper (Slow)');
+    final TalkStyle back = TalkStyle.fromJson(s.toJson());
+    expect(back.name, s.name);
+    expect(back.category, s.category);
+    expect(back.syllables, s.syllables);
+    expect(back.openAmount, closeTo(s.openAmount, 1e-9));
+    expect(back.bob, closeTo(s.bob, 1e-9));
+  });
 }

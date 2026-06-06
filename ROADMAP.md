@@ -109,6 +109,11 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   talking `(b)` from ONE drawing (`LipSync.talk`, face-placed adjustable mouth box
   + live preview), plus two-state/multi-viseme for real mouth art; **all-sprites**
   variant baked across cores (`bulkMouthTalkAll`) — see docs/LIPSYNC.md
+- ✅ **VN talk styles** — hundreds of named "ways of talking" (`TalkStyle` /
+  `LipSync.styleCatalogue`: Calm/Energetic/Loud/Soft/Emotional/Stylised, ~60
+  archetypes × {base,Soft,Intense,Fast,Slow}) with a searchable picker in the
+  Mouth tab; `LipSync.talkStyled` bakes a seamless VN-style loop (speech-like
+  syllabic cadence + pauses + subtle head bob) onto any static sprite
 - ⬜ Onion-skinning + scrubbable timeline UI
 - ⬜ Per-frame SFX/realization/screenshake authoring UI (model supports it)
 
@@ -167,6 +172,10 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   thickness/radius/inset, live preview, start-from-preset). **Save your own built
   overlays as reusable presets** (`OverlaySpec.toJson` → `AppState.userOverlayPresets`
   via `settings_store`; shown under **★ Saved** in the picker, persist across sessions)
+- ✅ **Per-sprite button overlays** — putting a border/background on a button
+  affects only **that sprite** by default (`buttonFgBySprite`/`buttonBgBySprite`,
+  mirrors per-sprite crops), with an **"Apply to all sprites"** action; the
+  char_icon keeps its own single overlay
 - ⬜ Full mask/crop button compositor UI (engine: `ButtonMaker.renderComposite`)
 - 🟡 Region picker overlay (drag a box) — done in the Mixer (snip/arrange canvas);
   still planned for region animation/outfit edits

@@ -44,10 +44,11 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
 
   // mouth (lip-sync) mode
   MouthRegion _mouth = const MouthRegion(0.32, 0.40, 0.36, 0.07);
-  double _openAmount = LipSync.defaultOpenAmount;
-  int _mouthFrames = 8;
+  double _openAmount = LipSync.defaultStyle.openAmount;
+  int _mouthFrames = 10;
   double? _mouthAspect; // selected sprite w/h, for the region overlay box
   String? _mouthSeededRel; // sprite the auto mouth box was last seeded for
+  TalkStyle _talkStyle = LipSync.defaultStyle; // the chosen "way of talking"
 
   // frames mode
   final List<String> _seq = <String>[];
@@ -93,7 +94,10 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
     } else if (_mode == _StudioMode.mouth) {
       await _ensureMouthSeed(app);
       imgs = await app.previewMouthTalk(_mouth,
-          frames: _mouthFrames, fps: _fps, openAmount: _openAmount);
+          frames: _mouthFrames,
+          fps: _fps,
+          openAmount: _openAmount,
+          style: _talkStyle);
     } else {
       final int n = _recipes.isEmpty ? 1 : _frames;
       imgs = await app.renderAnimationPreview(_recipes, frames: n, fps: _fps);
@@ -509,14 +513,37 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
   // ===========================================================================
   List<Widget> _mouthControls(AppState app) {
     return <Widget>[
-      Text('Talking mouth', style: Theme.of(context).textTheme.titleMedium),
+      Text('Talking mouth (VN style)',
+          style: Theme.of(context).textTheme.titleMedium),
       const Text(
-        'Fake a talking (b) animation from this one drawing — no extra art '
-        'needed. The pink box is the mouth: the jaw drops there with a natural, '
-        'looping cadence. Watch the preview loop and nudge the box onto the lips.',
+        'Make this one static drawing talk like a visual-novel character — no '
+        'extra art needed. Pick a "way of talking", and the jaw drops inside the '
+        'pink box with that cadence in a seamless loop. Nudge the box onto the '
+        'lips and watch the preview.',
         style: TextStyle(fontSize: 12, color: Colors.white60),
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: 10),
+      // The headline feature: hundreds of named talking cadences.
+      Text('Way of talking', style: Theme.of(context).textTheme.labelLarge),
+      const SizedBox(height: 4),
+      OutlinedButton.icon(
+        onPressed: _pickTalkStyle,
+        icon: const Icon(Icons.record_voice_over_outlined),
+        label: Align(
+          alignment: Alignment.centerLeft,
+          child: Text('${_talkStyle.name}  ·  ${_talkStyle.category}',
+              overflow: TextOverflow.ellipsis),
+        ),
+        style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(40),
+            alignment: Alignment.centerLeft),
+      ),
+      Text(
+        '${LipSync.styleCatalogue.length} styles — calm, excited, whisper, '
+        'angry, sobbing, robotic, singing…',
+        style: const TextStyle(fontSize: 11, color: Colors.white38),
+      ),
+      const SizedBox(height: 10),
       OutlinedButton.icon(
         onPressed: () => _autoPlaceMouth(app),
         icon: const Icon(Icons.center_focus_strong_outlined),
@@ -534,7 +561,7 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
           (double v) => _mouth = _mouth.copyWith(h: v),
           min: 0.01, max: 0.5),
       const SizedBox(height: 4),
-      Text('Open amount: ${_openAmount.toStringAsFixed(2)}'),
+      Text('Openness / jaw drop: ${_openAmount.toStringAsFixed(2)}'),
       Slider(
         value: _openAmount.clamp(0.05, 0.8),
         min: 0.05,
@@ -544,12 +571,12 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
           _schedule();
         },
       ),
-      Text('Frames: $_mouthFrames'),
+      Text('Frames: $_mouthFrames  (more = smoother fast styles)'),
       Slider(
-        value: _mouthFrames.toDouble(),
+        value: _mouthFrames.toDouble().clamp(2, 24),
         min: 2,
-        max: 16,
-        divisions: 14,
+        max: 24,
+        divisions: 22,
         onChanged: (double v) {
           setState(() => _mouthFrames = v.round());
           _schedule();
@@ -566,6 +593,7 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
                     frames: _mouthFrames,
                     fps: _fps,
                     openAmount: _openAmount,
+                    style: _talkStyle,
                     prefix: '(b)'),
             icon: const Icon(Icons.save_rounded),
             label: const Text('Save as (b) talk'),
@@ -580,6 +608,7 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
                   frames: _mouthFrames,
                   fps: _fps,
                   openAmount: _openAmount,
+                  style: _talkStyle,
                   prefix: '(a)'),
           icon: const Icon(Icons.bedtime_outlined),
         ),
@@ -675,7 +704,24 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
     );
     if (go != true) return;
     await app.bulkMouthTalkAll(
-        frames: _mouthFrames, fps: _fps, openAmount: _openAmount, prefix: '(b)');
+        frames: _mouthFrames,
+        fps: _fps,
+        openAmount: _openAmount,
+        style: _talkStyle,
+        prefix: '(b)');
+  }
+
+  /// Open the searchable, category-grouped talk-style picker. Choosing a style
+  /// also resets the openness slider to that style's natural jaw drop (you can
+  /// still tweak it afterwards) and refreshes the live preview.
+  Future<void> _pickTalkStyle() async {
+    final TalkStyle? picked = await showTalkStylePicker(context, _talkStyle);
+    if (picked == null || !mounted) return;
+    setState(() {
+      _talkStyle = picked;
+      _openAmount = picked.openAmount;
+    });
+    _schedule();
   }
 
   // ===========================================================================
@@ -850,6 +896,142 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
         for (final String type in AnimEngine.recipeTypes)
           if (type != 'none')
             InputChip(label: Text(type), onPressed: () => _addRecipe(type)),
+      ],
+    );
+  }
+}
+
+/// Show the searchable, category-grouped **talk style** picker over
+/// [LipSync.styleCatalogue]. Returns the chosen style, or null if cancelled.
+Future<TalkStyle?> showTalkStylePicker(
+        BuildContext context, TalkStyle current) =>
+    showDialog<TalkStyle>(
+      context: context,
+      builder: (BuildContext ctx) => _TalkStylePicker(current: current),
+    );
+
+/// A dialog listing every [TalkStyle] grouped by category, with a live text
+/// filter and a per-category quick filter, so picking from hundreds of styles
+/// stays fast.
+class _TalkStylePicker extends StatefulWidget {
+  const _TalkStylePicker({required this.current});
+  final TalkStyle current;
+
+  @override
+  State<_TalkStylePicker> createState() => _TalkStylePickerState();
+}
+
+class _TalkStylePickerState extends State<_TalkStylePicker> {
+  String _query = '';
+  String? _category; // null = all categories
+
+  @override
+  Widget build(BuildContext context) {
+    final String q = _query.trim().toLowerCase();
+    final List<TalkStyle> matches = <TalkStyle>[
+      for (final TalkStyle s in LipSync.styleCatalogue)
+        if ((_category == null || s.category == _category) &&
+            (q.isEmpty ||
+                s.name.toLowerCase().contains(q) ||
+                s.category.toLowerCase().contains(q)))
+          s,
+    ];
+
+    // Group matches by category, preserving catalogue order.
+    final Map<String, List<TalkStyle>> grouped = <String, List<TalkStyle>>{};
+    for (final TalkStyle s in matches) {
+      (grouped[s.category] ??= <TalkStyle>[]).add(s);
+    }
+
+    return AlertDialog(
+      title: const Text('Pick a way of talking'),
+      content: SizedBox(
+        width: 460,
+        height: 540,
+        child: Column(
+          children: <Widget>[
+            TextField(
+              autofocus: true,
+              decoration: const InputDecoration(
+                isDense: true,
+                prefixIcon: Icon(Icons.search),
+                hintText: 'Search styles (e.g. excited, whisper, robotic)…',
+              ),
+              onChanged: (String v) => setState(() => _query = v),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 36,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: <Widget>[
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ChoiceChip(
+                      label: const Text('All'),
+                      selected: _category == null,
+                      onSelected: (_) => setState(() => _category = null),
+                    ),
+                  ),
+                  for (final String c in LipSync.styleCategories)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text(c),
+                        selected: _category == c,
+                        onSelected: (_) => setState(() => _category = c),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 16),
+            Expanded(
+              child: matches.isEmpty
+                  ? const Center(child: Text('No styles match.'))
+                  : ListView(
+                      children: <Widget>[
+                        for (final MapEntry<String, List<TalkStyle>> g
+                            in grouped.entries) ...<Widget>[
+                          Padding(
+                            padding:
+                                const EdgeInsets.fromLTRB(4, 8, 4, 4),
+                            child: Text(g.key.toUpperCase(),
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    letterSpacing: 1,
+                                    color: Colors.white54)),
+                          ),
+                          for (final TalkStyle s in g.value)
+                            ListTile(
+                              dense: true,
+                              selected: s.name == widget.current.name,
+                              leading: const Icon(
+                                  Icons.record_voice_over_outlined,
+                                  size: 18),
+                              title: Text(s.name),
+                              subtitle: Text(
+                                'rate ${s.syllables} · open '
+                                '${(s.openAmount * 100).round()}% · '
+                                'jitter ${(s.jitter * 100).round()}%'
+                                '${s.pause > 0.25 ? ' · pauses' : ''}'
+                                '${s.bob > 0.3 ? ' · bob' : ''}',
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                              onTap: () => Navigator.pop(context, s),
+                            ),
+                        ],
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
       ],
     );
   }
