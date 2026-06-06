@@ -14,6 +14,7 @@ import '../../imaging/codecs.dart';
 import '../../imaging/overlay_presets.dart';
 import '../app_state.dart';
 import '../widgets/checker_image.dart';
+import '../widgets/key_capture.dart';
 import '../widgets/overlay_builder.dart';
 
 /// Button & char-icon studio.
@@ -89,8 +90,40 @@ class _ButtonStudioScreenState extends State<ButtonStudioScreen> {
     if (mounted) _iconPreview.value = b;
   }
 
+  /// Select a sprite to frame (from the left list, like the Emotes screen).
+  /// Drives the live button preview and — in Manual mode — which sprite's crop
+  /// box the editor edits. Seeds the box from the sprite's own auto face on
+  /// arrival, then **notifies** so the freshly-seeded box shows immediately.
+  Future<void> _selectSprite(int i) async {
+    final AppState app = context.read<AppState>();
+    app.selectEmote(i); // notifies → the right-hand cards rebuild
+    if (app.buttonFraming == CropFraming.manual) {
+      await app.ensureButtonCropSeeded(app.current);
+      app.notifyButtonSettings(); // show the seeded box without another action
+    }
+    _scheduleBtn(); // the icon uses its own source emote, so it's unaffected
+  }
+
   @override
   Widget build(BuildContext context) {
+    // A left sprite list (like the Emotes screen) so you can jump straight to
+    // any pose to frame its button — plus a tiny preview of each. The right
+    // pane (the cards) rebuilds when the selected sprite or its pixels change.
+    return Row(
+      children: <Widget>[
+        SizedBox(width: 260, child: _ButtonSpriteList(onSelect: _selectSprite)),
+        const VerticalDivider(width: 1),
+        Expanded(
+          child: Selector<AppState, (int, int)>(
+            selector: (_, AppState a) => (a.selectedEmote, a.spriteRevision),
+            builder: (BuildContext context, _, __) => _cards(context),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _cards(BuildContext context) {
     final AppState app = context.read<AppState>();
     final List<Emote> emotes = app.character?.emotes ?? const <Emote>[];
     return ListView(
@@ -100,17 +133,16 @@ class _ButtonStudioScreenState extends State<ButtonStudioScreen> {
             style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 4),
         const Text(
-          'Buttons and the char_icon are generated on export. Choose how they '
-          'frame each sprite — Head / face (default) shows the expression, Full '
-          'body squares the whole sprite. Drag a slider for a quick adjust, or '
-          'type an exact value in the box beside it (size, zoom, and ±100% '
-          'move X/Y). Output is lossless PNG, area-averaged down from the '
-          'full-res sprite (never upscaled). The default is the classic '
-          '40×40 AO button: exporting at the size the theme shows it means no '
-          'blurry theme-side rescale in-game. The on-screen preview is rendered '
-          'larger so framing stays crisp — the file is still the size you pick. '
-          'If buttons look soft in your theme, it shows them bigger than 40px — '
-          'just raise the size.',
+          'Buttons and the char_icon are generated on export. Pick a sprite on '
+          'the left to frame its button, then choose how it frames — Head / face '
+          '(default) shows the expression, Full body squares the whole sprite. '
+          'Drag a slider for a quick adjust, or type an exact value in the box '
+          'beside it (size, zoom, and ±100% move X/Y). Output is lossless PNG, '
+          'area-averaged down from the full-res sprite (never upscaled). The '
+          'default is the classic 40×40 AO button: exporting at the size the '
+          'theme shows it means no blurry theme-side rescale in-game. The '
+          'on-screen preview is rendered larger so framing stays crisp — the '
+          'file is still the size you pick.',
         ),
         const SizedBox(height: 16),
 
@@ -140,6 +172,196 @@ class _ButtonStudioScreenState extends State<ButtonStudioScreen> {
           style: TextStyle(fontSize: 12, color: Colors.white60),
         ),
       ],
+    );
+  }
+}
+
+/// The left-hand sprite list — the Emotes-screen layout, but for **buttons**:
+/// click any sprite to frame it, with a **tiny preview** of each and a tick on
+/// the ones you've given a custom (Manual) box. Auto-scrolls to the selected
+/// sprite when it changes from the keyboard, so walking a 196-pose cast stays
+/// oriented.
+class _ButtonSpriteList extends StatefulWidget {
+  const _ButtonSpriteList({required this.onSelect});
+  final ValueChanged<int> onSelect;
+
+  @override
+  State<_ButtonSpriteList> createState() => _ButtonSpriteListState();
+}
+
+class _ButtonSpriteListState extends State<_ButtonSpriteList> {
+  final ScrollController _scroll = ScrollController();
+  int _lastSelected = -1;
+
+  /// Approximate row height — only used to scroll a keyboard-selected (possibly
+  /// off-screen) sprite into view.
+  static const double _rowExtent = 60;
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _scrollToSelected(int i) {
+    if (!_scroll.hasClients || i < 0) return;
+    final ScrollPosition pos = _scroll.position;
+    final double rowTop = i * _rowExtent;
+    if (rowTop >= pos.pixels &&
+        rowTop + _rowExtent <= pos.pixels + pos.viewportDimension) {
+      return; // already visible
+    }
+    _scroll.animateTo(
+      (rowTop - 96).clamp(0.0, pos.maxScrollExtent),
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AppState>(
+      builder: (BuildContext context, AppState app, _) {
+        final List<Emote> emotes = app.character?.emotes ?? const <Emote>[];
+        final bool manual = app.buttonFraming == CropFraming.manual;
+        // Auto-scroll to the selected sprite when it changes externally
+        // (keyboard nav). Scheduled post-frame — can't scroll during build.
+        if (app.selectedEmote != _lastSelected) {
+          _lastSelected = app.selectedEmote;
+          final int target = app.selectedEmote;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _scrollToSelected(target);
+          });
+        }
+        final (int, int) cov = app.buttonCropCoverage;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+              child: Row(
+                children: <Widget>[
+                  const Text('Sprites',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  if (manual)
+                    Text('${cov.$1}/${cov.$2} framed',
+                        style: const TextStyle(
+                            fontSize: 11, color: Colors.white54)),
+                ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(12, 0, 12, 6),
+              child: Text(
+                'Click a sprite to frame its button.',
+                style: TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: emotes.isEmpty
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text('Import sprites to frame buttons.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.white54)),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scroll,
+                      itemCount: emotes.length,
+                      itemBuilder: (BuildContext context, int i) {
+                        final Emote e = emotes[i];
+                        final bool framed = e.sprite.isNotEmpty &&
+                            app.buttonCropRaw(e.sprite) != null;
+                        final String? rel = app.spriteRelFor(e);
+                        return ListTile(
+                          dense: true,
+                          selected: i == app.selectedEmote,
+                          leading: _SpriteThumb(
+                              rel: rel, revision: app.spriteRevision),
+                          title: Text(
+                            e.comment.trim().isEmpty ? e.sprite : e.comment,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(e.sprite,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                          trailing: manual && framed
+                              ? const Tooltip(
+                                  message: 'Has a custom box',
+                                  child: Icon(Icons.check_circle_rounded,
+                                      size: 16, color: Color(0xFFFF4081)),
+                                )
+                              : null,
+                          onTap: () {
+                            _lastSelected = i; // suppress the tap auto-scroll
+                            widget.onSelect(i);
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// A small cached thumbnail of a sprite for the list (the "tiny preview"). Loads
+/// a downscaled PNG once via [AppState.previewSprite] (96px, separate cache key
+/// from the big previews) and only reloads when the sprite path/pixels change.
+class _SpriteThumb extends StatefulWidget {
+  const _SpriteThumb({required this.rel, required this.revision});
+  final String? rel;
+  final int revision;
+
+  @override
+  State<_SpriteThumb> createState() => _SpriteThumbState();
+}
+
+class _SpriteThumbState extends State<_SpriteThumb> {
+  Uint8List? _bytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_SpriteThumb old) {
+    super.didUpdateWidget(old);
+    if (old.rel != widget.rel || old.revision != widget.revision) _load();
+  }
+
+  Future<void> _load() async {
+    final String? rel = widget.rel;
+    if (rel == null) {
+      if (mounted) setState(() => _bytes = null);
+      return;
+    }
+    final Uint8List? b =
+        await context.read<AppState>().previewSprite(rel, maxEdge: 96);
+    if (mounted) setState(() => _bytes = b);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.white12),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: _bytes == null
+          ? const Icon(Icons.image_outlined, size: 16, color: Colors.white24)
+          : CheckerImage(bytes: _bytes),
     );
   }
 }
@@ -858,11 +1080,12 @@ class _BtnCardState extends State<_BtnCard> {
   }
 
   /// Single-key framing shortcuts (active while the framing area is focused —
-  /// click the sprite once to focus it). Documented in the F1 cheat-sheet and
-  /// docs/SHORTCUTS.md. `[`/`]` step sprites, Enter/Space "make it & go next"
-  /// (boxes commit live, so advancing *is* finishing the current one), R resets
-  /// the current sprite to its auto face crop, A stamps the current box onto
-  /// every sprite, F cycles Face → Full → Manual.
+  /// click the sprite once to focus it). The keys are **rebindable** (and
+  /// persist) via [AppState.framingKeys] — defaults are the plain arrow keys
+  /// (prev/next), Enter (make it & next), R (reset), A (apply to all) and F
+  /// (cycle framing). No `[`/`]` weirdness. Documented in the F1 cheat-sheet and
+  /// docs/SHORTCUTS.md. Boxes commit live, so advancing *is* finishing the
+  /// current sprite.
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -873,19 +1096,27 @@ class _BtnCardState extends State<_BtnCard> {
     if (n == 0) return KeyEventResult.ignored;
     final int i = app.selectedEmote.clamp(0, n - 1);
     final LogicalKeyboardKey k = event.logicalKey;
+    final Map<String, LogicalKeyboardKey> keys = app.framingKeys;
 
-    if (k == LogicalKeyboardKey.bracketRight ||
-        k == LogicalKeyboardKey.enter ||
-        k == LogicalKeyboardKey.numpadEnter ||
-        k == LogicalKeyboardKey.space) {
+    // Match the pressed key against a bound action (Numpad Enter counts as Enter
+    // for "make it & next").
+    bool isAction(String id) {
+      final LogicalKeyboardKey? bound = keys[id];
+      if (bound == null) return false;
+      if (k == bound) return true;
+      return bound == LogicalKeyboardKey.enter &&
+          k == LogicalKeyboardKey.numpadEnter;
+    }
+
+    if (isAction('next') || isAction('make')) {
       _gotoEmote(i + 1);
       return KeyEventResult.handled;
     }
-    if (k == LogicalKeyboardKey.bracketLeft) {
+    if (isAction('prev')) {
       _gotoEmote(i - 1);
       return KeyEventResult.handled;
     }
-    if (k == LogicalKeyboardKey.keyR) {
+    if (isAction('reset')) {
       final Emote? e = app.current;
       if (e != null) {
         app.resetButtonCropFor(e).then((_) {
@@ -897,7 +1128,7 @@ class _BtnCardState extends State<_BtnCard> {
       }
       return KeyEventResult.handled;
     }
-    if (k == LogicalKeyboardKey.keyA) {
+    if (isAction('all')) {
       final Emote? e = app.current;
       if (e != null) {
         app.applyButtonCropToAll(app.buttonCropFor(e.sprite));
@@ -906,7 +1137,7 @@ class _BtnCardState extends State<_BtnCard> {
       }
       return KeyEventResult.handled;
     }
-    if (k == LogicalKeyboardKey.keyF) {
+    if (isAction('framing')) {
       const List<CropFraming> order = <CropFraming>[
         CropFraming.head,
         CropFraming.full,
@@ -922,14 +1153,22 @@ class _BtnCardState extends State<_BtnCard> {
     return KeyEventResult.ignored;
   }
 
-  Widget _manualHint() => const Text(
-        'Each sprite has its OWN box. Click the sprite to focus, then fly with '
-        'the keyboard:  [ / ]  previous / next sprite · Enter = make it & next · '
-        'R reset this sprite to auto · A apply this box to all · F cycle framing. '
-        'Drag the box to move it, the corner to resize; sprites you never touch '
-        'auto-frame the face.',
-        style: TextStyle(fontSize: 12, color: Colors.white60),
-      );
+  /// The manual-mode hint — built from the **live** [AppState.framingKeys] so it
+  /// always shows the real (possibly rebound) keys instead of going stale.
+  Widget _manualHint() {
+    final Map<String, LogicalKeyboardKey> k = widget.app.framingKeys;
+    String lbl(String id) => keyLabel(k[id]!);
+    return Text(
+      'Each sprite has its OWN box. Click the sprite to focus, then use the '
+      'keyboard:  ${lbl('prev')} / ${lbl('next')} previous / next sprite · '
+      '${lbl('make')} make it & next · ${lbl('reset')} reset this sprite to '
+      'auto · ${lbl('all')} apply this box to all · ${lbl('framing')} cycle '
+      'framing. Drag the box to move it, the corner to resize; sprites you '
+      'never touch auto-frame the face. Rebind these keys in the F1 shortcuts '
+      'dialog.',
+      style: const TextStyle(fontSize: 12, color: Colors.white60),
+    );
+  }
 
   /// Seed the **current sprite's** manual box from its own auto head-square the
   /// first time it's shown in Manual mode (each sprite keeps its own box). If no

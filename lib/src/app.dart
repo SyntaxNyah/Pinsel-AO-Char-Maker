@@ -18,6 +18,7 @@ import 'ui/screens/plugins_screen.dart';
 import 'ui/screens/sprite_ripper_screen.dart';
 import 'ui/screens/theme_maker_screen.dart';
 import 'ui/theme.dart';
+import 'ui/widgets/key_capture.dart';
 
 class PinselApp extends StatelessWidget {
   const PinselApp({super.key});
@@ -233,6 +234,10 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   void _showShortcuts(BuildContext context) {
+    final AppState app = context.read<AppState>();
+    // The global Ctrl/⌘ shortcuts are fixed (and already plain). The two
+    // contextual single-key sets — Button-Studio framing and Theme-Maker nudge —
+    // are **rebindable** here, and the choice **persists across sessions**.
     const List<List<String>> rows = <List<String>>[
       <String>['Ctrl/⌘ + Z', 'Undo'],
       <String>['Ctrl/⌘ + Y  ·  Ctrl/⌘ + Shift + Z', 'Redo'],
@@ -242,41 +247,150 @@ class _HomeShellState extends State<HomeShell> {
       <String>['Ctrl/⌘ + N', 'Add a new emote'],
       <String>['Ctrl/⌘ + ↑ / ↓', 'Previous / next emote'],
       <String>['Ctrl/⌘ + 1 … 9', 'Jump to a screen (Home, Character … Bulk)'],
-      <String>['Buttons (Manual) · [ / ]', 'Previous / next sprite to frame'],
-      <String>['Buttons (Manual) · Enter / Space', 'Make this button & go to the next sprite'],
-      <String>['Buttons (Manual) · R / A / F', 'Reset sprite to auto · apply box to all · cycle framing'],
       <String>['F1', 'Show this list'],
     ];
     showDialog<void>(
       context: context,
-      builder: (BuildContext ctx) => AlertDialog(
-        title: const Text('Keyboard shortcuts'),
-        content: SizedBox(
-          width: 460,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              for (final List<String> r in rows)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(
-                    children: <Widget>[
-                      SizedBox(
-                        width: 230,
-                        child: Text(r[0],
-                            style: const TextStyle(
-                                fontFamily: 'monospace', fontWeight: FontWeight.w600)),
+      builder: (BuildContext ctx) => StatefulBuilder(
+        builder: (BuildContext ctx, StateSetter setD) {
+          Future<void> rebind(String action) async {
+            final LogicalKeyboardKey? nk = await captureKey(ctx);
+            if (nk != null) {
+              app.setFramingKey(action, nk);
+              setD(() {});
+            }
+          }
+
+          Future<void> rebindNudge(String dir) async {
+            final LogicalKeyboardKey? nk = await captureKey(ctx);
+            if (nk != null) {
+              app.setNudgeKey(dir, nk);
+              setD(() {});
+            }
+          }
+
+          Widget bindableRow(String label, String keyLbl, VoidCallback onSet) =>
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: <Widget>[
+                    Expanded(child: Text(label)),
+                    Container(
+                      constraints: const BoxConstraints(minWidth: 56),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white24),
+                        borderRadius: BorderRadius.circular(4),
                       ),
-                      Expanded(child: Text(r[1])),
-                    ],
-                  ),
+                      child: Text(keyLbl,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.w600)),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton(onPressed: onSet, child: const Text('Set')),
+                  ],
                 ),
+              );
+
+          return AlertDialog(
+            title: const Text('Keyboard shortcuts'),
+            content: SizedBox(
+              width: 480,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text('Global',
+                        style: Theme.of(ctx).textTheme.titleSmall),
+                    const SizedBox(height: 4),
+                    for (final List<String> r in rows)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Row(
+                          children: <Widget>[
+                            SizedBox(
+                              width: 230,
+                              child: Text(r[0],
+                                  style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontWeight: FontWeight.w600)),
+                            ),
+                            Expanded(child: Text(r[1])),
+                          ],
+                        ),
+                      ),
+                    const Divider(height: 24),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text('Buttons → Manual framing  (rebindable)',
+                              style: Theme.of(ctx).textTheme.titleSmall),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            app.resetFramingKeys();
+                            setD(() {});
+                          },
+                          child: const Text('Reset'),
+                        ),
+                      ],
+                    ),
+                    const Text(
+                      'Click the sprite in the Buttons screen to focus it, then:',
+                      style: TextStyle(fontSize: 12, color: Colors.white60),
+                    ),
+                    const SizedBox(height: 4),
+                    for (final ({String id, String label}) a
+                        in AppState.framingActions)
+                      bindableRow(a.label, keyLabel(app.framingKeys[a.id]!),
+                          () => rebind(a.id)),
+                    const Divider(height: 24),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                              'Theme Maker → Arrange nudge  (rebindable)',
+                              style: Theme.of(ctx).textTheme.titleSmall),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            app.resetNudgeKeys();
+                            setD(() {});
+                          },
+                          child: const Text('Reset'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    bindableRow('Move up', keyLabel(app.nudgeKeys['up']!),
+                        () => rebindNudge('up')),
+                    bindableRow('Move down', keyLabel(app.nudgeKeys['down']!),
+                        () => rebindNudge('down')),
+                    bindableRow('Move left', keyLabel(app.nudgeKeys['left']!),
+                        () => rebindNudge('left')),
+                    bindableRow('Move right', keyLabel(app.nudgeKeys['right']!),
+                        () => rebindNudge('right')),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Rebound keys are saved and restored next time you open '
+                      'the app.',
+                      style: TextStyle(fontSize: 11, color: Colors.white38),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Close')),
             ],
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close')),
-        ],
+          );
+        },
       ),
     );
   }

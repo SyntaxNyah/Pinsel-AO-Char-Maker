@@ -23,12 +23,16 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ✅ **Manual button/icon crop** (`CropFraming.manual` + `CropBox`) — KFO/DRO-style
   draggable/resizable crop box + X/Y/Size sliders, seeded from the auto head-square.
   **Per-sprite**: buttons keep one box *per sprite* (`AppState.buttonCrops`,
-  keyed by sprite base) with a ◀ ▶ sprite navigator, a "k of N customised"
-  caption, **Reset this sprite to auto** + **Apply this box to all sprites**;
-  untouched sprites auto-frame their own face, so you only hand-place the poses
-  the auto crop gets wrong. **Keyboard-driven, KFO-style**: a big framing canvas
-  + single-key flow (`[`/`]` prev/next, Enter make-&-next, R reset, A apply-all,
-  F cycle framing) so you frame a 100-sprite cast without reaching for the rail
+  keyed by sprite base) with an **Emotes-style sprite list** (tiny per-sprite
+  preview, click any pose; a ◀ ▶ navigator too), a "k of N customised" caption,
+  **Reset this sprite to auto** + **Apply this box to all sprites**; untouched
+  sprites auto-frame their own face, so you only hand-place the poses the auto
+  crop gets wrong. **Keyboard-driven, KFO-style**: a big framing canvas + a plain
+  single-key flow (defaults **← / →** prev/next, **Enter** make-&-next, **R**
+  reset, **A** apply-all, **F** cycle framing — no `[`/`]`) so you frame a
+  100-sprite cast without reaching for the rail. **Every framing key (and the
+  Theme-Maker Arrange nudge keys) is rebindable from the F1 dialog and persists
+  across sessions** (`AppState.framingKeys`/`nudgeKeys` → `platform/settings_store`)
 - ✅ **`pinselcredits.txt`** stamped into every exported character (attribution +
   bug-report URL), written by the Organizer (single + bulk)
 - ⬜ Auto `credits.txt` scaffolding

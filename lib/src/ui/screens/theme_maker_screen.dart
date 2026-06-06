@@ -8,6 +8,7 @@ import '../../platform/folder_picker.dart';
 import '../../theme/ao2_theme.dart';
 import '../../theme/ao2_theme_defaults.dart';
 import '../app_state.dart';
+import '../widgets/key_capture.dart';
 
 /// **AO2 Theme Maker** — design a complete Attorney Online 2 / webAO client
 /// theme: every widget position/size, every colour, every font, every image
@@ -1061,12 +1062,12 @@ class _ThemeMakerScreenState extends State<ThemeMakerScreen> {
                 child: Row(children: <Widget>[
                   SizedBox(width: 90, child: Text(label)),
                   Expanded(
-                    child: Text(_keyLabel(app.nudgeKeys[dir]!),
+                    child: Text(keyLabel(app.nudgeKeys[dir]!),
                         style: const TextStyle(fontWeight: FontWeight.w600)),
                   ),
                   OutlinedButton(
                     onPressed: () async {
-                      final LogicalKeyboardKey? nk = await _captureKey();
+                      final LogicalKeyboardKey? nk = await captureKey(context);
                       if (nk != null) {
                         app.setNudgeKey(dir, nk);
                         setD(() {});
@@ -1111,16 +1112,6 @@ class _ThemeMakerScreenState extends State<ThemeMakerScreen> {
         },
       ),
     );
-  }
-
-  Future<LogicalKeyboardKey?> _captureKey() => showDialog<LogicalKeyboardKey>(
-        context: context,
-        builder: (BuildContext ctx) => const _KeyCaptureDialog(),
-      );
-
-  String _keyLabel(LogicalKeyboardKey key) {
-    if (key.keyLabel.isNotEmpty) return key.keyLabel;
-    return key.debugName ?? '0x${key.keyId.toRadixString(16)}';
   }
 
   /// One-line caption spelling out which screen is being edited.
@@ -1714,52 +1705,3 @@ const Map<String, String> _widgetSampleText = <String, String>{
   'server_chatlog': '[Server] Welcome to the courtroom.',
 };
 
-/// Captures the next key press (for rebinding the nudge keys). Cancels on
-/// **Escape** and ignores bare modifier keys (Shift/Ctrl/Alt/Meta) so a
-/// direction can't be bound to a modifier that already means something.
-class _KeyCaptureDialog extends StatelessWidget {
-  const _KeyCaptureDialog();
-
-  // Not `const`: LogicalKeyboardKey overrides ==, which Dart forbids in a const
-  // set (const_set_element_not_primitive_equality).
-  static final Set<LogicalKeyboardKey> _modifiers = <LogicalKeyboardKey>{
-    LogicalKeyboardKey.shiftLeft,
-    LogicalKeyboardKey.shiftRight,
-    LogicalKeyboardKey.controlLeft,
-    LogicalKeyboardKey.controlRight,
-    LogicalKeyboardKey.altLeft,
-    LogicalKeyboardKey.altRight,
-    LogicalKeyboardKey.metaLeft,
-    LogicalKeyboardKey.metaRight,
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Press a key'),
-      content: Focus(
-        autofocus: true,
-        onKeyEvent: (FocusNode node, KeyEvent event) {
-          if (event is! KeyDownEvent) return KeyEventResult.ignored;
-          if (event.logicalKey == LogicalKeyboardKey.escape) {
-            Navigator.pop(context);
-            return KeyEventResult.handled;
-          }
-          if (_modifiers.contains(event.logicalKey)) {
-            return KeyEventResult.ignored;
-          }
-          Navigator.pop(context, event.logicalKey);
-          return KeyEventResult.handled;
-        },
-        child: const SizedBox(
-          height: 44,
-          child: Center(child: Text('Press any key…  (Esc to cancel)')),
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-            onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-      ],
-    );
-  }
-}

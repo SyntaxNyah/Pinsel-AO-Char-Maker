@@ -5,6 +5,12 @@ are both bound, so the same keys work on Windows/Linux and macOS. Press **F1**
 in-app to pop up this list, and find the same actions as buttons on the **top
 toolbar** (undo / redo / import / export / **Start over ↻**).
 
+> **Rebinding.** The two contextual single-key sets — **Buttons → Manual
+> framing** and **Theme Maker → Arrange nudge** — are **rebindable** right in the
+> **F1** dialog: press **Set** next to an action and tap the key you want.
+> Rebound keys are **saved and restored next time you open the app**. The global
+> `Ctrl/⌘` shortcuts above are fixed (they're already plain modifier combos).
+
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl/⌘ + Z` | Undo |
@@ -47,19 +53,25 @@ speed, then fine-tune with the keyboard:
   then **Delete (N)** to remove many at once. Drag a row to reorder — and dragging
   any **ticked** row moves the **whole selection** together (as one block), so you
   can reorder several emotes at once instead of one at a time.
+- **Buttons → pick any sprite from the list.** The Buttons screen now has a
+  left-hand **sprite list** (just like the Emotes screen) with a **tiny preview**
+  of each pose — click any one to frame its button. A pink tick marks sprites
+  you've given a custom (Manual) box.
 - **Buttons → Manual (frame the whole cast from the keyboard).** Click the sprite
-  once to focus the big framing canvas, then:
+  once to focus the big framing canvas, then (these are the **default**, plain
+  keys — **no `[`/`]`** — and every one is **rebindable in the F1 dialog**):
 
-  | Key | Action |
-  |-----|--------|
-  | `[` / `]` | Previous / next sprite to frame |
-  | `Enter` *or* `Space` | "Make it & go to the next sprite" (boxes save as you go) |
+  | Key (default) | Action |
+  |---------------|--------|
+  | `←` / `→` | Previous / next sprite to frame |
+  | `Enter` | "Make it & go to the next sprite" (boxes save as you go) |
   | `R` | Reset this sprite to its auto face crop |
   | `A` | Apply the current box to **all** sprites |
   | `F` | Cycle framing **Face → Full → Manual** |
 
   Drag the box to move it, the corner to resize. These only fire while the
-  framing area is focused — typing in a value box never triggers them.
+  framing area is focused — typing in a value box never triggers them. Rebind any
+  of them (and they persist) from the **F1** keyboard-shortcuts dialog.
 
 These are **contextual** — they act on the focused/selected widget, not globally.
 

@@ -38,11 +38,13 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
 - **Auto folders + file moving.** Builds the character folder, an `emotions/`
   folder, and lays everything out the way AO expects.
 - **Auto buttons + char_icon.** Generates `buttonN_off.png` for every emote
-  **and** the character-select `char_icon.png`. They frame the character's
-  **face by default** (AO buttons show expressions, not whole bodies); switch to
-  full-body, **draw the crop box yourself** (Manual mode — drag/resize a box on
-  the sprite, KFO/DRO-style), tune the size/zoom/position, or lay a **border on
-  top** (KFO-style)
+  **and** the character-select `char_icon.png`. The Buttons screen lists every
+  sprite (with a **tiny preview**, like the Emotes screen) so you can **click any
+  pose** to frame it. They frame the character's **face by default** (AO buttons
+  show expressions, not whole bodies); switch to full-body, **draw the crop box
+  yourself** (Manual mode — drag/resize a box on the sprite, KFO/DRO-style, or
+  fly the whole cast with **plain, rebindable keys** — `←/→`, `Enter`, …), tune
+  the size/zoom/position, or lay a **border on top** (KFO-style)
   — import your own, pick from **dozens of built-in border & background presets**
   (Umineko, Danganronpa, Limbus, kawaii pastels, hearts/sparkles, and a big colour
   palette), *or* **build your own in-app** (style + **colour-wheel** + gradients +
@@ -142,8 +144,9 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
 ### Fast & comfortable
 - **Keyboard shortcuts** for everything — `Ctrl/⌘+Z`/`Y` undo/redo, `Ctrl/⌘+S/E`
   export, `Ctrl/⌘+1…9` to jump screens, `F1` for the cheat-sheet — plus a top
-  **toolbar** with undo/redo + import/export buttons. See
-  [docs/SHORTCUTS.md](docs/SHORTCUTS.md).
+  **toolbar** with undo/redo + import/export buttons. The contextual single-key
+  shortcuts (Button-Studio framing, Theme-Maker nudge) are **rebindable in the F1
+  dialog and saved across sessions**. See [docs/SHORTCUTS.md](docs/SHORTCUTS.md).
 - **Tuned for speed** — an allocation-free per-pixel core, downscaled/debounced
   live previews, and bulk jobs that keep the UI responsive (progress instead of
   a freeze). Editing fields (Emotes, Character) writes to the model and commits

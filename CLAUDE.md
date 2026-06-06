@@ -493,6 +493,13 @@ The central model.
   console (web). Wired in `main.dart` via `runZonedGuarded` + `FlutterError.onError`
   so an unreproducible crash in a built app becomes a sendable stack trace
   (can't catch a hard OOM/native segfault, but catches every Dart exception).
+- `loadSettings()` / `saveSettings(map)` (`settings_store.dart`, `_io`/`_web`
+  seam) — **dependency-free** key→value persistence for UI prefs that must
+  survive a restart. Native writes `pinsel_settings.json` next to the exe (same
+  candidate-dir logic as the crash log so read/write agree); web uses
+  `localStorage`. Both best-effort + **never throw**. Used by `AppState` to
+  persist the rebindable framing/nudge keys. Values must be JSON-encodable;
+  `LogicalKeyboardKey`s are stored as integer `keyId`s.
 - `MemoryWorkspace.clear()` — drop all files (used by fresh import + reset).
 
 ### ui/
@@ -506,8 +513,15 @@ The central model.
   it stays responsive, **lossless** — bulk must not degrade quality),
   **sprite-sheet ripping** (`loadSheet`/`exportSheetCells`), **AO2 theme** state +
   export (`theme`, `importThemeFiles`, `newTheme`, `randomizeTheme`,
-  `setThemeImage`, `touchTheme`, `exportTheme`) + rebindable Arrange nudge keys
-  (`nudgeKeys`/`setNudgeKey`/`resetNudgeKeys`), mixer save, export zip/ini, and
+  `setThemeImage`, `touchTheme`, `exportTheme`) + **rebindable keys** (the Theme
+  Maker Arrange nudge keys `nudgeKeys`/`setNudgeKey`/`resetNudgeKeys` **and** the
+  Button Studio Manual framing keys `framingKeys`/`setFramingKey`/
+  `resetFramingKeys` + `framingActions` label list). Both are seeded with plain
+  defaults (nudge = arrows; framing = ←/→ prev/next, Enter make-&-next, R/A/F),
+  **persist across sessions** via `settings_store` (loaded in the `AppState()`
+  ctor through `_loadPersistedSettings`, saved on every rebind through
+  `_persistKeybinds`; `LogicalKeyboardKey` ↔ `keyId`). Also: mixer save, export
+  zip/ini, and
   **bulkBuildCharacters** (parent folder → many characters in one `.zip` — groups
   via `BulkFolders.split`, builds/organises each in a throwaway workspace using
   the studio settings, never touching the open project). Read it before adding a
@@ -588,7 +602,10 @@ The central model.
   color_lab, animation_studio, button_studio, edit, mixer, bulk, plugins,
   **sprite_ripper** (sheet → sprites), **theme_maker** (AO2 theme editor).
   `widgets/` — `CheckerImage`, `ZoomCanvas`, `overlay_builder` (the
-  `showOverlayBuilder` dialog — style/colour-wheel/sliders for custom overlays).
+  `showOverlayBuilder` dialog — style/colour-wheel/sliders for custom overlays),
+  **`key_capture.dart`** (`keyLabel(key)` for a friendly label + `captureKey(ctx)`
+  / `KeyCaptureDialog` "press a key" — shared by the F1 rebinder and the Theme
+  Maker's nudge rebinder; ignores bare modifiers, cancels on Esc).
   `credits.dart` — the About dialog + Home credits card (maintainer/repo, in
   `kMaintainer`/`kRepoUrl`).
   - `color_lab`: sliders + blendable presets/gradients + a **custom colour**
@@ -639,13 +656,23 @@ The central model.
     buttons and the char_icon. **Manual mode** (`_CropBoxEditor` + `_cropSliders`):
     drag the box / drag the corner to resize over the base sprite (loaded via
     `spriteEditorSource`, reloads on emote/`spriteRevision`), seeded from the
-    sprite's own `headCropFor` (auto head-square). **Buttons are per-sprite**: a
-    `_SpriteNav` (◀ ▶ "Sprite k of N" + a "customised k/N" caption) steps
-    `app.selectEmote` through the cast so you can frame every pose by hand,
-    writing each to `app.buttonCrops[sprite]` via `setButtonCrop` (seeded lazily
-    by `ensureButtonCropSeeded` as you arrive on a sprite); `_ManualCropActions`
-    offers **Reset this sprite to auto** (`resetButtonCropFor`) and **Apply this
-    box to all sprites** (`applyButtonCropToAll`). The char_icon keeps its single
+    sprite's own `headCropFor` (auto head-square). **The screen is laid out like
+    the Emotes screen**: a left **`_ButtonSpriteList`** (a `Consumer`-driven
+    `ListView` of every emote with a **tiny `_SpriteThumb`** preview — cached
+    `previewSprite(rel, maxEdge:96)`, lazy per visible row — a pink tick on
+    sprites that have a custom box, and auto-scroll to the keyboard-selected
+    sprite) + the cards on the right wrapped in a `Selector<AppState,(int,int)>`
+    on `(selectedEmote, spriteRevision)` so they rebuild when you pick a sprite.
+    Clicking a row calls the screen's `_selectSprite` (→ `app.selectEmote`, then
+    in Manual `ensureButtonCropSeeded` + `notifyButtonSettings` so the seeded box
+    shows immediately, then reschedules the button preview). **Buttons are
+    per-sprite**: the list (and a `_SpriteNav` ◀ ▶ "Sprite k of N" + "customised
+    k/N" caption) step `app.selectEmote` through the cast so you can frame every
+    pose by hand, writing each to `app.buttonCrops[sprite]` via `setButtonCrop`
+    (seeded lazily by `ensureButtonCropSeeded` as you arrive on a sprite);
+    `_ManualCropActions` offers **Reset this sprite to auto** (`resetButtonCropFor`)
+    and **Apply this box to all sprites** (`applyButtonCropToAll`). The char_icon
+    keeps its single
     `iconCrop`. In Manual the auto controls (face zoom, Move X/Y) are hidden —
     one positioning system at a time. `toPixels` clamps so a sloppy drag still
     yields a valid square. Every numeric setting is a `_ValueSlider` (a slider + a
@@ -669,14 +696,17 @@ The central model.
     **KFO-style fast framing (Manual mode)**: the `_CropBoxEditor` takes a
     `height` (buttons pass **440** = a big canvas; icon stays 240), and the whole
     manual block is wrapped in a `Focus(focusNode:_kbFocus, autofocus, onKeyEvent:
-    _onKey)` with a `Listener(onPointerDown→requestFocus)` on the canvas. Keys
-    (only when `_kbFocus.hasPrimaryFocus`, so a focused `_ValueSlider` box never
-    triggers them): **`[`/`]`** prev/next sprite, **Enter/Space** "make & next"
-    (boxes commit live, so advancing finishes the current one), **R** reset this
-    sprite to auto, **A** apply box to all, **F** cycle Face→Full→Manual — the
-    answer to "had to mouse to the top to pick the next sprite". Mirrored in the
-    F1 cheat-sheet (`app.dart`) + docs/SHORTCUTS.md. Bare keys are safe — the only
-    global shortcuts are Ctrl/⌘-modified + F1.
+    _onKey)` with a `Listener(onPointerDown→requestFocus)` on the canvas. `_onKey`
+    reads the **rebindable** `app.framingKeys` (no hard-coded keys) — only when
+    `_kbFocus.hasPrimaryFocus`, so a focused `_ValueSlider` box never triggers
+    them. **Plain defaults** (no `[`/`]`): **← / →** prev/next sprite, **Enter**
+    (numpad Enter too) "make & next" (boxes commit live, so advancing finishes the
+    current one), **R** reset this sprite to auto, **A** apply box to all, **F**
+    cycle Face→Full→Manual. `_manualHint()` builds its text **from** `framingKeys`
+    via `keyLabel` so it can't go stale. Rebind/persist them in the F1 dialog
+    (`app.dart`, `keyLabel`/`captureKey` from `ui/widgets/key_capture.dart`).
+    Mirrored in docs/SHORTCUTS.md. Bare keys are safe — the only global shortcuts
+    are Ctrl/⌘-modified + F1.
   - `edit`: crop / **grow** / auto-trim / background removal (drives `SpriteEdit`).
     Each of L/T/R/B is **one bidirectional slider** (`_sideControl`): >0 crops the
     edge in, <0 grows the canvas out (mapped to `crop*`/`pad*` in `_spec`), with
@@ -710,7 +740,8 @@ The central model.
     a hover tooltip** of what it does via `_widgetHint`; a **Grid** dropdown snaps
     drags/resizes — `_snap`/`_GridPainter`; **arrow-key nudge** via `_handleKey`
     on a `Focus` — arrows 1px, Shift 10px, Ctrl/Alt resize; the direction keys are
-    **rebindable** — `AppState.nudgeKeys`, `_rebindDialog`/`_KeyCaptureDialog`),
+    **rebindable** — `AppState.nudgeKeys`, `_rebindDialog` + the shared
+    `captureKey`/`KeyCaptureDialog` from `ui/widgets/key_capture.dart`),
     and **Preview** (the
     read-only `_ClientPreview` — real images + sample text in the theme's fonts).
     The Courtroom/Lobby selector (`_courtroomLobbyToggle` + `_modeCaption`, shared
@@ -723,7 +754,12 @@ The central model.
   import/export, add emote, prev/next emote, `Ctrl/⌘+1..9` screen jumps, F1 help)
   and a `_TopBar` with undo/redo + import/export + **Start-over ↻** (reset, gated
   on `hasProject`, confirm dialog → `resetProject`) + **About/credits** (ℹ)
-  buttons (gated on `AppState.canUndo`/`canRedo`/`hasProject` via a `Selector`). The nav
+  buttons (gated on `AppState.canUndo`/`canRedo`/`hasProject` via a `Selector`).
+  **`_showShortcuts` (F1) is also the rebinding centre**: a `StatefulBuilder`
+  dialog that lists the fixed global `Ctrl/⌘` shortcuts **and** offers a **Set**
+  button per Button-Studio framing action (`AppState.framingActions`/`framingKeys`)
+  and per Theme-Maker nudge direction, each via the shared `captureKey`; rebinds
+  persist (see `settings_store`). Reset buttons restore the plain defaults. The nav
   now has a **Character** destination at index 1 (the ini builder), plus
   **Ripper** and **Theme** at the end (both project-independent). The no-project
   guard uses the `_projectFreeIndices` set (`{Home, Plugins, Ripper, Theme}`)

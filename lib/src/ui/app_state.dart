@@ -30,6 +30,7 @@ import '../imaging/webp_codec.dart';
 import '../platform/cpu.dart';
 import '../platform/error_log.dart';
 import '../platform/save_file.dart';
+import '../platform/settings_store.dart';
 import '../platform/workspace.dart';
 import '../theme/ao2_theme.dart';
 import '../theme/theme_randomizer.dart';
@@ -77,6 +78,12 @@ class OverlaySlot {
 /// [Character], undo/redo, the live colour pipeline, and all the actions the
 /// screens trigger.
 class AppState extends ChangeNotifier {
+  AppState() {
+    // Restore rebindable keys saved in a previous session (best-effort; the
+    // defaults are already in place if there's nothing to load).
+    _loadPersistedSettings();
+  }
+
   final MemoryWorkspace workspace = MemoryWorkspace();
   final EditHistory history = EditHistory();
   final SpriteScanner _scanner = const SpriteScanner();
@@ -1757,6 +1764,7 @@ class AppState extends ChangeNotifier {
   /// Rebind one nudge direction (`up`/`down`/`left`/`right`) to [key].
   void setNudgeKey(String dir, LogicalKeyboardKey key) {
     nudgeKeys[dir] = key;
+    _persistKeybinds();
     notifyListeners();
   }
 
@@ -1767,7 +1775,105 @@ class AppState extends ChangeNotifier {
       ..['down'] = LogicalKeyboardKey.arrowDown
       ..['left'] = LogicalKeyboardKey.arrowLeft
       ..['right'] = LogicalKeyboardKey.arrowRight;
+    _persistKeybinds();
     notifyListeners();
+  }
+
+  /// **Rebindable** single keys for the Button Studio's Manual framing flow
+  /// (active only while the framing canvas is focused). Defaults are plain,
+  /// obvious keys — **no `[` / `]` weirdness**: the arrow keys step sprites and
+  /// Enter makes the current button & advances. Remap any of them from the F1
+  /// "Keyboard shortcuts" dialog; rebinds **persist across app restarts** via
+  /// [settings_store] (see [_persistKeybinds] / [_loadPersistedSettings]).
+  static Map<String, LogicalKeyboardKey> _defaultFramingKeys() =>
+      <String, LogicalKeyboardKey>{
+        'prev': LogicalKeyboardKey.arrowLeft,
+        'next': LogicalKeyboardKey.arrowRight,
+        'make': LogicalKeyboardKey.enter,
+        'reset': LogicalKeyboardKey.keyR,
+        'all': LogicalKeyboardKey.keyA,
+        'framing': LogicalKeyboardKey.keyF,
+      };
+
+  final Map<String, LogicalKeyboardKey> framingKeys = _defaultFramingKeys();
+
+  /// Human labels for the framing actions, in display order (drives the rebind
+  /// UI + the in-app hint so they can never drift from the real bindings).
+  static const List<({String id, String label})> framingActions =
+      <({String id, String label})>[
+    (id: 'prev', label: 'Previous sprite'),
+    (id: 'next', label: 'Next sprite'),
+    (id: 'make', label: 'Make this button & go to next sprite'),
+    (id: 'reset', label: 'Reset this sprite to auto'),
+    (id: 'all', label: 'Apply this box to all sprites'),
+    (id: 'framing', label: 'Cycle framing (Face / Full / Manual)'),
+  ];
+
+  /// Rebind one framing action (`prev`/`next`/`make`/`reset`/`all`/`framing`).
+  void setFramingKey(String action, LogicalKeyboardKey key) {
+    if (!framingKeys.containsKey(action)) return;
+    framingKeys[action] = key;
+    _persistKeybinds();
+    notifyListeners();
+  }
+
+  /// Restore the default (arrow keys + Enter/R/A/F) framing bindings.
+  void resetFramingKeys() {
+    framingKeys
+      ..clear()
+      ..addAll(_defaultFramingKeys());
+    _persistKeybinds();
+    notifyListeners();
+  }
+
+  // --- Persistence of the rebindable keys (survives app restarts) ------------
+
+  /// Load saved key bindings (and any future persisted prefs) and apply them
+  /// over the defaults. Keys are stored as integer `keyId`s. Best-effort.
+  Future<void> _loadPersistedSettings() async {
+    final Map<String, dynamic> s = await loadSettings();
+    bool changed = false;
+    changed |= _applySavedKeys(s['framingKeys'], framingKeys);
+    changed |= _applySavedKeys(s['nudgeKeys'], nudgeKeys);
+    if (changed) notifyListeners();
+  }
+
+  /// Overlay saved `name -> keyId` pairs onto [target] (only known names),
+  /// reconstructing each [LogicalKeyboardKey] from its id. Returns whether it
+  /// changed anything.
+  bool _applySavedKeys(Object? saved, Map<String, LogicalKeyboardKey> target) {
+    if (saved is! Map) return false;
+    bool changed = false;
+    saved.forEach((Object? name, Object? id) {
+      if (name is String && target.containsKey(name) && id is int) {
+        // `findKeyByKeyId` returns the canonical known key (nicer label); the
+        // `LogicalKeyboardKey(id)` fallback is enough on its own (equality +
+        // keyLabel are keyId-based), so if `findKeyByKeyId` ever fails to
+        // resolve, just drop it and keep the constructor.
+        final LogicalKeyboardKey key =
+            LogicalKeyboardKey.findKeyByKeyId(id) ?? LogicalKeyboardKey(id);
+        if (target[name] != key) {
+          target[name] = key;
+          changed = true;
+        }
+      }
+    });
+    return changed;
+  }
+
+  /// Persist the current framing + nudge bindings (fire-and-forget).
+  void _persistKeybinds() {
+    saveSettings(<String, dynamic>{
+      'framingKeys': <String, int>{
+        for (final MapEntry<String, LogicalKeyboardKey> e
+            in framingKeys.entries)
+          e.key: e.value.keyId,
+      },
+      'nudgeKeys': <String, int>{
+        for (final MapEntry<String, LogicalKeyboardKey> e in nudgeKeys.entries)
+          e.key: e.value.keyId,
+      },
+    });
   }
 
   /// Start a fresh theme from the built-in starter layout.

@@ -350,6 +350,12 @@ Buttons **and** the character-select `char_icon.png` are generated automatically
 when you export. This tab — the **Button & Icon Studio** — lets you control
 *how*, with a live preview of each.
 
+**Pick any sprite from the list.** Down the left side is a **sprite list** — the
+same layout as the Emotes screen, with a **tiny preview** of every pose. Click any
+sprite to frame its button; the preview (and, in Manual mode, the crop box) jumps
+to it. A pink tick marks the sprites you've hand-framed. So you're never stuck
+stepping one-by-one — jump straight to the pose you want to fix.
+
 ### Framing (the big one)
 By default Pinsel frames the character's **head / face** — AO buttons show
 *expressions*, so a full-body button looks weird and tiny. The framing picker has
@@ -361,15 +367,17 @@ and **Manual**.
   move it**, **drag the corner to resize**, or use the **Box X / Y / Size**
   sliders for exact values. The preview beside it updates live as you drag.
   - **Frame the whole cast from the keyboard — no mouse trip to the top.** Click
-    the sprite once to focus the framing area, then fly through it: **`[` / `]`**
-    previous / next sprite, **Enter** (or **Space**) "make it & go to the next",
-    **R** reset this sprite to its auto face, **A** apply the current box to every
-    sprite, **F** cycle Face → Full → Manual. (This is the fix for the classic
-    "I had to reach for the next-sprite button every single time" gripe — boxes
-    save as you go, so advancing *is* finishing the current one.)
-  - **Every sprite has its own box.** The **◀ ▶** arrows ("Sprite *k* of *N*") do
-    the same as `[` / `]` if you prefer the mouse; the caption shows how many
-    sprites you've customised (e.g. "7 of 42").
+    the sprite once to focus the framing area, then fly through it with **plain,
+    sensible keys** (no `[`/`]` nonsense): **← / →** previous / next sprite,
+    **Enter** "make it & go to the next", **R** reset this sprite to its auto
+    face, **A** apply the current box to every sprite, **F** cycle Face → Full →
+    Manual. (Boxes save as you go, so advancing *is* finishing the current one.)
+    **Every one of these keys is rebindable** — open the **F1** keyboard-shortcuts
+    dialog, press **Set**, and tap the key you want. Your choices are **saved and
+    restored next time you launch the app**.
+  - **Every sprite has its own box.** Click any sprite in the **left list**, or use
+    the **◀ ▶** arrows ("Sprite *k* of *N*"); the caption shows how many sprites
+    you've customised (e.g. "7 of 42").
   - **Sprites you never touch auto-frame the face**, so you only have to visit the
     poses the auto crop gets wrong — you're never forced to hand-place all 100+.
   - **Reset this sprite to auto** (key **R**) snaps the current one back to its
