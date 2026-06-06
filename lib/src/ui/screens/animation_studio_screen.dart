@@ -225,7 +225,7 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
       case _StudioMode.frames:
         return '${_seq.length} frame(s)  ·  ${_frameImgs.length} shown';
       case _StudioMode.mouth:
-        return 'Talking mouth preview — drag the box onto the lips →';
+        return 'Drag the pink box onto the lips — corner/edge handles resize it';
       case _StudioMode.effects:
         return _recipes.isEmpty
             ? 'No effects yet — pick a preset or add effects →'
@@ -233,50 +233,63 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
     }
   }
 
-  /// The looping preview. In Mouth mode it overlays the adjustable mouth box
-  /// (aligned to the sprite via [_mouthAspect]) so you can see exactly what's
-  /// being animated and nudge it onto the lips.
+  /// The looping preview. In Mouth mode it overlays a **draggable, resizable**
+  /// mouth box (aligned to the sprite via [_mouthAspect]) so you can place it on
+  /// the lips with the mouse instead of fiddling with sliders.
   Widget _previewContent() {
-    return ValueListenableBuilder<int>(
-      valueListenable: _frameIdx,
-      builder: (_, int idx, __) {
-        final Uint8List? b =
-            _frameImgs.isEmpty ? null : _frameImgs[idx % _frameImgs.length];
-        if (_mode != _StudioMode.mouth || _mouthAspect == null) {
+    // Effects / Frames mode (or no sprite yet): just the looping image.
+    if (_mode != _StudioMode.mouth || _mouthAspect == null) {
+      return ValueListenableBuilder<int>(
+        valueListenable: _frameIdx,
+        builder: (_, int idx, __) {
+          final Uint8List? b =
+              _frameImgs.isEmpty ? null : _frameImgs[idx % _frameImgs.length];
           return CheckerImage(bytes: b);
-        }
-        return Center(
-          child: AspectRatio(
-            aspectRatio: _mouthAspect!,
-            child: LayoutBuilder(
-              builder: (_, BoxConstraints c) {
-                final double w = c.maxWidth, h = c.maxHeight;
-                return Stack(
-                  children: <Widget>[
-                    Positioned.fill(
-                        child: CheckerImage(bytes: b, fit: BoxFit.fill)),
-                    Positioned(
-                      left: (_mouth.x * w).clamp(0.0, w),
-                      top: (_mouth.y * h).clamp(0.0, h),
-                      width: (_mouth.w * w).clamp(1.0, w),
-                      height: (_mouth.h * h).clamp(1.0, h),
-                      child: const IgnorePointer(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Color(0x22FF4081),
-                            border: Border.fromBorderSide(
-                                BorderSide(color: Color(0xFFFF4081), width: 2)),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        );
-      },
+        },
+      );
+    }
+    // Mouth mode: looping talk preview + an interactive mouth box on top. The
+    // image animates (its own ValueListenableBuilder) while the box overlay only
+    // rebuilds when you drag it or it's re-seeded — so dragging stays smooth.
+    return Center(
+      child: AspectRatio(
+        aspectRatio: _mouthAspect!,
+        child: LayoutBuilder(
+          builder: (_, BoxConstraints c) {
+            final double w = c.maxWidth, h = c.maxHeight;
+            return Stack(
+              children: <Widget>[
+                Positioned.fill(
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: _frameIdx,
+                    builder: (_, int idx, __) {
+                      final Uint8List? b = _frameImgs.isEmpty
+                          ? null
+                          : _frameImgs[idx % _frameImgs.length];
+                      return CheckerImage(bytes: b, fit: BoxFit.fill);
+                    },
+                  ),
+                ),
+                Positioned.fill(
+                  child: _MouthBoxOverlay(
+                    width: w,
+                    height: h,
+                    mouth: _mouth,
+                    // Live drag: write the value but don't rebuild the controls
+                    // (the overlay redraws itself).
+                    onChanged: (MouthRegion m) => _mouth = m,
+                    // One rebuild (sync sliders) + re-render the loop on release.
+                    onCommit: () {
+                      setState(() {});
+                      _schedule();
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -517,9 +530,10 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
           style: Theme.of(context).textTheme.titleMedium),
       const Text(
         'Make this one static drawing talk like a visual-novel character — no '
-        'extra art needed. Pick a "way of talking", and the jaw drops inside the '
-        'pink box with that cadence in a seamless loop. Nudge the box onto the '
-        'lips and watch the preview.',
+        'extra art needed. Pick a "way of talking", then drag the pink box in '
+        'the preview onto the lips — grab its corner to resize, or the right/'
+        'bottom edge to stretch width/height. The jaw drops inside the box with '
+        'that cadence in a seamless loop.',
         style: TextStyle(fontSize: 12, color: Colors.white60),
       ),
       const SizedBox(height: 10),
@@ -549,7 +563,9 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
         icon: const Icon(Icons.center_focus_strong_outlined),
         label: const Text('Auto-place on face'),
       ),
-      const SizedBox(height: 4),
+      const SizedBox(height: 8),
+      const Text('Or fine-tune with sliders',
+          style: TextStyle(fontSize: 11, color: Colors.white38)),
       _mouthSlider('Mouth X', _mouth.x,
           (double v) => _mouth = _mouth.copyWith(x: v)),
       _mouthSlider('Mouth Y', _mouth.y,
@@ -897,6 +913,147 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
           if (type != 'none')
             InputChip(label: Text(type), onPressed: () => _addRecipe(type)),
       ],
+    );
+  }
+}
+
+/// Which part of the mouth box a drag is manipulating.
+enum _MouthHandle { move, sizeBoth, sizeW, sizeH }
+
+/// A **draggable + resizable** mouth box drawn over the talk preview, so the box
+/// can be placed with the mouse instead of sliders:
+///  * drag **inside / anywhere** → move it,
+///  * drag the **bottom-right corner** handle → resize (width + height),
+///  * drag the **right-edge** handle → width only,
+///  * drag the **bottom-edge** handle → height only.
+///
+/// All geometry is in **fractions** ([MouthRegion]) so it survives the
+/// downscaled preview and maps onto the full-res sprite on save. During a drag
+/// it keeps a local `_live` box and calls [onChanged] without forcing the
+/// parent to rebuild; [onCommit] (on release) triggers the one heavy refresh.
+class _MouthBoxOverlay extends StatefulWidget {
+  const _MouthBoxOverlay({
+    required this.width,
+    required this.height,
+    required this.mouth,
+    required this.onChanged,
+    required this.onCommit,
+  });
+
+  final double width;
+  final double height;
+  final MouthRegion mouth;
+  final ValueChanged<MouthRegion> onChanged;
+  final VoidCallback onCommit;
+
+  @override
+  State<_MouthBoxOverlay> createState() => _MouthBoxOverlayState();
+}
+
+class _MouthBoxOverlayState extends State<_MouthBoxOverlay> {
+  static const double _hit = 22; // px touch radius for the resize handles
+  static const Color _pink = Color(0xFFFF4081);
+
+  late MouthRegion _live = widget.mouth;
+  _MouthHandle? _drag;
+
+  double get _w => widget.width;
+  double get _h => widget.height;
+
+  @override
+  void didUpdateWidget(covariant _MouthBoxOverlay old) {
+    super.didUpdateWidget(old);
+    // Adopt external changes (auto-place, sliders, new sprite) only when idle —
+    // never stomp a box the user is actively dragging.
+    if (_drag == null) _live = widget.mouth;
+  }
+
+  _MouthHandle _hitTest(Offset p) {
+    final double bx = _live.x * _w, by = _live.y * _h;
+    final double bw = _live.w * _w, bh = _live.h * _h;
+    bool nearX(double x) => (p.dx - x).abs() <= _hit;
+    bool nearY(double y) => (p.dy - y).abs() <= _hit;
+    final bool inRowY = p.dy >= by - _hit && p.dy <= by + bh + _hit;
+    final bool inColX = p.dx >= bx - _hit && p.dx <= bx + bw + _hit;
+    if (nearX(bx + bw) && nearY(by + bh)) return _MouthHandle.sizeBoth; // corner
+    if (nearX(bx + bw) && inRowY) return _MouthHandle.sizeW; // right edge
+    if (nearY(by + bh) && inColX) return _MouthHandle.sizeH; // bottom edge
+    return _MouthHandle.move; // grab anywhere else to move
+  }
+
+  MouthRegion _clamp(MouthRegion m) {
+    final double w = m.w.clamp(0.02, 1.0);
+    final double h = m.h.clamp(0.01, 1.0);
+    final double x = m.x.clamp(0.0, 1.0 - w);
+    final double y = m.y.clamp(0.0, 1.0 - h);
+    return MouthRegion(x, y, w, h);
+  }
+
+  void _onStart(DragStartDetails d) => _drag = _hitTest(d.localPosition);
+
+  void _onUpdate(DragUpdateDetails d) {
+    final _MouthHandle? k = _drag;
+    if (k == null) return;
+    final double dx = d.delta.dx / _w; // fractional move
+    final double dy = d.delta.dy / _h;
+    final MouthRegion m = _clamp(switch (k) {
+      _MouthHandle.move => _live.copyWith(x: _live.x + dx, y: _live.y + dy),
+      _MouthHandle.sizeBoth =>
+        _live.copyWith(w: _live.w + dx, h: _live.h + dy),
+      _MouthHandle.sizeW => _live.copyWith(w: _live.w + dx),
+      _MouthHandle.sizeH => _live.copyWith(h: _live.h + dy),
+    });
+    setState(() => _live = m);
+    widget.onChanged(m);
+  }
+
+  void _onEnd(DragEndDetails d) {
+    _drag = null;
+    widget.onCommit();
+  }
+
+  Widget _handle() => Container(
+        width: 14,
+        height: 14,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: _pink, width: 2),
+          borderRadius: BorderRadius.circular(3),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final double bx = _live.x * _w, by = _live.y * _h;
+    final double bw = (_live.w * _w).clamp(1.0, _w);
+    final double bh = (_live.h * _h).clamp(1.0, _h);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanStart: _onStart,
+      onPanUpdate: _onUpdate,
+      onPanEnd: _onEnd,
+      child: Stack(
+        children: <Widget>[
+          Positioned(
+            left: bx,
+            top: by,
+            width: bw,
+            height: bh,
+            child: const DecoratedBox(
+              decoration: BoxDecoration(
+                color: Color(0x22FF4081),
+                border: Border.fromBorderSide(
+                    BorderSide(color: Color(0xFFFF4081), width: 2)),
+              ),
+            ),
+          ),
+          // Visual handles (hit-testing is coordinate-based, so one
+          // GestureDetector handles all of them — no gesture-arena conflicts).
+          Positioned(left: bx + bw - 7, top: by + bh - 7, child: _handle()),
+          Positioned(left: bx + bw - 7, top: by + bh / 2 - 7, child: _handle()),
+          Positioned(left: bx + bw / 2 - 7, top: by + bh - 7, child: _handle()),
+        ],
+      ),
     );
   }
 }

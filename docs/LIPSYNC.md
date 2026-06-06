@@ -49,13 +49,18 @@ don't need any audio or extra art.
 3. Tap **Way of talking** and pick a style (search by name — "excited",
    "whisper", "robotic" — or filter by category). The preview **loops, talking**
    in that style straight away.
-4. **Adjust** until the box sits on the lips:
-   * **Mouth X / Mouth Y** — move the box.
-   * **Width / Height** — resize it.
+4. **Place the box on the lips by dragging it right in the preview** (sliders are
+   optional now):
+   * **Drag the pink box** — move it anywhere.
+   * **Drag the bottom-right corner** handle — resize (width + height).
+   * **Drag the right edge** handle — stretch the width; **bottom edge** — the
+     height.
+   * **Auto-place on face** — snap the box back onto the detected face.
    * **Openness / jaw drop** — fine-tune how far the jaw drops on top of the
      chosen style.
-   * **Frames / Speed (fps)** — length and pace of the talk loop.
-   * **Auto-place on face** — re-centre the box on the detected face.
+   * **Frames / Speed (fps)** — length and pace of the talk loop (more frames =
+     smoother fast styles).
+   * The **Mouth X/Y/Width/Height sliders** are still there for precise nudging.
 5. **Save as (b) talk** (or the moon icon for **(a) idle**). The animated WebP is
    dropped into your project *and* downloaded.
 6. **Talking mouth on ALL sprites** gives every expression its own face-placed

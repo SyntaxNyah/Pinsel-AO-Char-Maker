@@ -711,8 +711,13 @@ The central model.
     the checker.
   - `animation_studio`: **three** modes via a `SegmentedButton<_StudioMode>` —
     **Effects** (procedural recipes; **Animate ALL sprites** → `bulkAnimateAll`),
-    **Mouth** (talking lip-sync: a face-placed, draggable mouth box overlaid on a
-    looping preview — X/Y/W/H + open amount + frames/fps; **Save (b)/(a)** →
+    **Mouth** (VN talking lip-sync: a **Way of talking** style picker
+    (`showTalkStylePicker`) + a mouth box you **drag/resize directly on the
+    looping preview** via `_MouthBoxOverlay` — drag to move, bottom-right corner =
+    resize both, right/bottom edge = width/height; one GestureDetector with
+    coordinate-based hit-testing, a local `_live` box during drag + `onCommit` on
+    release so dragging doesn't rebuild the controls. X/Y/W/H sliders kept for
+    precise nudging; open amount + frames/fps; **Save (b)/(a)** →
     `saveMouthTalk`, **all sprites** → `bulkMouthTalkAll`; seeds via
     `_ensureMouthSeed`/`defaultMouthRegionFor`/`currentSpriteAspect`), and
     **Frames** (frame-by-frame: pick/reorder, fps/reverse/ping-pong/align, save).
