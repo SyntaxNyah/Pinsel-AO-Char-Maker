@@ -159,8 +159,11 @@ action.
 **Is there keyboard control / undo buttons?**
 Yes. Every screen has a top **toolbar** with **undo/redo** (and import/export)
 buttons, and there are global shortcuts: `Ctrl/⌘+Z` undo, `Ctrl/⌘+Y` (or
-`Ctrl/⌘+Shift+Z`) redo, `Ctrl/⌘+S`/`E` export, `Ctrl/⌘+O` import, `Ctrl/⌘+1…9`
-to switch screens, `F1` for the full list. See [SHORTCUTS.md](SHORTCUTS.md).
+`Ctrl/⌘+Shift+Z`) redo, `Ctrl/⌘+S` export `.zip`, `Ctrl/⌘+Shift+S` **save as a
+folder** (no zip), `Ctrl/⌘+E` export `char.ini`, `Ctrl/⌘+O` import, `Ctrl/⌘+1…9`
+to switch screens, `F1` for the full list. The contextual single-key shortcuts
+(Buttons-Manual framing, Theme-Maker nudge) are **rebindable in the F1 dialog and
+saved across sessions**. See [SHORTCUTS.md](SHORTCUTS.md).
 
 **Recolour / bulk / animation feel slow or freeze — anything I can do?**
 It's a lot faster now: the per-pixel engine is allocation-free, live previews
@@ -246,9 +249,11 @@ Import sprites first (Home → Import sprite files / Import folder). Those scree
 need a loaded character.
 
 **Where are my edits stored?**
-In an in-memory project (uniform across platforms). Use **Export .zip** (full
-character with buttons) or **Export char.ini** to write them out. Autosave /
-recent-projects are on the roadmap.
+In an in-memory project (uniform across platforms). To write them out: **Save as
+a folder** (`Ctrl/⌘+Shift+S`, desktop — the finished character folder appears on
+disk, no zip to extract), **Export .zip** (full character with buttons), or
+**Export char.ini** (just the text). Autosave / recent-projects are on the
+roadmap.
 
 **How do I add my own presets/animations for others to use?**
 Author a JSON pack (see [PLUGINS.md](PLUGINS.md)) — it works on desktop, mobile

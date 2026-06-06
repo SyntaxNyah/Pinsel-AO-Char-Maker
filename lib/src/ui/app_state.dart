@@ -29,6 +29,7 @@ import '../imaging/sprite_sheet.dart';
 import '../imaging/webp_codec.dart';
 import '../platform/cpu.dart';
 import '../platform/error_log.dart';
+import '../platform/folder_export.dart';
 import '../platform/save_file.dart';
 import '../platform/settings_store.dart';
 import '../platform/workspace.dart';
@@ -208,6 +209,38 @@ class AppState extends ChangeNotifier {
     return true;
   }
 
+  /// Seed [to]'s manual box when you **arrive** on it while framing. If [to]
+  /// already has a custom box it's kept untouched. Otherwise, when [carryFrom]
+  /// is given (you advanced *forward* from another sprite), [to] **inherits that
+  /// framing** — so "make it & next" keeps the box you just set instead of
+  /// snapping back to this sprite's own auto-detected face (the "it resets when
+  /// I press Enter" complaint). With no [carryFrom] (going back / a fresh entry)
+  /// it falls back to [to]'s own head-square.
+  Future<void> arriveButtonCrop(Emote? to, {CropBox? carryFrom}) async {
+    if (to == null || to.sprite.isEmpty) return;
+    if (buttonCrops.containsKey(to.sprite)) return; // keep its own box
+    buttonCrops[to.sprite] = carryFrom ?? await headCropFor(to);
+  }
+
+  /// Select emote [target] for **button framing**, carrying the current box
+  /// forward when stepping to a later (un-framed) sprite. The single source of
+  /// truth for framing navigation — the inline studio AND the big framing editor
+  /// both call this so prev/next/Enter behave identically (no divergent copies).
+  Future<void> navigateButtonFraming(int target) async {
+    final int n = character?.emotes.length ?? 0;
+    if (n == 0) return;
+    final int t = target.clamp(0, n - 1);
+    final Emote? from = current;
+    final CropBox? carry = (t > selectedEmote &&
+            from != null &&
+            from.sprite.isNotEmpty)
+        ? buttonCropRaw(from.sprite)
+        : null;
+    selectEmote(t); // notifies
+    await arriveButtonCrop(current, carryFrom: carry);
+    notifyListeners(); // surface the seeded/carried box
+  }
+
   /// Re-seed [e]'s sprite box from its auto head-square — the Manual "reset this
   /// sprite to auto" action.
   Future<void> resetButtonCropFor(Emote? e) async {
@@ -249,6 +282,39 @@ class AppState extends ChangeNotifier {
     slot.bytes = bytes;
     slot.image = bytes == null ? null : Codecs.decodeFirstFrame(bytes, ext: ext);
     slot.spec = bytes == null ? null : spec;
+    notifyListeners();
+  }
+
+  /// User-saved overlay presets (built in the Button Studio's "Build…" editor,
+  /// then **Saved**). They show up alongside the built-ins in the preset picker
+  /// and **persist across sessions** (via `settings_store`, same file as the
+  /// keybinds). Only the editable [OverlaySpec] is stored — it rebuilds to a
+  /// crisp image at any size.
+  final List<({String name, OverlaySpec spec})> userOverlayPresets =
+      <({String name, OverlaySpec spec})>[];
+
+  /// User presets whose kind (border / background) matches [kind].
+  List<({String name, OverlaySpec spec})> userOverlaysFor(OverlayKind kind) =>
+      userOverlayPresets
+          .where((({String name, OverlaySpec spec}) p) => p.spec.kind == kind)
+          .toList();
+
+  /// Save [spec] as a named user preset (replacing any with the same [name]).
+  void saveOverlayPreset(String name, OverlaySpec spec) {
+    final String clean = name.trim();
+    if (clean.isEmpty) return;
+    userOverlayPresets
+        .removeWhere((({String name, OverlaySpec spec}) p) => p.name == clean);
+    userOverlayPresets.add((name: clean, spec: spec.copy()));
+    _persistSettings();
+    notifyListeners();
+  }
+
+  /// Delete the user preset named [name].
+  void deleteOverlayPreset(String name) {
+    userOverlayPresets
+        .removeWhere((({String name, OverlaySpec spec}) p) => p.name == name);
+    _persistSettings();
     notifyListeners();
   }
 
@@ -932,8 +998,13 @@ class AppState extends ChangeNotifier {
 
   /// Preview the auto-generated **button** for the selected emote at [size] px,
   /// using the current [buttonFraming]/[buttonZoom]. Reuses the decode cache.
-  Future<Uint8List?> previewAutoButton(int size) async {
-    final Emote? e = current;
+  Future<Uint8List?> previewAutoButton(int size) async =>
+      previewButtonForEmote(current, size);
+
+  /// The same framed-button render as [previewAutoButton] but for **any** [e]
+  /// — so the Button Studio's sprite list can show a tiny preview of the actual
+  /// *button*, not the raw sprite. Reuses the decode cache; lazy per visible row.
+  Future<Uint8List?> previewButtonForEmote(Emote? e, int size) async {
     if (e == null) return null;
     final String? rel = spriteRelFor(e);
     if (rel == null) return null;
@@ -948,6 +1019,18 @@ class AppState extends ChangeNotifier {
         foreground: buttonFg.image,
         manualCrop:
             buttonFraming == CropFraming.manual ? buttonCropRaw(e.sprite) : null);
+  }
+
+  /// Bumped (debounced by the studio) whenever a button *style* setting changes
+  /// — framing mode, size, zoom, offsets, a manual box, or an overlay — so the
+  /// sprite-list's button thumbnails know to re-render. Kept separate from
+  /// [spriteRevision] (pixels) so typing/recolour and framing don't cross-bust.
+  int buttonStyleRevision = 0;
+
+  /// Tell the button thumbnails to refresh (after a debounced settings change).
+  void bumpButtonStyle() {
+    buttonStyleRevision++;
+    notifyListeners();
   }
 
   /// The plain base sprite (bytes + aspect) for the manual crop-box editor, for
@@ -1764,7 +1847,7 @@ class AppState extends ChangeNotifier {
   /// Rebind one nudge direction (`up`/`down`/`left`/`right`) to [key].
   void setNudgeKey(String dir, LogicalKeyboardKey key) {
     nudgeKeys[dir] = key;
-    _persistKeybinds();
+    _persistSettings();
     notifyListeners();
   }
 
@@ -1775,7 +1858,7 @@ class AppState extends ChangeNotifier {
       ..['down'] = LogicalKeyboardKey.arrowDown
       ..['left'] = LogicalKeyboardKey.arrowLeft
       ..['right'] = LogicalKeyboardKey.arrowRight;
-    _persistKeybinds();
+    _persistSettings();
     notifyListeners();
   }
 
@@ -1784,7 +1867,7 @@ class AppState extends ChangeNotifier {
   /// obvious keys — **no `[` / `]` weirdness**: the arrow keys step sprites and
   /// Enter makes the current button & advances. Remap any of them from the F1
   /// "Keyboard shortcuts" dialog; rebinds **persist across app restarts** via
-  /// [settings_store] (see [_persistKeybinds] / [_loadPersistedSettings]).
+  /// [settings_store] (see [_persistSettings] / [_loadPersistedSettings]).
   static Map<String, LogicalKeyboardKey> _defaultFramingKeys() =>
       <String, LogicalKeyboardKey>{
         'prev': LogicalKeyboardKey.arrowLeft,
@@ -1813,7 +1896,7 @@ class AppState extends ChangeNotifier {
   void setFramingKey(String action, LogicalKeyboardKey key) {
     if (!framingKeys.containsKey(action)) return;
     framingKeys[action] = key;
-    _persistKeybinds();
+    _persistSettings();
     notifyListeners();
   }
 
@@ -1822,20 +1905,42 @@ class AppState extends ChangeNotifier {
     framingKeys
       ..clear()
       ..addAll(_defaultFramingKeys());
-    _persistKeybinds();
+    _persistSettings();
     notifyListeners();
   }
 
   // --- Persistence of the rebindable keys (survives app restarts) ------------
 
-  /// Load saved key bindings (and any future persisted prefs) and apply them
+  /// Load saved prefs (rebindable keys + user overlay presets) and apply them
   /// over the defaults. Keys are stored as integer `keyId`s. Best-effort.
   Future<void> _loadPersistedSettings() async {
     final Map<String, dynamic> s = await loadSettings();
     bool changed = false;
     changed |= _applySavedKeys(s['framingKeys'], framingKeys);
     changed |= _applySavedKeys(s['nudgeKeys'], nudgeKeys);
+    changed |= _applySavedOverlayPresets(s['overlayPresets']);
     if (changed) notifyListeners();
+  }
+
+  /// Restore saved overlay presets (`[{name, spec}]`). Returns whether any
+  /// loaded. Unknown styles (a preset saved by a newer build) are skipped.
+  bool _applySavedOverlayPresets(Object? saved) {
+    if (saved is! List) return false;
+    bool changed = false;
+    for (final Object? item in saved) {
+      if (item is! Map) continue;
+      final Object? name = item['name'];
+      final Object? specJson = item['spec'];
+      if (name is! String || specJson is! Map) continue;
+      final OverlaySpec? spec =
+          OverlaySpec.fromJson(specJson.cast<String, dynamic>());
+      if (spec == null) continue;
+      userOverlayPresets
+          .removeWhere((({String name, OverlaySpec spec}) p) => p.name == name);
+      userOverlayPresets.add((name: name, spec: spec));
+      changed = true;
+    }
+    return changed;
   }
 
   /// Overlay saved `name -> keyId` pairs onto [target] (only known names),
@@ -1861,8 +1966,9 @@ class AppState extends ChangeNotifier {
     return changed;
   }
 
-  /// Persist the current framing + nudge bindings (fire-and-forget).
-  void _persistKeybinds() {
+  /// Persist all session-surviving prefs in one write (framing + nudge keys +
+  /// user overlay presets). Fire-and-forget; callers debounce by being rare.
+  void _persistSettings() {
     saveSettings(<String, dynamic>{
       'framingKeys': <String, int>{
         for (final MapEntry<String, LogicalKeyboardKey> e
@@ -1873,6 +1979,10 @@ class AppState extends ChangeNotifier {
         for (final MapEntry<String, LogicalKeyboardKey> e in nudgeKeys.entries)
           e.key: e.value.keyId,
       },
+      'overlayPresets': <Map<String, dynamic>>[
+        for (final ({String name, OverlaySpec spec}) p in userOverlayPresets)
+          <String, dynamic>{'name': p.name, 'spec': p.spec.toJson()},
+      ],
     });
   }
 
@@ -2144,6 +2254,29 @@ class AppState extends ChangeNotifier {
     if (zip == null) return null;
     final String name = '${character?.options.name ?? 'character'}.zip';
     return saveBytes(name, Uint8List.fromList(zip));
+  }
+
+  /// Build the character and write it into a **plain folder** the user picks —
+  /// no zip, so the finished character folder just *appears* on disk (DRO/KFO
+  /// button-maker style) ready to drop into AO's `characters/`. Native desktop
+  /// only; on web (no filesystem) it transparently falls back to [exportZip].
+  Future<String?> exportFolder() async {
+    if (character == null) return null;
+    _setBusy(true, 'Building character…');
+    final MemoryWorkspace out = await buildOutput();
+    final String? dir = await exportToFolder(out.snapshot);
+    if (dir != null) {
+      _setBusy(false, 'Saved the character folder to $dir.');
+      return dir;
+    }
+    // Null = cancelled, or this platform can't write a folder (web). On web,
+    // give them the .zip instead of a silent no-op.
+    if (kIsWeb) {
+      _setBusy(false, 'Folders aren\'t supported on the web build — saving a .zip instead.');
+      return exportZip();
+    }
+    _setBusy(false, 'Folder export cancelled.');
+    return null;
   }
 
   /// Save just the char.ini.

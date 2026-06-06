@@ -33,8 +33,12 @@ If you just want to try it with nothing installed, use the **website build** (se
 2. Pinsel instantly builds a character: it names your emotes, writes the
    `char.ini`, and gets everything ready.
 3. (Optional) Tweak emotes, recolour, or animate using the tabs on the left.
-4. **Home → Export .zip**.
-5. Unzip into your AO `base/characters/` folder. Done. 🎉
+4. **Save it.** Easiest on desktop: the **folder icon** on the top toolbar (or
+   `Ctrl/⌘+Shift+S`) **saves the character as a plain folder** — pick your AO
+   `base/characters/` folder and the finished character folder appears right
+   there, **no zip to unzip**. (Prefer a `.zip` to share? **Export .zip**
+   (`Ctrl/⌘+S`) still works — unzip it into `base/characters/`.)
+5. Done. 🎉
 
 ---
 
@@ -132,8 +136,15 @@ them and press **Regenerate from sprites**):
   desk-slam sound). Turn off if you'd rather add sounds yourself.
 
 **Export**
-- **Export .zip** — builds the full character folder (with `char.ini` *and*
-  auto-generated buttons) and downloads/saves a `.zip`.
+- **Save as a folder (no zip)** — builds the full character and writes the folder
+  **straight to a location you pick** (e.g. AO's `base/characters/`), so the
+  finished character folder just *appears* on disk — **no zip to extract**,
+  DRO/KFO button-maker style. This is the quickest path: pick your `characters/`
+  folder and you're done. (Desktop only — the web build has no filesystem, so it
+  falls back to a `.zip` download there.) Shortcut: **Ctrl/⌘ + Shift + S**, or the
+  folder icon on the top toolbar.
+- **Export .zip** — same character, but packed into a `.zip` to download/share
+  (then unzip into `base/characters/`). Shortcut: **Ctrl/⌘ + S**.
 - **Export char.ini** — just the text file. It always reflects what's in the
   **Character** tab right now; if an exported file looks out of date, check
   you're opening the one you just saved (not an older copy in another folder).
@@ -351,10 +362,11 @@ when you export. This tab — the **Button & Icon Studio** — lets you control
 *how*, with a live preview of each.
 
 **Pick any sprite from the list.** Down the left side is a **sprite list** — the
-same layout as the Emotes screen, with a **tiny preview** of every pose. Click any
-sprite to frame its button; the preview (and, in Manual mode, the crop box) jumps
-to it. A pink tick marks the sprites you've hand-framed. So you're never stuck
-stepping one-by-one — jump straight to the pose you want to fix.
+same layout as the Emotes screen, with a **tiny preview of every *button*** (the
+actual framed result, not the raw sprite, so you can see at a glance which ones
+need fixing). Click any sprite to frame its button; the preview (and, in Manual
+mode, the crop box) jumps to it. A pink tick marks the sprites you've hand-framed.
+So you're never stuck stepping one-by-one — jump straight to the pose you want.
 
 ### Framing (the big one)
 By default Pinsel frames the character's **head / face** — AO buttons show
@@ -362,10 +374,16 @@ By default Pinsel frames the character's **head / face** — AO buttons show
 three modes for both the button and the icon: **Face**, **Full** (whole sprite),
 and **Manual**.
 
-- **Manual (do it yourself, KFO/DRO-style)** — pick **Manual** and a **big** crop
-  box appears over the sprite (seeded on the detected face). **Drag the box to
-  move it**, **drag the corner to resize**, or use the **Box X / Y / Size**
-  sliders for exact values. The preview beside it updates live as you drag.
+- **Manual (do it yourself, KFO/DRO-style)** — pick **Manual** and a crop box
+  appears over the sprite (seeded on the detected face). **Drag the box to move
+  it**, **drag the corner to resize**, or use the **Box X / Y / Size** sliders for
+  exact values. The preview beside it updates live as you drag.
+  - **Want it BIG? Open the big framing editor.** In Manual mode press **“Open the
+    BIG framing editor (zoom & pan)”** for a full-screen workspace (like DRO's
+    Button Maker): the sprite fills the screen, **scroll to zoom**, **drag the
+    sprite to pan**, and place the box precisely — with the sprite list still on
+    the left and the same keyboard flow. The +/−/Reset-view buttons (bottom-right)
+    and the Box sliders work too. Press **Done** to go back.
   - **Frame the whole cast from the keyboard — no mouse trip to the top.** Click
     the sprite once to focus the framing area, then fly through it with **plain,
     sensible keys** (no `[`/`]` nonsense): **← / →** previous / next sprite,
@@ -375,6 +393,12 @@ and **Manual**.
     **Every one of these keys is rebindable** — open the **F1** keyboard-shortcuts
     dialog, press **Set**, and tap the key you want. Your choices are **saved and
     restored next time you launch the app**.
+  - **Advancing keeps your framing (it won't reset).** When you press Enter / →
+    (or click a later sprite) to move to a sprite you haven't framed yet, it
+    **inherits the box you were just using** instead of snapping back to that
+    sprite's own auto-detected face — so you can frame a consistent crop across
+    the whole cast and only tweak where needed. Sprites you've already framed keep
+    their own box; press **R** to reset one back to its auto face.
   - **Every sprite has its own box.** Click any sprite in the **left list**, or use
     the **◀ ▶** arrows ("Sprite *k* of *N*"); the caption shows how many sprites
     you've customised (e.g. "7 of 42").
@@ -412,7 +436,7 @@ and **Manual**.
 
 ### Borders & backgrounds (KFO-style)
 Want a frame around your buttons like other makers? Under **Overlays**, each slot
-has three buttons — **Presets**, **Build…**, and **Import…**:
+has buttons — **Presets**, **Build…**, **Save**, and **Import…**:
 - **Border (on top)** — laid **over** every button/icon (a frame, corner badge…).
 - **Background** — sits **behind** the sprite.
 
@@ -433,6 +457,12 @@ sparkles, rainbow), set the **colours** with a **colour wheel** (+ hex), and dra
 gradient yours…), then **Apply**. Build… re-opens whatever you last applied to
 that slot, so you can keep tweaking.
 
+**Save** your creation as a reusable preset: once a built (or preset) overlay is
+applied to a slot, press **Save**, give it a name, and it joins the **★ Saved**
+row at the top of the **Presets** picker — for *any* button or icon, in this
+session and the next (it's remembered across restarts). Delete one with the **×**
+on its swatch in the picker.
+
 Or **Import…** your own PNG. Buttons and the char_icon each have their own
 overlays (or none).
 
@@ -443,8 +473,10 @@ overlays (or none).
 
 ### Generate toggles & export
 - Turn button or char_icon generation off entirely with the **Generate** switch.
-- **Export character (.zip)** writes everything (`emotions/buttonN_off.png` +
-  `char_icon.png`).
+- **Save as a folder (no zip)** writes the finished character folder (with
+  `emotions/buttonN_off.png` + `char_icon.png`) straight to a folder you pick —
+  no zip to extract. **…or export a .zip instead** packs the same thing into a
+  `.zip`.
 
 > A `buttonN_off.png` or `char_icon.png` you import (or save here) is kept as-is
 > on export — only the missing ones are generated. The advanced

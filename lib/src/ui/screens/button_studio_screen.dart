@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -79,7 +80,12 @@ class _ButtonStudioScreenState extends State<ButtonStudioScreen> {
     final int previewPx =
         math.max(app.buttonSize, CharFolder.buttonPreviewRenderPx);
     final Uint8List? b = await app.previewAutoButton(previewPx);
-    if (mounted) _btnPreview.value = b;
+    if (!mounted) return;
+    _btnPreview.value = b;
+    // Tell the list's tiny button thumbnails to re-render with the new framing
+    // (debounced — this only runs after the user pauses, and only the ~dozen
+    // visible thumbnails actually reload).
+    app.bumpButtonStyle();
   }
 
   Future<void> _computeIcon() async {
@@ -96,10 +102,12 @@ class _ButtonStudioScreenState extends State<ButtonStudioScreen> {
   /// arrival, then **notifies** so the freshly-seeded box shows immediately.
   Future<void> _selectSprite(int i) async {
     final AppState app = context.read<AppState>();
-    app.selectEmote(i); // notifies → the right-hand cards rebuild
+    // Carry the current framing forward when stepping to a later sprite (same
+    // rule as the keyboard), so clicking down the list keeps your box too.
     if (app.buttonFraming == CropFraming.manual) {
-      await app.ensureButtonCropSeeded(app.current);
-      app.notifyButtonSettings(); // show the seeded box without another action
+      await app.navigateButtonFraming(i);
+    } else {
+      app.selectEmote(i); // notifies → the right-hand cards rebuild
     }
     _scheduleBtn(); // the icon uses its own source emote, so it's unaffected
   }
@@ -161,14 +169,24 @@ class _ButtonStudioScreenState extends State<ButtonStudioScreen> {
         const SizedBox(height: 16),
 
         FilledButton.icon(
+          onPressed: () => app.exportFolder(),
+          icon: const Icon(Icons.drive_folder_upload_rounded),
+          label: const Text(
+              'Save as a folder (no zip) — drops straight into AO'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
           onPressed: () => app.exportZip(),
           icon: const Icon(Icons.archive_outlined),
-          label: const Text('Export character (.zip) with buttons + char_icon'),
+          label: const Text('…or export a .zip instead'),
         ),
         const SizedBox(height: 8),
         const Text(
-          'Tip: a buttonN_off.png or char_icon.png you import (or save here) is '
-          'kept as-is on export — only the missing ones are generated.',
+          'Save as a folder writes the finished character folder (char.ini + '
+          'sprites + buttons + char_icon) straight to a location you pick — no '
+          'zip to extract, DRO/KFO-style. A buttonN_off.png or char_icon.png you '
+          'import (or save here) is kept as-is on export — only the missing ones '
+          'are generated.',
           style: TextStyle(fontSize: 12, color: Colors.white60),
         ),
       ],
@@ -276,12 +294,14 @@ class _ButtonSpriteListState extends State<_ButtonSpriteList> {
                         final Emote e = emotes[i];
                         final bool framed = e.sprite.isNotEmpty &&
                             app.buttonCropRaw(e.sprite) != null;
-                        final String? rel = app.spriteRelFor(e);
                         return ListTile(
                           dense: true,
                           selected: i == app.selectedEmote,
-                          leading: _SpriteThumb(
-                              rel: rel, revision: app.spriteRevision),
+                          leading: _ButtonThumb(
+                            emote: e,
+                            revision:
+                                app.spriteRevision + app.buttonStyleRevision,
+                          ),
                           title: Text(
                             e.comment.trim().isEmpty ? e.sprite : e.comment,
                             maxLines: 1,
@@ -311,19 +331,23 @@ class _ButtonSpriteListState extends State<_ButtonSpriteList> {
   }
 }
 
-/// A small cached thumbnail of a sprite for the list (the "tiny preview"). Loads
-/// a downscaled PNG once via [AppState.previewSprite] (96px, separate cache key
-/// from the big previews) and only reloads when the sprite path/pixels change.
-class _SpriteThumb extends StatefulWidget {
-  const _SpriteThumb({required this.rel, required this.revision});
-  final String? rel;
+/// A small thumbnail of the **rendered button** for a sprite (the "tiny
+/// preview") — it shows what the button will actually look like with the
+/// current framing/zoom/crop/overlays, not the raw sprite. Renders once via
+/// [AppState.previewButtonForEmote] (96px) and reloads only when the sprite's
+/// pixels ([spriteRevision]) or the button style ([buttonStyleRevision]) change
+/// — both folded into [revision]. Lazy per visible row, so a big cast stays
+/// snappy.
+class _ButtonThumb extends StatefulWidget {
+  const _ButtonThumb({required this.emote, required this.revision});
+  final Emote? emote;
   final int revision;
 
   @override
-  State<_SpriteThumb> createState() => _SpriteThumbState();
+  State<_ButtonThumb> createState() => _ButtonThumbState();
 }
 
-class _SpriteThumbState extends State<_SpriteThumb> {
+class _ButtonThumbState extends State<_ButtonThumb> {
   Uint8List? _bytes;
 
   @override
@@ -333,19 +357,14 @@ class _SpriteThumbState extends State<_SpriteThumb> {
   }
 
   @override
-  void didUpdateWidget(_SpriteThumb old) {
+  void didUpdateWidget(_ButtonThumb old) {
     super.didUpdateWidget(old);
-    if (old.rel != widget.rel || old.revision != widget.revision) _load();
+    if (old.emote != widget.emote || old.revision != widget.revision) _load();
   }
 
   Future<void> _load() async {
-    final String? rel = widget.rel;
-    if (rel == null) {
-      if (mounted) setState(() => _bytes = null);
-      return;
-    }
     final Uint8List? b =
-        await context.read<AppState>().previewSprite(rel, maxEdge: 96);
+        await context.read<AppState>().previewButtonForEmote(widget.emote, 96);
     if (mounted) setState(() => _bytes = b);
   }
 
@@ -360,7 +379,7 @@ class _SpriteThumbState extends State<_SpriteThumb> {
       ),
       clipBehavior: Clip.antiAlias,
       child: _bytes == null
-          ? const Icon(Icons.image_outlined, size: 16, color: Colors.white24)
+          ? const Icon(Icons.crop_square_rounded, size: 16, color: Colors.white24)
           : CheckerImage(bytes: _bytes),
     );
   }
@@ -886,6 +905,22 @@ class _OverlayControlsState extends State<_OverlayControls> {
     widget.onChanged();
   }
 
+  /// Save the slot's current built/preset spec as a reusable **user preset**
+  /// (persists across sessions, shows up in the Presets picker). Only offered
+  /// when the slot holds an editable spec (not an imported PNG).
+  Future<void> _saveAsPreset() async {
+    final OverlaySpec? spec = widget.slot.spec;
+    if (spec == null) return;
+    final String? name = await _promptPresetName(context);
+    if (name == null || name.trim().isEmpty || !mounted) return;
+    context.read<AppState>().saveOverlayPreset(name.trim(), spec);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved overlay preset "${name.trim()}".')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool set = widget.slot.isSet;
@@ -921,6 +956,12 @@ class _OverlayControlsState extends State<_OverlayControls> {
                 child: const Text('Presets'),
               ),
               OutlinedButton(onPressed: _build, child: const Text('Build…')),
+              if (widget.slot.spec != null)
+                TextButton.icon(
+                  onPressed: _saveAsPreset,
+                  icon: const Icon(Icons.bookmark_add_outlined, size: 16),
+                  label: const Text('Save'),
+                ),
               TextButton(onPressed: _pick, child: Text(set ? 'Import' : 'Import…')),
               if (set)
                 IconButton(
@@ -945,7 +986,35 @@ Uint8List _overlayThumb(OverlayPreset p) =>
     _overlayThumbCache.putIfAbsent('${p.kind}:${p.name}',
         () => Codecs.encodePng(p.build(56)));
 
-/// A grid dialog of built-in overlay presets, grouped by category.
+/// Prompt for a name to save a built overlay as a user preset.
+Future<String?> _promptPresetName(BuildContext context) {
+  final TextEditingController c = TextEditingController();
+  return showDialog<String>(
+    context: context,
+    builder: (BuildContext ctx) => AlertDialog(
+      title: const Text('Save overlay preset'),
+      content: TextField(
+        controller: c,
+        autofocus: true,
+        decoration: const InputDecoration(
+          labelText: 'Preset name',
+          hintText: 'e.g. My pink frame',
+        ),
+        onSubmitted: (String v) => Navigator.pop(ctx, v),
+      ),
+      actions: <Widget>[
+        TextButton(
+            onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+        FilledButton(
+            onPressed: () => Navigator.pop(ctx, c.text),
+            child: const Text('Save')),
+      ],
+    ),
+  );
+}
+
+/// A grid dialog of overlay presets, grouped by category — your **★ Saved**
+/// presets first (tap to use, × to delete), then the built-ins.
 Future<void> _showOverlayPresetPicker(
     BuildContext context, OverlayKind kind, ValueChanged<OverlayPreset> onPick) {
   final List<OverlayPreset> presets = OverlayPresets.forKind(kind);
@@ -953,76 +1022,146 @@ Future<void> _showOverlayPresetPicker(
   for (final OverlayPreset p in presets) {
     if (!cats.contains(p.category)) cats.add(p.category);
   }
+  final AppState app = context.read<AppState>();
   return showDialog<void>(
     context: context,
-    builder: (BuildContext ctx) => AlertDialog(
-      title: Text(kind == OverlayKind.border
-          ? 'Border presets'
-          : 'Background presets'),
-      content: SizedBox(
-        width: 480,
-        height: 460,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              for (final String cat in cats) ...<Widget>[
-                Padding(
-                  padding: const EdgeInsets.only(top: 8, bottom: 4),
-                  child: Text(cat, style: Theme.of(ctx).textTheme.titleSmall),
-                ),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: <Widget>[
-                    for (final OverlayPreset p
-                        in presets.where((OverlayPreset e) => e.category == cat))
-                      _PresetSwatch(
-                        preset: p,
-                        onTap: () {
-                          Navigator.of(ctx).pop();
-                          onPick(p);
-                        },
-                      ),
+    builder: (BuildContext ctx) => StatefulBuilder(
+      builder: (BuildContext ctx, StateSetter setD) {
+        final List<({String name, OverlaySpec spec})> saved =
+            app.userOverlaysFor(kind);
+        return AlertDialog(
+          title: Text(kind == OverlayKind.border
+              ? 'Border presets'
+              : 'Background presets'),
+          content: SizedBox(
+            width: 480,
+            height: 460,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  if (saved.isNotEmpty) ...<Widget>[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, bottom: 4),
+                      child: Text('★ Saved',
+                          style: Theme.of(ctx).textTheme.titleSmall),
+                    ),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: <Widget>[
+                        for (final ({String name, OverlaySpec spec}) p in saved)
+                          _PresetSwatch(
+                            preset: OverlayPreset(p.name, 'Saved', p.spec),
+                            useCache: false, // a re-saved name may differ
+                            onTap: () {
+                              Navigator.of(ctx).pop();
+                              onPick(OverlayPreset(p.name, 'Saved', p.spec));
+                            },
+                            onDelete: () {
+                              app.deleteOverlayPreset(p.name);
+                              setD(() {});
+                            },
+                          ),
+                      ],
+                    ),
                   ],
-                ),
-              ],
-            ],
+                  for (final String cat in cats) ...<Widget>[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, bottom: 4),
+                      child: Text(cat, style: Theme.of(ctx).textTheme.titleSmall),
+                    ),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: <Widget>[
+                        for (final OverlayPreset p in presets
+                            .where((OverlayPreset e) => e.category == cat))
+                          _PresetSwatch(
+                            preset: p,
+                            onTap: () {
+                              Navigator.of(ctx).pop();
+                              onPick(p);
+                            },
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel')),
-      ],
+          actions: <Widget>[
+            TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancel')),
+          ],
+        );
+      },
     ),
   );
 }
 
 class _PresetSwatch extends StatelessWidget {
-  const _PresetSwatch({required this.preset, required this.onTap});
+  const _PresetSwatch({
+    required this.preset,
+    required this.onTap,
+    this.onDelete,
+    this.useCache = true,
+  });
   final OverlayPreset preset;
   final VoidCallback onTap;
 
+  /// When non-null, a small × in the corner deletes this (saved) preset.
+  final VoidCallback? onDelete;
+
+  /// Built-ins cache their 56px thumbnail by name; saved presets don't (a name
+  /// can be re-saved with a different spec), so they build fresh.
+  final bool useCache;
+
   @override
   Widget build(BuildContext context) {
+    final Uint8List thumb =
+        useCache ? _overlayThumb(preset) : Codecs.encodePng(preset.build(56));
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Container(
+          SizedBox(
             width: 56,
             height: 56,
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.white24),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: CheckerImage(bytes: _overlayThumb(preset)),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: <Widget>[
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white24),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: CheckerImage(bytes: thumb),
+                    ),
+                  ),
+                ),
+                if (onDelete != null)
+                  Positioned(
+                    top: -6,
+                    right: -6,
+                    child: GestureDetector(
+                      onTap: onDelete,
+                      child: const CircleAvatar(
+                        radius: 9,
+                        backgroundColor: Color(0xFFB00020),
+                        child: Icon(Icons.close_rounded,
+                            size: 12, color: Colors.white),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           SizedBox(
@@ -1187,12 +1326,11 @@ class _BtnCardState extends State<_BtnCard> {
 
   /// Step the Button Studio's "current sprite" (drives both the per-sprite crop
   /// editor and the live preview), seeding the newly-shown sprite on arrival.
+  /// Moving **forward** (Enter / →) carries your current box onto the next
+  /// sprite if it has none yet, so advancing keeps your framing instead of
+  /// resetting to that sprite's auto face. Going back seeds the auto face.
   Future<void> _gotoEmote(int index) async {
-    final AppState app = widget.app;
-    final int n = app.character?.emotes.length ?? 0;
-    if (n == 0) return;
-    app.selectEmote(index.clamp(0, n - 1));
-    await app.ensureButtonCropSeeded(app.current);
+    await widget.app.navigateButtonFraming(index);
     if (!mounted) return;
     setState(() {});
     widget.onChanged();
@@ -1263,14 +1401,34 @@ class _BtnCardState extends State<_BtnCard> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: <Widget>[
-                              const SizedBox(height: 4),
+                              const SizedBox(height: 8),
+                              // The DRO-style **big** framing editor: a large
+                              // zoom + pan canvas in its own full-screen view,
+                              // so the sprite shows up big and you can frame the
+                              // button precisely.
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  onPressed: () async {
+                                    await openButtonFramingEditor(context, app);
+                                    if (mounted) {
+                                      setState(() {});
+                                      widget.onChanged();
+                                    }
+                                  },
+                                  icon: const Icon(Icons.open_in_full_rounded),
+                                  label: const Text(
+                                      'Open the BIG framing editor (zoom & pan)'),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
                               _manualHint(),
                               const SizedBox(height: 6),
                               _SpriteNav(app: app, onGoto: _gotoEmote),
                               const SizedBox(height: 6),
-                              // Pointer-down on the big framing canvas grabs
-                              // keyboard focus, so [ ] / Enter / R / A / F work
-                              // straight after you click a sprite to frame it.
+                              // Pointer-down on the framing canvas grabs
+                              // keyboard focus, so the framing keys (← → Enter R
+                              // A F) work straight after you click a sprite.
                               Listener(
                                 onPointerDown: (_) => _kbFocus.requestFocus(),
                                 child: _CropBoxEditor(
@@ -1569,6 +1727,553 @@ class _IconCardState extends State<_IconCard> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The big framing editor ------------------------------------------------------
+
+/// Open the **DRO-style big framing editor** — a full-screen view with a large
+/// zoom + pan canvas, the sprite list, and the same per-sprite box + keyboard
+/// flow as the inline studio. Ensures Manual framing + a seeded current sprite
+/// first.
+Future<void> openButtonFramingEditor(BuildContext context, AppState app) async {
+  app.buttonFraming = CropFraming.manual;
+  if (app.current == null && (app.character?.emotes.isNotEmpty ?? false)) {
+    app.selectEmote(0);
+  }
+  await app.ensureButtonCropSeeded(app.current);
+  if (!context.mounted) return;
+  await Navigator.of(context).push(MaterialPageRoute<void>(
+    builder: (_) => _ButtonFramingEditor(app: app),
+  ));
+}
+
+class _ButtonFramingEditor extends StatelessWidget {
+  const _ButtonFramingEditor({required this.app});
+  final AppState app;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Frame buttons — big editor'),
+        actions: <Widget>[
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilledButton.icon(
+              onPressed: () => Navigator.of(context).maybePop(),
+              icon: const Icon(Icons.check_rounded),
+              label: const Text('Done'),
+            ),
+          ),
+        ],
+      ),
+      body: Row(
+        children: <Widget>[
+          SizedBox(
+            width: 240,
+            child: _ButtonSpriteList(
+              onSelect: (int i) => app.navigateButtonFraming(i),
+            ),
+          ),
+          const VerticalDivider(width: 1),
+          Expanded(child: _FramingPane(app: app)),
+        ],
+      ),
+    );
+  }
+}
+
+/// The middle + right of the big editor: a full-height zoom/pan canvas plus a
+/// control sidebar (live button preview, box sliders as the always-works safety
+/// net, reset/apply, hint). Keyboard framing keys (prev/next/make/reset/all)
+/// work while the canvas is focused. Box drags rebuild only this pane — the
+/// sprite list is a sibling, so a 196-cast list isn't rebuilt mid-drag.
+class _FramingPane extends StatefulWidget {
+  const _FramingPane({required this.app});
+  final AppState app;
+
+  @override
+  State<_FramingPane> createState() => _FramingPaneState();
+}
+
+class _FramingPaneState extends State<_FramingPane> {
+  final FocusNode _kbFocus = FocusNode(debugLabel: 'framingEditorKeys');
+  final ValueNotifier<Uint8List?> _preview = ValueNotifier<Uint8List?>(null);
+  Timer? _debounce;
+  String? _lastPreviewedSprite;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _compute();
+    });
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _preview.dispose();
+    _kbFocus.dispose();
+    super.dispose();
+  }
+
+  void _schedule() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 90), _compute);
+  }
+
+  Future<void> _compute() async {
+    final AppState app = widget.app;
+    _lastPreviewedSprite = app.current?.sprite;
+    final Uint8List? b = await app.previewButtonForEmote(
+        app.current, math.max(app.buttonSize, CharFolder.buttonPreviewRenderPx));
+    if (!mounted) return;
+    _preview.value = b;
+    app.bumpButtonStyle(); // refresh the list's tiny button thumbnails
+  }
+
+  Future<void> _goto(int index) async {
+    await widget.app.navigateButtonFraming(index);
+    if (mounted) {
+      setState(() {});
+      _schedule();
+    }
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (!node.hasPrimaryFocus) return KeyEventResult.ignored;
+    final AppState app = widget.app;
+    final int n = app.character?.emotes.length ?? 0;
+    if (n == 0) return KeyEventResult.ignored;
+    final int i = app.selectedEmote.clamp(0, n - 1);
+    final LogicalKeyboardKey k = event.logicalKey;
+    final Map<String, LogicalKeyboardKey> keys = app.framingKeys;
+    bool isAction(String id) {
+      final LogicalKeyboardKey? bound = keys[id];
+      if (bound == null) return false;
+      if (k == bound) return true;
+      return bound == LogicalKeyboardKey.enter &&
+          k == LogicalKeyboardKey.numpadEnter;
+    }
+
+    if (isAction('next') || isAction('make')) {
+      _goto(i + 1);
+      return KeyEventResult.handled;
+    }
+    if (isAction('prev')) {
+      _goto(i - 1);
+      return KeyEventResult.handled;
+    }
+    if (isAction('reset')) {
+      final Emote? e = app.current;
+      if (e != null) {
+        app.resetButtonCropFor(e).then((_) {
+          if (mounted) {
+            setState(() {});
+            _schedule();
+          }
+        });
+      }
+      return KeyEventResult.handled;
+    }
+    if (isAction('all')) {
+      final Emote? e = app.current;
+      if (e != null) {
+        app.applyButtonCropToAll(app.buttonCropFor(e.sprite));
+        setState(() {});
+        _schedule();
+      }
+      return KeyEventResult.handled;
+    }
+    // 'framing' (F) is intentionally not handled — this editor is Manual-only.
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.app,
+      builder: (BuildContext context, _) {
+        final AppState app = widget.app;
+        final Emote? cur = app.current;
+        final String? curSprite = cur?.sprite;
+        // Keep the live preview in sync no matter who changed the selection
+        // (list click or keyboard) — schedule a recompute when the sprite flips.
+        if (cur?.sprite != _lastPreviewedSprite) {
+          _lastPreviewedSprite = cur?.sprite;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _schedule();
+          });
+        }
+        return Row(
+          children: <Widget>[
+            Expanded(
+              child: Focus(
+                focusNode: _kbFocus,
+                autofocus: true,
+                onKeyEvent: _onKey,
+                child: Column(
+                  children: <Widget>[
+                    _SpriteNav(app: app, onGoto: _goto),
+                    Expanded(
+                      child: Listener(
+                        onPointerDown: (_) => _kbFocus.requestFocus(),
+                        child: Container(
+                          color: const Color(0xFF1A1A1A),
+                          child: _ManualCanvasLoader(
+                            app: app,
+                            emote: cur,
+                            revision: app.spriteRevision,
+                            box: app.buttonCropFor(curSprite),
+                            onChanged: (CropBox b) {
+                              setState(() => app.setButtonCrop(curSprite, b));
+                              _schedule();
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const VerticalDivider(width: 1),
+            SizedBox(
+              width: 280,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Center(child: _previewBox(_preview, '${app.buttonSize}px')),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Scroll to zoom · drag the sprite to pan · drag the box to '
+                      'move it, its corner to resize. Sliders below always work '
+                      'if you prefer exact values.',
+                      style: TextStyle(fontSize: 11, color: Colors.white60),
+                    ),
+                    const SizedBox(height: 8),
+                    _ValueSlider(
+                      label: 'Button size',
+                      value: app.buttonSize.toDouble(),
+                      min: CharFolder.minButtonSize.toDouble(),
+                      max: CharFolder.maxButtonSize.toDouble(),
+                      divisions:
+                          CharFolder.maxButtonSize - CharFolder.minButtonSize,
+                      suffix: ' px',
+                      onChanged: (double v) {
+                        setState(() => app.buttonSize = v.round());
+                        _schedule();
+                      },
+                    ),
+                    _cropSliders(app.buttonCropFor(curSprite), (CropBox b) {
+                      setState(() => app.setButtonCrop(curSprite, b));
+                      _schedule();
+                    }),
+                    _ManualCropActions(
+                      app: app,
+                      emote: cur,
+                      onChanged: () {
+                        setState(() {});
+                        _schedule();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Loads a sprite's bytes/aspect for [_ManualCanvas] (reloading when the emote
+/// or its pixels change) while keeping the canvas mounted so its zoom/pan
+/// **persist** as you step through similar poses.
+class _ManualCanvasLoader extends StatefulWidget {
+  const _ManualCanvasLoader({
+    required this.app,
+    required this.emote,
+    required this.revision,
+    required this.box,
+    required this.onChanged,
+  });
+  final AppState app;
+  final Emote? emote;
+  final int revision;
+  final CropBox box;
+  final ValueChanged<CropBox> onChanged;
+
+  @override
+  State<_ManualCanvasLoader> createState() => _ManualCanvasLoaderState();
+}
+
+class _ManualCanvasLoaderState extends State<_ManualCanvasLoader> {
+  Uint8List? _bytes;
+  double? _aspect;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_ManualCanvasLoader old) {
+    super.didUpdateWidget(old);
+    if (old.emote != widget.emote || old.revision != widget.revision) _load();
+  }
+
+  Future<void> _load() async {
+    _loading = true;
+    // NB: don't null `_bytes` here — keep showing the old sprite (and the canvas
+    // mounted, so zoom/pan survive) until the new bytes arrive.
+    final ({Uint8List? bytes, double? aspect}) r =
+        await widget.app.spriteEditorSource(widget.emote);
+    if (!mounted) return;
+    setState(() {
+      _bytes = r.bytes;
+      _aspect = r.aspect;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_bytes == null) {
+      return Center(
+        child: _loading
+            ? const CircularProgressIndicator()
+            : const Text('Select a sprite to frame.',
+                style: TextStyle(color: Colors.white60)),
+      );
+    }
+    return _ManualCanvas(
+      bytes: _bytes!,
+      aspect: (_aspect == null || _aspect! <= 0) ? 1.0 : _aspect!,
+      box: widget.box,
+      onChanged: widget.onChanged,
+    );
+  }
+}
+
+/// The zoom + pan crop-box canvas. **One coordinate origin** (top-left): a
+/// base-fit sprite rect of [_baseW]×[_baseH] is drawn at `_pan + base·_scale`,
+/// and the box overlays it at the same scale, so a point's screen position is
+/// always `_pan + base·_scale`. A single [GestureDetector] hit-tests in that
+/// screen space (corner → resize, inside box → move, else → pan), so there's no
+/// gesture-arena ambiguity; scroll zooms about the cursor. The Box X/Y/Size
+/// sliders (in the sidebar) write the box independently, so framing always works
+/// even if a drag feels off.
+class _ManualCanvas extends StatefulWidget {
+  const _ManualCanvas({
+    required this.bytes,
+    required this.aspect,
+    required this.box,
+    required this.onChanged,
+  });
+  final Uint8List bytes;
+  final double aspect; // width / height
+  final CropBox box;
+  final ValueChanged<CropBox> onChanged;
+
+  @override
+  State<_ManualCanvas> createState() => _ManualCanvasState();
+}
+
+class _ManualCanvasState extends State<_ManualCanvas> {
+  static const double _minScale = 0.25, _maxScale = 12.0;
+  double _scale = 1.0;
+  Offset? _pan; // viewport px; null until first layout (then centred)
+  Size _viewport = Size.zero;
+  double _baseW = 1, _baseH = 1;
+  int _mode = 0; // 1 = pan, 2 = move box, 3 = resize box
+
+  Offset _centerPan(double scale) => Offset(
+        (_viewport.width - _baseW * scale) / 2,
+        (_viewport.height - _baseH * scale) / 2,
+      );
+
+  void _resetView() => setState(() {
+        _scale = 1.0;
+        _pan = _centerPan(1.0);
+      });
+
+  void _zoomBy(double factor, Offset focal) {
+    final double newScale = (_scale * factor).clamp(_minScale, _maxScale);
+    final Offset pan = _pan ?? _centerPan(_scale);
+    setState(() {
+      // Keep the point under [focal] fixed while scaling.
+      _pan = focal - (focal - pan) * (newScale / _scale);
+      _scale = newScale;
+    });
+  }
+
+  void _onDown(Offset local) {
+    final Offset pan = _pan ?? _centerPan(_scale);
+    final double sLeft = pan.dx + widget.box.x * _baseW * _scale;
+    final double sTop = pan.dy + widget.box.y * _baseH * _scale;
+    final double sSide = widget.box.side * _baseW * _scale;
+    final Offset corner = Offset(sLeft + sSide, sTop + sSide);
+    if ((local - corner).distance <= 28) {
+      _mode = 3; // resize
+    } else if (local.dx >= sLeft &&
+        local.dx <= sLeft + sSide &&
+        local.dy >= sTop &&
+        local.dy <= sTop + sSide) {
+      _mode = 2; // move box
+    } else {
+      _mode = 1; // pan
+    }
+  }
+
+  void _onMove(Offset delta) {
+    if (_mode == 1) {
+      setState(() => _pan = (_pan ?? _centerPan(_scale)) + delta);
+      return;
+    }
+    final double denomW = _baseW * _scale, denomH = _baseH * _scale;
+    if (denomW <= 0 || denomH <= 0) return;
+    final CropBox b = widget.box;
+    if (_mode == 2) {
+      final double nx =
+          (b.x + delta.dx / denomW).clamp(0.0, (1 - b.side).clamp(0.0, 1.0));
+      final double maxY = (1 - b.side * widget.aspect).clamp(0.0, 1.0);
+      final double ny = (b.y + delta.dy / denomH).clamp(0.0, maxY);
+      widget.onChanged(b.copyWith(x: nx, y: ny));
+    } else if (_mode == 3) {
+      final double ns = (b.side + delta.dx / denomW).clamp(0.05, 1.0);
+      final double nx = b.x.clamp(0.0, (1 - ns).clamp(0.0, 1.0));
+      final double maxY = (1 - ns * widget.aspect).clamp(0.0, 1.0);
+      final double ny = b.y.clamp(0.0, maxY);
+      widget.onChanged(b.copyWith(side: ns, x: nx, y: ny));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints c) {
+        _viewport = Size(c.maxWidth, c.maxHeight);
+        double bw = c.maxWidth;
+        double bh = bw / widget.aspect;
+        if (bh > c.maxHeight) {
+          bh = c.maxHeight;
+          bw = bh * widget.aspect;
+        }
+        _baseW = bw;
+        _baseH = bh;
+        _pan ??= _centerPan(_scale);
+        final Offset pan = _pan!;
+        final CropBox box = widget.box;
+        final double dispW = bw * _scale, dispH = bh * _scale;
+        final double boxLeft = box.x * dispW,
+            boxTop = box.y * dispH,
+            boxSide = box.side * dispW;
+        return Listener(
+          onPointerSignal: (PointerSignalEvent e) {
+            if (e is PointerScrollEvent) {
+              _zoomBy(e.scrollDelta.dy < 0 ? 1.12 : 1 / 1.12, e.localPosition);
+            }
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanDown: (DragDownDetails d) => _onDown(d.localPosition),
+            onPanUpdate: (DragUpdateDetails d) => _onMove(d.delta),
+            child: ClipRect(
+              child: Stack(
+                children: <Widget>[
+                  Positioned(
+                    left: pan.dx,
+                    top: pan.dy,
+                    width: dispW,
+                    height: dispH,
+                    child: Stack(
+                      children: <Widget>[
+                        Positioned.fill(
+                          child: CheckerImage(
+                              bytes: widget.bytes, fit: BoxFit.fill),
+                        ),
+                        Positioned(
+                          left: boxLeft,
+                          top: boxTop,
+                          width: boxSide,
+                          height: boxSide,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: const Color(0x22FF4081),
+                              border: Border.all(
+                                  color: const Color(0xFFFF4081), width: 2),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          left: boxLeft + boxSide - 11,
+                          top: boxTop + boxSide - 11,
+                          width: 22,
+                          height: 22,
+                          child: const DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Color(0xFFFF4081),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.open_in_full_rounded,
+                                size: 12, color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Positioned(right: 8, bottom: 8, child: _zoomControls()),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _zoomControls() {
+    final Offset center = Offset(_viewport.width / 2, _viewport.height / 2);
+    Widget btn(IconData ic, String tip, VoidCallback onTap) => Material(
+          color: Colors.black54,
+          shape: const CircleBorder(),
+          child: IconButton(
+            tooltip: tip,
+            iconSize: 18,
+            visualDensity: VisualDensity.compact,
+            icon: Icon(ic),
+            onPressed: onTap,
+          ),
+        );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.black54,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text('${(_scale * 100).round()}%',
+              style: const TextStyle(fontSize: 12)),
+        ),
+        const SizedBox(width: 4),
+        btn(Icons.remove_rounded, 'Zoom out', () => _zoomBy(1 / 1.2, center)),
+        btn(Icons.add_rounded, 'Zoom in', () => _zoomBy(1.2, center)),
+        btn(Icons.fit_screen_rounded, 'Reset view', _resetView),
+      ],
     );
   }
 }

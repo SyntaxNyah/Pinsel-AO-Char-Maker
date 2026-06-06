@@ -171,6 +171,7 @@ class _HomeShellState extends State<HomeShell> {
     bind(LogicalKeyboardKey.keyY, app.redo);
     bind(LogicalKeyboardKey.keyZ, app.redo, shift: true); // Ctrl+Shift+Z
     bind(LogicalKeyboardKey.keyS, () => app.exportZip());
+    bind(LogicalKeyboardKey.keyS, () => app.exportFolder(), shift: true); // Ctrl+Shift+S
     bind(LogicalKeyboardKey.keyE, () => app.exportIni());
     bind(LogicalKeyboardKey.keyO, () => _importFolder(context));
     bind(LogicalKeyboardKey.keyN, () {
@@ -243,6 +244,7 @@ class _HomeShellState extends State<HomeShell> {
       <String>['Ctrl/⌘ + Y  ·  Ctrl/⌘ + Shift + Z', 'Redo'],
       <String>['Ctrl/⌘ + O', 'Import a folder of sprites'],
       <String>['Ctrl/⌘ + S', 'Export character .zip'],
+      <String>['Ctrl/⌘ + Shift + S', 'Save character as a folder (no zip)'],
       <String>['Ctrl/⌘ + E', 'Export char.ini'],
       <String>['Ctrl/⌘ + N', 'Add a new emote'],
       <String>['Ctrl/⌘ + ↑ / ↓', 'Previous / next emote'],
@@ -440,6 +442,11 @@ class _TopBar extends StatelessWidget {
                   tooltip: 'Import folder (Ctrl+O)',
                   onPressed: onImport,
                   icon: const Icon(Icons.folder_open_rounded),
+                ),
+                IconButton(
+                  tooltip: 'Save as a folder — no zip (Ctrl+Shift+S)',
+                  onPressed: hasProject ? () => app.exportFolder() : null,
+                  icon: const Icon(Icons.drive_folder_upload_rounded),
                 ),
                 IconButton(
                   tooltip: 'Export .zip (Ctrl+S)',

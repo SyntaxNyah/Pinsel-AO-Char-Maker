@@ -25,6 +25,10 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
   **buttons** + **char_icon**, all in one go. (Already have a project open?
   **Finish & export everything** does the same without re-importing.)
   ([docs](docs/ONE_CLICK.md))
+- **📁 Save as a folder (no zip).** Prefer not to unzip? **Save as a folder**
+  (`Ctrl/⌘+Shift+S`, or the folder icon on the toolbar) writes the finished
+  character folder straight into a location you pick — drop it into AO's
+  `characters/` and you're done, DRO/KFO button-maker style. (Desktop only.)
 - **Folder → character.** Scans a folder of images, detects `(a)`/`(b)`/`(c)`
   idle/talk/post sprites, static sprites, sub-folder sprites, preanimations, and
   animation formats — then writes a correct `char.ini`, **named after the folder**.
@@ -39,8 +43,8 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
   folder, and lays everything out the way AO expects.
 - **Auto buttons + char_icon.** Generates `buttonN_off.png` for every emote
   **and** the character-select `char_icon.png`. The Buttons screen lists every
-  sprite (with a **tiny preview**, like the Emotes screen) so you can **click any
-  pose** to frame it. They frame the character's **face by default** (AO buttons
+  sprite (with a **tiny preview of the actual button**, like the Emotes screen)
+  so you can **click any pose** to frame it. They frame the character's **face by default** (AO buttons
   show expressions, not whole bodies); switch to full-body, **draw the crop box
   yourself** (Manual mode — drag/resize a box on the sprite, KFO/DRO-style, or
   fly the whole cast with **plain, rebindable keys** — `←/→`, `Enter`, …), tune

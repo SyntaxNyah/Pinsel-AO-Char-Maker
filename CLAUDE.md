@@ -342,17 +342,20 @@ The central model.
   `stylesForKind(kind)`.
 - `class OverlaySpec` — the editable model: `style`, `color1/2`, `patternColor`,
   `thickness`, `radius`, `inset`, `cell`; `.build(size)`→RGBA `img.Image`, `.copy()`,
-  `.kind`. `_buildSpec` dispatches to the drawing primitives (`_ring`/`_corners`/
-  `_gradientRing`/`_rainbowRing`/`_splitFrame`/`_solid`/`_linear`/`_radial`/
-  `_diagSplit`/`_dots`/`_hearts`/`_sparkles`/`_hsv`…). No asset files; scales to
-  any size.
+  `.kind`, **`.toJson()` / `static fromJson(map)`** (style by enum *name*, colours
+  as ints, doubles; for persisting user-saved presets). `_buildSpec` dispatches to
+  the drawing primitives (`_ring`/`_corners`/`_gradientRing`/`_rainbowRing`/
+  `_splitFrame`/`_solid`/`_linear`/`_radial`/`_diagSplit`/`_dots`/`_hearts`/
+  `_sparkles`/`_hsv`…). No asset files; scales to any size.
 - `class OverlayPreset(name, category, spec)` — `.build(size)`/`.kind` delegate to
   the (editable) `spec`. `class OverlayPresets` — `borders`, `backgrounds`,
   `forKind(kind)`, `defaultSpec(kind)`. Categories: **Umineko, Danganronpa, Limbus,
   Kawaii, Classic, Vibes, Colours** (~40 borders + ~40 backgrounds). Surfaced in
-  the Button Studio: a **Presets** grid, an **Import…** path, and **Build…** (the
-  `overlay_builder.dart` editor). Applied via `AppState.setOverlay(..., spec:)`
-  (baked to PNG at 256, then `_fit` by `ButtonMaker.renderFramed`).
+  the Button Studio: a **Presets** grid (with your **★ Saved** user presets first),
+  an **Import…** path, **Build…** (the `overlay_builder.dart` editor) and **Save**
+  (store the built spec as a reusable user preset — `AppState.saveOverlayPreset`,
+  persists). Applied via `AppState.setOverlay(..., spec:)` (baked to PNG at 256,
+  then `_fit` by `ButtonMaker.renderFramed`).
 
 ### imaging/bulk_processor.dart
 - `enum OutputFormat { keep, png, apng, gif, webp }`.
@@ -498,8 +501,17 @@ The central model.
   survive a restart. Native writes `pinsel_settings.json` next to the exe (same
   candidate-dir logic as the crash log so read/write agree); web uses
   `localStorage`. Both best-effort + **never throw**. Used by `AppState` to
-  persist the rebindable framing/nudge keys. Values must be JSON-encodable;
-  `LogicalKeyboardKey`s are stored as integer `keyId`s.
+  persist the rebindable framing/nudge keys **and user overlay presets** (one
+  `_persistSettings()` writes them all together — add new keys there, don't write
+  the file from two places or they clobber). Values must be JSON-encodable;
+  `LogicalKeyboardKey`s are stored as integer `keyId`s, overlays via
+  `OverlaySpec.toJson`.
+- `exportToFolder(files)` (`folder_export.dart`, `_io`/`_web` seam) — native: pick
+  a directory (`FilePicker.getDirectoryPath`) then write every `relPath → bytes`
+  under it (splits the `/`-keyed rel + re-joins with the platform separator), so
+  the built character folder just *appears* on disk (no zip). Returns the chosen
+  dir or null (cancelled / web, where it's unsupported → caller falls back to the
+  `.zip`). Drives `AppState.exportFolder`.
 - `MemoryWorkspace.clear()` — drop all files (used by fresh import + reset).
 
 ### ui/
@@ -576,23 +588,43 @@ The central model.
     studio for zero-rebuild lag): `generateButtons`, `buttonSize`, `buttonFraming`,
     `buttonZoom`, `button/iconOffsetX/Y`; `generateCharIcon`, `iconSize` (default
     40), `iconFraming`, `iconZoom`, `iconSourceEmote`; overlay slots `buttonBg/Fg`
-    + `iconBg/Fg` (`OverlaySlot`, set via `setOverlay`). `previewAutoButton(size)`
-    / **`previewCharIcon([int? size])`** use `renderFramed` (the studio passes a
+    + `iconBg/Fg` (`OverlaySlot`, set via `setOverlay`). **User overlay presets**:
+    `userOverlayPresets` (`[{name, OverlaySpec}]`), `userOverlaysFor(kind)`,
+    `saveOverlayPreset(name, spec)` / `deleteOverlayPreset(name)` — a built overlay
+    can be **Saved** and reused; persisted via `settings_store`. `previewAutoButton(size)`
+    (= `previewButtonForEmote(current, size)`) / **`previewButtonForEmote(e, size)`**
+    (any emote — drives the sprite list's tiny **button** thumbnails) /
+    **`previewCharIcon([int? size])`** use `renderFramed` (the studio passes a
     large preview size; `size` omitted = real `iconSize`); `availableSoundNames()`
     (async) feeds the Emotes sound picker; `saveCharIcon()` bakes `char_icon.png`
     into the project; `buildOutput()` feeds them all into `OrganizeConfig` and wraps
     `ButtonMaker.renderAutoOverlaid` in `buttonRenderer`/`iconRenderer` closures.
+    `buttonStyleRevision` + `bumpButtonStyle()` (called debounced from the
+    studio's `_computeBtn`) tell those list thumbnails to re-render after a
+    framing/size/box/overlay change — kept **separate** from `spriteRevision`
+    (pixels) so framing tweaks and recolour/typing don't cross-bust each other.
+    **Export:** `exportZip()` (`.zip`), **`exportFolder()`** (writes the built
+    character to a picked directory via the `folder_export` seam — no zip, falls
+    back to `exportZip` on web), `exportIni()` (just `char.ini`). All three build
+    through `buildOutput()`.
   - **Per-sprite manual crops**: `buttonCrops` is a `Map<spriteBase, CropBox>`
     (replaces the old single `buttonCrop`) so each sprite gets its own hand-placed
     box in Manual mode; a sprite with no entry renders with its auto head-square.
     `buttonCropRaw(base)` (stored box or null → head fallback in `renderFramed`),
     `buttonCropFor(base)` (box or `CropBox.initial`, for the editor),
     `setButtonCrop(base,box)`, `ensureButtonCropSeeded(emote)` (lazy seed from the
-    sprite's own head-square on first view), `resetButtonCropFor(emote)`,
+    sprite's own head-square on first view), **`arriveButtonCrop(to,{carryFrom})`**
+    (seed-on-arrival: when you advance *forward* it **carries** the previous
+    sprite's box onto the next unframed one instead of re-detecting its face — the
+    "it resets when I press Enter" fix; callers pass `carryFrom` only when
+    `target > selectedEmote`), `resetButtonCropFor(emote)`,
     `applyButtonCropToAll(box)`, and `buttonCropCoverage` (→ `(customised,total)`
-    distinct sprite bases, for the caption). The char_icon still uses one `iconCrop`.
-    `buttonCrops` is cleared on `resetProject`/`importFiles` (via
-    `_clearWorkspaceFiles`).
+    distinct sprite bases, for the caption). **`navigateButtonFraming(target)`**
+    is the **single** framing-navigation entry point (selectEmote + carry-forward
+    + notify) — the inline studio, the sprite list, AND the big editor all call it
+    so prev/next/Enter behave identically (no divergent copies). The char_icon
+    still uses one `iconCrop`. `buttonCrops` is cleared on
+    `resetProject`/`importFiles` (via `_clearWorkspaceFiles`).
   - **Preview cache + lag fix**: `previewSprite(rel)` memoises the plain (no-op
     pipeline) PNG per `rel@maxEdge`; `_invalidateImageCaches()` clears the decode +
     preview caches and bumps `spriteRevision` whenever sprite pixels/paths change.
@@ -658,18 +690,22 @@ The central model.
     `spriteEditorSource`, reloads on emote/`spriteRevision`), seeded from the
     sprite's own `headCropFor` (auto head-square). **The screen is laid out like
     the Emotes screen**: a left **`_ButtonSpriteList`** (a `Consumer`-driven
-    `ListView` of every emote with a **tiny `_SpriteThumb`** preview — cached
-    `previewSprite(rel, maxEdge:96)`, lazy per visible row — a pink tick on
-    sprites that have a custom box, and auto-scroll to the keyboard-selected
-    sprite) + the cards on the right wrapped in a `Selector<AppState,(int,int)>`
-    on `(selectedEmote, spriteRevision)` so they rebuild when you pick a sprite.
-    Clicking a row calls the screen's `_selectSprite` (→ `app.selectEmote`, then
-    in Manual `ensureButtonCropSeeded` + `notifyButtonSettings` so the seeded box
-    shows immediately, then reschedules the button preview). **Buttons are
+    `ListView` of every emote with a **tiny `_ButtonThumb`** — the **rendered
+    button** via `previewButtonForEmote(e, 96)` so you see the framed result, not
+    the raw sprite; lazy per visible row, reloads on `spriteRevision +
+    buttonStyleRevision` — a pink tick on sprites that have a custom box, and
+    auto-scroll to the keyboard-selected sprite) + the cards on the right wrapped
+    in a `Selector<AppState,(int,int)>` on `(selectedEmote, spriteRevision)` so
+    they rebuild when you pick a sprite. Clicking a row calls the screen's
+    `_selectSprite` (→ `app.selectEmote`, then in Manual `arriveButtonCrop`
+    (carry-forward when moving to a later sprite) + `notifyButtonSettings` so the
+    box shows immediately, then reschedules the button preview). **Buttons are
     per-sprite**: the list (and a `_SpriteNav` ◀ ▶ "Sprite k of N" + "customised
     k/N" caption) step `app.selectEmote` through the cast so you can frame every
-    pose by hand, writing each to `app.buttonCrops[sprite]` via `setButtonCrop`
-    (seeded lazily by `ensureButtonCropSeeded` as you arrive on a sprite);
+    pose by hand, writing each to `app.buttonCrops[sprite]` via `setButtonCrop`;
+    advancing forward (Enter/→/▶/list) **carries your box** onto the next unframed
+    sprite (`_gotoEmote`/`_selectSprite` compute `carryFrom` when `target >
+    selectedEmote`, else `arriveButtonCrop` seeds its own face);
     `_ManualCropActions` offers **Reset this sprite to auto** (`resetButtonCropFor`)
     and **Apply this box to all sprites** (`applyButtonCropToAll`). The char_icon
     keeps its single
@@ -679,10 +715,14 @@ The central model.
     **typeable value box**, kept in sync: drag, or type an exact value committed
     on Enter/blur and clamped to range) — replaces the old slider-only helpers.
     Each overlay slot offers **Presets** (a grouped grid picker over
-    `OverlayPresets`, cached thumbnails in `_overlayThumbCache`), **Build…** (the
-    `overlay_builder.dart` editor — style + colour-wheel + thickness/radius/inset,
-    live preview, "start from" any preset), and **Import…** (your own PNG). The
-    applied `OverlaySpec` is remembered on the slot so Build… re-opens it. Icon
+    `OverlayPresets` via `_showOverlayPresetPicker` — a `StatefulBuilder` so it
+    can refresh; your **★ Saved** user presets list first with a delete ×, then
+    the built-ins; cached thumbnails in `_overlayThumbCache`, saved presets build
+    fresh via `useCache:false`), **Build…** (the `overlay_builder.dart` editor —
+    style + colour-wheel + thickness/radius/inset, live preview, "start from" any
+    preset), **Save** (when the slot holds an editable spec → `_promptPresetName`
+    → `app.saveOverlayPreset`), and **Import…** (your own PNG). The applied
+    `OverlaySpec` is remembered on the slot so Build…/Save re-use it. Icon
     "made from emote" picker + "Save char_icon.png".
     Debounced `ValueNotifier` previews; settings live on `AppState` so export uses
     them. **Buttons render crisp**: `renderFramed` never upscales and area-averages
@@ -707,6 +747,23 @@ The central model.
     (`app.dart`, `keyLabel`/`captureKey` from `ui/widgets/key_capture.dart`).
     Mirrored in docs/SHORTCUTS.md. Bare keys are safe — the only global shortcuts
     are Ctrl/⌘-modified + F1.
+    **The BIG framing editor (DRO-style)**: a button in the Manual block opens
+    `openButtonFramingEditor` → a full-screen `_ButtonFramingEditor` route (its
+    own `Scaffold`) = sprite list + a large **zoom/pan** canvas + a control
+    sidebar, so the sprite shows up big and you frame precisely. `_FramingPane`
+    (the middle+right) wraps `_ManualCanvasLoader` (loads bytes, keeps the canvas
+    **mounted** across sprite switches so zoom/pan persist) → `_ManualCanvas`. The
+    canvas uses **one top-left coordinate origin**: a base-fit rect drawn at
+    `_pan + base·_scale`, box overlaid at the same scale, and a **single**
+    `GestureDetector` hit-tests in screen space (corner→resize / inside→move
+    box / else→pan) so there's no gesture-arena ambiguity; `Listener`
+    onPointerSignal scroll-zooms about the cursor; +/−/reset buttons + the **Box
+    X/Y/Size sliders** (sidebar) are an **independent** path that works even if a
+    drag feels off (the deliberate safety net — it's an untested gesture canvas).
+    Box drags rebuild only `_FramingPane` (the sprite list is a sibling `Consumer`,
+    not rebuilt mid-drag). Keyboard `_onKey` reads the same `framingKeys`
+    (prev/next/make/reset/all; no F-cycle — the editor is Manual-only) and
+    navigates via `navigateButtonFraming`.
   - `edit`: crop / **grow** / auto-trim / background removal (drives `SpriteEdit`).
     Each of L/T/R/B is **one bidirectional slider** (`_sideControl`): >0 crops the
     edge in, <0 grows the canvas out (mapped to `crop*`/`pad*` in `_spec`), with
@@ -751,10 +808,13 @@ The central model.
     on blur; `_rev` keys refresh fields after import/randomise. See
     docs/THEME_MAKER.md.
 - `app.dart` (`HomeShell`) hosts a global `CallbackShortcuts` map (undo/redo,
-  import/export, add emote, prev/next emote, `Ctrl/⌘+1..9` screen jumps, F1 help)
-  and a `_TopBar` with undo/redo + import/export + **Start-over ↻** (reset, gated
-  on `hasProject`, confirm dialog → `resetProject`) + **About/credits** (ℹ)
-  buttons (gated on `AppState.canUndo`/`canRedo`/`hasProject` via a `Selector`).
+  import, export `.zip` `Ctrl/⌘+S`, **save-as-folder `Ctrl/⌘+Shift+S` →
+  `exportFolder`**, export `char.ini` `Ctrl/⌘+E`, add emote, prev/next emote,
+  `Ctrl/⌘+1..9` screen jumps, F1 help) and a `_TopBar` with undo/redo + import +
+  **save-as-folder (folder icon)** + export `.zip` + export `char.ini` +
+  **Start-over ↻** (reset, gated on `hasProject`, confirm dialog → `resetProject`)
+  + **About/credits** (ℹ) buttons (gated on
+  `AppState.canUndo`/`canRedo`/`hasProject` via a `Selector`).
   **`_showShortcuts` (F1) is also the rebinding centre**: a `StatefulBuilder`
   dialog that lists the fixed global `Ctrl/⌘` shortcuts **and** offers a **Set**
   button per Button-Studio framing action (`AppState.framingActions`/`framingKeys`)

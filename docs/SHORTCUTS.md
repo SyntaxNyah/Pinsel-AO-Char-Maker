@@ -17,6 +17,7 @@ toolbar** (undo / redo / import / export / **Start over ↻**).
 | `Ctrl/⌘ + Y` *or* `Ctrl/⌘ + Shift + Z` | Redo |
 | `Ctrl/⌘ + O` | Import a folder of sprites |
 | `Ctrl/⌘ + S` | Export the character as a `.zip` |
+| `Ctrl/⌘ + Shift + S` | **Save the character as a plain folder** (no zip) |
 | `Ctrl/⌘ + E` | Export just `char.ini` |
 | `Ctrl/⌘ + N` | Add a new emote |
 | `Ctrl/⌘ + ↑` / `Ctrl/⌘ + ↓` | Select the previous / next emote (the list auto-scrolls to it) |
@@ -54,9 +55,9 @@ speed, then fine-tune with the keyboard:
   any **ticked** row moves the **whole selection** together (as one block), so you
   can reorder several emotes at once instead of one at a time.
 - **Buttons → pick any sprite from the list.** The Buttons screen now has a
-  left-hand **sprite list** (just like the Emotes screen) with a **tiny preview**
-  of each pose — click any one to frame its button. A pink tick marks sprites
-  you've given a custom (Manual) box.
+  left-hand **sprite list** (just like the Emotes screen) showing a **tiny
+  preview of each *button*** (the framed result, not the raw sprite) — click any
+  one to frame it. A pink tick marks sprites you've given a custom (Manual) box.
 - **Buttons → Manual (frame the whole cast from the keyboard).** Click the sprite
   once to focus the big framing canvas, then (these are the **default**, plain
   keys — **no `[`/`]`** — and every one is **rebindable in the F1 dialog**):
@@ -72,6 +73,14 @@ speed, then fine-tune with the keyboard:
   Drag the box to move it, the corner to resize. These only fire while the
   framing area is focused — typing in a value box never triggers them. Rebind any
   of them (and they persist) from the **F1** keyboard-shortcuts dialog.
+- **Buttons → the BIG framing editor.** In Manual mode, **“Open the BIG framing
+  editor”** gives a full-screen DRO-style workspace: **scroll** to zoom, **drag
+  the sprite** to pan, **drag the box / its corner** to frame, and the same
+  ←/→/Enter/R/A keyboard flow. +/−/Reset-view buttons sit bottom-right.
+  **Advancing keeps your framing:** pressing `Enter`/`→` (or clicking a later
+  sprite) **carries your current box** onto the next sprite if it hasn't been
+  framed yet — so the box doesn't reset to that sprite's auto face. Already-framed
+  sprites keep their own box; press `R` to snap one back to auto.
 
 These are **contextual** — they act on the focused/selected widget, not globally.
 

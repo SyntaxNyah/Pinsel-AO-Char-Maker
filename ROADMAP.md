@@ -24,15 +24,27 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   draggable/resizable crop box + X/Y/Size sliders, seeded from the auto head-square.
   **Per-sprite**: buttons keep one box *per sprite* (`AppState.buttonCrops`,
   keyed by sprite base) with an **Emotes-style sprite list** (tiny per-sprite
-  preview, click any pose; a ◀ ▶ navigator too), a "k of N customised" caption,
-  **Reset this sprite to auto** + **Apply this box to all sprites**; untouched
-  sprites auto-frame their own face, so you only hand-place the poses the auto
-  crop gets wrong. **Keyboard-driven, KFO-style**: a big framing canvas + a plain
-  single-key flow (defaults **← / →** prev/next, **Enter** make-&-next, **R**
-  reset, **A** apply-all, **F** cycle framing — no `[`/`]`) so you frame a
-  100-sprite cast without reaching for the rail. **Every framing key (and the
-  Theme-Maker Arrange nudge keys) is rebindable from the F1 dialog and persists
-  across sessions** (`AppState.framingKeys`/`nudgeKeys` → `platform/settings_store`)
+  preview of the **rendered button**, click any pose; a ◀ ▶ navigator too), a
+  "k of N customised" caption, **Reset this sprite to auto** + **Apply this box to
+  all sprites**; untouched sprites auto-frame their own face, so you only
+  hand-place the poses the auto crop gets wrong. **Advancing carries your framing
+  forward** (`arriveButtonCrop`) so pressing Enter/→ keeps your box instead of
+  re-detecting the next sprite's face. **Keyboard-driven, KFO-style**: a big
+  framing canvas + a plain single-key flow (defaults **← / →** prev/next,
+  **Enter** make-&-next, **R** reset, **A** apply-all, **F** cycle framing — no
+  `[`/`]`) so you frame a 100-sprite cast without reaching for the rail. **Every
+  framing key (and the Theme-Maker Arrange nudge keys) is rebindable from the F1
+  dialog and persists across sessions** (`AppState.framingKeys`/`nudgeKeys` →
+  `platform/settings_store`). **DRO-style BIG framing editor**
+  (`openButtonFramingEditor` → full-screen route): large **zoom + pan** canvas
+  (single-GestureDetector hit-test over a one-origin Transform-free layout, scroll
+  to zoom about the cursor) + sprite list + box sliders as an independent safety
+  net, so the sprite shows up big and you frame precisely
+- ✅ **Save as a plain folder (no zip)** (`AppState.exportFolder` →
+  `platform/folder_export` seam) — writes the finished character folder straight
+  to a picked directory so it just *appears* on disk (DRO/KFO-style), `Ctrl/⌘
+  +Shift+S` / toolbar folder icon; web has no filesystem so it falls back to the
+  `.zip`. Sits alongside `exportZip`/`exportIni`
 - ✅ **`pinselcredits.txt`** stamped into every exported character (attribution +
   bug-report URL), written by the Organizer (single + bulk)
 - ⬜ Auto `credits.txt` scaffolding
@@ -150,7 +162,9 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ✅ Button overlay/border + background system (auto buttons + char_icon): **dozens
   of built-in presets** (Umineko, Danganronpa, Limbus, kawaii, colours) **and an
   in-app builder** (editable `OverlaySpec`: style + colour-wheel + gradients +
-  thickness/radius/inset, live preview, start-from-preset)
+  thickness/radius/inset, live preview, start-from-preset). **Save your own built
+  overlays as reusable presets** (`OverlaySpec.toJson` → `AppState.userOverlayPresets`
+  via `settings_store`; shown under **★ Saved** in the picker, persist across sessions)
 - ⬜ Full mask/crop button compositor UI (engine: `ButtonMaker.renderComposite`)
 - 🟡 Region picker overlay (drag a box) — done in the Mixer (snip/arrange canvas);
   still planned for region animation/outfit edits

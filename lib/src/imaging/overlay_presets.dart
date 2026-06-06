@@ -134,6 +134,48 @@ class OverlaySpec {
         inset: inset,
         cell: cell,
       );
+
+  /// JSON for persisting a user-built preset (the style is stored by its enum
+  /// *name* so it survives reordering of the enum).
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'style': style.name,
+        'c1': color1,
+        'c2': color2,
+        'pc': patternColor,
+        'th': thickness,
+        'r': radius,
+        'in': inset,
+        'cell': cell,
+      };
+
+  /// Rebuild a spec from [toJson] output; null if the style name is unknown
+  /// (e.g. a preset saved by a newer build). Missing fields fall back to the
+  /// constructor defaults.
+  static OverlaySpec? fromJson(Map<String, dynamic> j) {
+    final Object? s = j['style'];
+    if (s is! String) return null;
+    OverlayStyle? style;
+    for (final OverlayStyle e in OverlayStyle.values) {
+      if (e.name == s) {
+        style = e;
+        break;
+      }
+    }
+    if (style == null) return null;
+    int asInt(Object? v, int def) =>
+        v is int ? v : (v is num ? v.toInt() : def);
+    double asDouble(Object? v, double def) => v is num ? v.toDouble() : def;
+    return OverlaySpec(
+      style: style,
+      color1: asInt(j['c1'], 0xFF80AB),
+      color2: asInt(j['c2'], 0xA8D8EA),
+      patternColor: asInt(j['pc'], 0xFFFFFF),
+      thickness: asDouble(j['th'], 0.08),
+      radius: asDouble(j['r'], 0.12),
+      inset: asDouble(j['in'], 0.0),
+      cell: asDouble(j['cell'], 0.26),
+    );
+  }
 }
 
 /// A named, categorised overlay. Its [spec] is editable, so the builder can
