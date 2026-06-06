@@ -200,30 +200,28 @@ class SpriteEdit {
     return out;
   }
 
-  /// **Resize** every frame by [sx]×[sy] (1.0 = no change), preserving frame
-  /// durations so an animation stays intact. Good filters (cubic up / average
-  /// down) keep it crisp. Uniform across frames so the animation stays aligned.
+  /// **Resize** the sprite by [sx]×[sy] (1.0 = no change), preserving the frame
+  /// count + durations so an animation stays intact. Good filters (cubic up /
+  /// average down) keep it crisp. `copyResize` is **frame-aware** (it resizes
+  /// every frame of an animation in one call), so we call it once on the whole
+  /// image — calling it per frame would re-resize the whole animation each time.
   static img.Image resize(img.Image image, double sx, double sy) {
     if (sx == 1.0 && sy == 1.0) return image;
-    final List<img.Image> frames =
-        image.frames.isEmpty ? <img.Image>[image] : image.frames.toList();
-    final int w = math.max(1, (frames.first.width * sx).round());
-    final int h = math.max(1, (frames.first.height * sy).round());
-    if (w == frames.first.width && h == frames.first.height) return image;
+    final int w = math.max(1, (image.width * sx).round());
+    final int h = math.max(1, (image.height * sy).round());
+    if (w == image.width && h == image.height) return image;
     final img.Interpolation interp = (sx < 1.0 || sy < 1.0)
         ? img.Interpolation.average
         : img.Interpolation.cubic;
-    final List<img.Image> out = frames
-        .map((img.Image f) =>
-            img.copyResize(f, width: w, height: h, interpolation: interp))
-        .toList();
-    final img.Image first = out.first;
-    first.frameDuration = frames.first.frameDuration;
-    for (int i = 1; i < out.length; i++) {
-      out[i].frameDuration = frames[i].frameDuration;
-      first.addFrame(out[i]);
+    final img.Image out =
+        img.copyResize(image, width: w, height: h, interpolation: interp);
+    // Restore per-frame durations (copyResize doesn't always carry them).
+    final List<img.Image> src = image.frames.toList();
+    final List<img.Image> dst = out.frames.toList();
+    for (int i = 0; i < dst.length && i < src.length; i++) {
+      dst[i].frameDuration = src[i].frameDuration;
     }
-    return first;
+    return out;
   }
 
   /// Full single-image edit (preview path): remove background, crop/trim, then
