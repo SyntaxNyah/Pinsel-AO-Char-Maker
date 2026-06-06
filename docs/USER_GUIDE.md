@@ -455,7 +455,9 @@ sparkles, rainbow), set the **colours** with a **colour wheel** (+ hex), and dra
 **thickness / corner radius / inset / pattern size** — all with a live preview.
 **Start from a preset** to edit any built-in frame (recolour it, make the
 gradient yours…), then **Apply**. Build… re-opens whatever you last applied to
-that slot, so you can keep tweaking.
+that slot, so you can keep tweaking. **Big editor** opens a full-screen
+**zoom & pan** view of the overlay (scroll to zoom, drag to pan, +/−/Reset) with
+the same controls on the side — handy for fine detail on a border.
 
 **Save** your creation as a reusable preset: once a built (or preset) overlay is
 applied to a slot, press **Save**, give it a name, and it joins the **★ Saved**

@@ -635,15 +635,27 @@ The central model.
     still uses one `iconCrop`. `buttonCrops` is cleared on
     `resetProject`/`importFiles` (via `_clearWorkspaceFiles`).
   - **Preview cache + lag fix**: `previewSprite(rel)` memoises the plain (no-op
-    pipeline) PNG per `rel@maxEdge`; `_invalidateImageCaches()` clears the decode +
-    preview caches and bumps `spriteRevision` whenever sprite pixels/paths change.
-    The Emotes screen watches `spriteRevision` (not every notify) so typing a field
-    never re-bakes the preview.
+    pipeline) PNG per `rel@maxEdge`; `_decodeButtonSource(rel)` caches a
+    **≤640px downscaled** first frame used ONLY for button previews/thumbnails
+    (`previewButtonForEmote`) so a manual-crop commit + 100+ list thumbnails crop
+    a small image, not a full-res sprite (export still uses full res);
+    `_invalidateImageCaches()` clears the decode + **button-source** + preview
+    caches and bumps `spriteRevision` whenever sprite pixels/paths change (also
+    cleared on fresh import/reset via `_clearWorkspaceFiles`). The Emotes screen
+    watches `spriteRevision` (not every notify) so typing a field never re-bakes
+    the preview.
 - `screens/` — home, **ini_builder** (the `[Options]`/char.ini editor), editor,
   color_lab, animation_studio, button_studio, edit, mixer, bulk, plugins,
   **sprite_ripper** (sheet → sprites), **theme_maker** (AO2 theme editor).
-  `widgets/` — `CheckerImage`, `ZoomCanvas`, `overlay_builder` (the
-  `showOverlayBuilder` dialog — style/colour-wheel/sliders for custom overlays),
+  `widgets/` — `CheckerImage` (**perf**: the transparency checker is **one**
+  GPU-tiled rect — a cached 2×2 `ui.Image` tile via `ImageShader` — NOT a
+  `drawRect` per cell, and the whole thing is `RepaintBoundary`-wrapped, so a big
+  zoom/pan canvas no longer issues thousands of draw calls per frame), `ZoomCanvas`,
+  `overlay_builder` (the
+  `showOverlayBuilder` dialog — style/colour-wheel/sliders for custom overlays;
+  shared `_OverlayControlsPanel` + a **Big editor** full-screen route
+  `_OverlayBigBuilder` with an InteractiveViewer **zoom/pan** preview + +/−/reset,
+  editing the same spec),
   **`key_capture.dart`** (`keyLabel(key)` for a friendly label + `captureKey(ctx)`
   / `KeyCaptureDialog` "press a key" — shared by the F1 rebinder and the Theme
   Maker's nudge rebinder; ignores bare modifiers, cancels on Esc).

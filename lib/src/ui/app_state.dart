@@ -103,6 +103,13 @@ class AppState extends ChangeNotifier {
   /// Decoded first-frame cache (rel -> image) to keep previews snappy.
   final Map<String, img.Image?> _decodeCache = <String, img.Image?>{};
 
+  /// A **downscaled** (≤640px) first-frame cache used only for rendering the
+  /// on-screen button **previews + list thumbnails** — cropping/resizing a small
+  /// image instead of a full-res sprite makes a manual-crop drag commit + the
+  /// 100+ list thumbnails an order of magnitude cheaper. The export path decodes
+  /// full-res separately, so output quality is unaffected.
+  final Map<String, img.Image?> _buttonSrcCache = <String, img.Image?>{};
+
   /// Encoded plain-sprite preview cache (`rel@maxEdge` -> PNG). Lets the Emotes
   /// screen show a sprite without re-decoding/re-encoding on every rebuild — so
   /// typing in a field never re-bakes the preview.
@@ -366,6 +373,9 @@ class AppState extends ChangeNotifier {
     workspace.clear();
     mixSources.clear();
     buttonCrops.clear();
+    _decodeCache.clear();
+    _buttonSrcCache.clear();
+    _previewCache.clear();
   }
 
   /// Sanitise a picked folder name into a usable character/folder name, or null
@@ -644,6 +654,27 @@ class AppState extends ChangeNotifier {
     }
     _decodeCache[rel] = image;
     return image;
+  }
+
+  /// First frame of [rel] **downscaled to ≤640px** (cached) for rendering button
+  /// previews/thumbnails fast. Falls back to the full frame if it's already
+  /// small. Not for export (that path uses the full-res decode).
+  Future<img.Image?> _decodeButtonSource(String rel) async {
+    if (_buttonSrcCache.containsKey(rel)) return _buttonSrcCache[rel];
+    final img.Image? full = await decodeFirstFrame(rel);
+    img.Image? small = full;
+    if (full != null) {
+      final int longest = full.width > full.height ? full.width : full.height;
+      if (longest > 640) {
+        final double s = 640 / longest;
+        small = img.copyResize(full,
+            width: (full.width * s).round(),
+            height: (full.height * s).round(),
+            interpolation: img.Interpolation.average);
+      }
+    }
+    _buttonSrcCache[rel] = small;
+    return small;
   }
 
   /// PNG bytes of [rel] with [pipeline] applied to a downscaled copy — used for
@@ -1021,7 +1052,9 @@ class AppState extends ChangeNotifier {
     if (e == null) return null;
     final String? rel = spriteRelFor(e);
     if (rel == null) return null;
-    final img.Image? frame = await decodeFirstFrame(rel);
+    // Downscaled source: previews/thumbnails never need the full-res sprite, and
+    // cropping/resizing a ≤640px image is far cheaper (the export uses full res).
+    final img.Image? frame = await _decodeButtonSource(rel);
     if (frame == null) return null;
     return ButtonMaker.renderFramed(frame, size,
         framing: buttonFraming,
@@ -2333,6 +2366,7 @@ class AppState extends ChangeNotifier {
   /// decode cache directly whenever sprite files are written/moved.
   void _invalidateImageCaches() {
     _decodeCache.clear();
+    _buttonSrcCache.clear();
     _previewCache.clear();
     spriteRevision++;
   }

@@ -28,6 +28,32 @@ falls back to the CPU-baked preview, so the result is always faithful.
 or `null` to signal "use the CPU path." It's exposed as
 `AppState.liveColorMatrix(pipeline)`.
 
+## Smooth dragging (button framing, crop boxes, the big editor)
+
+Direct-manipulation editors (the Buttons **big framing editor** and the inline
+crop-box editor, the Edit screen) are tuned so a drag never does heavy work per
+frame:
+
+- **The transparency checkerboard is one GPU-tiled draw.** `CheckerImage` paints
+  a single rect filled with a cached 2×2 tile via an `ImageShader` (repeated by
+  the GPU) instead of a `drawRect` per cell — a full-screen zoom/pan canvas used
+  to issue *thousands* of draw calls per frame; now it's one. It's also wrapped
+  in a `RepaintBoundary`, so panning/moving it just re-composites a cached layer.
+- **A box drag updates only the canvas, not the whole panel.** While you drag,
+  the editor renders a local "live" box and writes the value to state *without*
+  rebuilding the surrounding sliders/preview/thumbnails; the one heavy refresh
+  (preview re-render + thumbnail) happens **once on release**.
+- **Previews & list thumbnails crop a downscaled source.** Button previews and
+  the 100+ sprite-list thumbnails render from a cached **≤640px** copy of each
+  sprite (`_decodeButtonSource`), not the full-res image — cropping/resizing a
+  small image is an order of magnitude cheaper. The exported buttons still use
+  the full-resolution sprite, so quality is unaffected.
+- **Thumbnails invalidate per-sprite.** Editing one sprite's crop box re-renders
+  exactly that one thumbnail (keyed by `AppState.buttonThumbKey`), not every
+  visible thumbnail in the list.
+- **The overlay "Big editor" preview is debounced** (it re-draws the 512px
+  overlay 60 ms after you stop, not on every slider tick).
+
 ## Multi-core baking
 
 The expensive operations — **Animate ALL sprites**, **Talking mouth on ALL

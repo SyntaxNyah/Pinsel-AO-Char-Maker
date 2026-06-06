@@ -423,13 +423,20 @@ class _CropBoxEditor extends StatefulWidget {
     required this.revision,
     required this.box,
     required this.onChanged,
+    this.onCommit,
     this.height = 240,
   });
   final AppState app;
   final Emote? emote;
   final int revision;
   final CropBox box;
+
+  /// Live during a drag — writes the box but the host should NOT rebuild on it
+  /// (the editor renders the drag itself).
   final ValueChanged<CropBox> onChanged;
+
+  /// Called once when a drag ends — the host does its heavy refresh here.
+  final VoidCallback? onCommit;
 
   /// Editor canvas height. The button card passes a big value (KFO-style large
   /// framing area) so you can place boxes precisely; the icon card stays small.
@@ -444,6 +451,10 @@ class _CropBoxEditorState extends State<_CropBoxEditor> {
   double? _aspect;
   bool _loading = false;
 
+  /// The box being dragged — rendered while non-null so a drag is smooth without
+  /// rebuilding the whole card every frame; cleared when an external box arrives.
+  CropBox? _live;
+
   @override
   void initState() {
     super.initState();
@@ -454,6 +465,7 @@ class _CropBoxEditorState extends State<_CropBoxEditor> {
   void didUpdateWidget(covariant _CropBoxEditor old) {
     super.didUpdateWidget(old);
     if (old.emote != widget.emote || old.revision != widget.revision) _load();
+    if (!identical(old.box, widget.box)) _live = null;
   }
 
   Future<void> _load() async {
@@ -482,7 +494,7 @@ class _CropBoxEditorState extends State<_CropBoxEditor> {
     }
     final double aspect =
         (_aspect == null || _aspect! <= 0) ? 1.0 : _aspect!;
-    final CropBox box = widget.box;
+    final CropBox box = _live ?? widget.box;
     return SizedBox(
       height: widget.height,
       child: LayoutBuilder(
@@ -510,14 +522,18 @@ class _CropBoxEditorState extends State<_CropBoxEditor> {
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onPanUpdate: (DragUpdateDetails d) {
-                        final double nx = (box.x + d.delta.dx / dw)
-                            .clamp(0.0, (1 - box.side).clamp(0.0, 1.0));
-                        final double maxY =
-                            (1 - box.side * aspect).clamp(0.0, 1.0);
+                        final CropBox b = _live ?? widget.box;
+                        final double nx = (b.x + d.delta.dx / dw)
+                            .clamp(0.0, (1 - b.side).clamp(0.0, 1.0));
+                        final double maxY = (1 - b.side * aspect).clamp(0.0, 1.0);
                         final double ny =
-                            (box.y + d.delta.dy / dh).clamp(0.0, maxY);
-                        widget.onChanged(box.copyWith(x: nx, y: ny));
+                            (b.y + d.delta.dy / dh).clamp(0.0, maxY);
+                        final CropBox next = b.copyWith(x: nx, y: ny);
+                        setState(() => _live = next);
+                        widget.onChanged(next);
                       },
+                      onPanEnd: (_) => widget.onCommit?.call(),
+                      onPanCancel: () => widget.onCommit?.call(),
                       child: const DecoratedBox(
                         decoration: BoxDecoration(
                           color: Color(0x22FF4081),
@@ -535,14 +551,19 @@ class _CropBoxEditorState extends State<_CropBoxEditor> {
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onPanUpdate: (DragUpdateDetails d) {
+                        final CropBox b = _live ?? widget.box;
                         final double ns =
-                            (box.side + d.delta.dx / dw).clamp(0.08, 1.0);
+                            (b.side + d.delta.dx / dw).clamp(0.08, 1.0);
                         final double nx =
-                            box.x.clamp(0.0, (1 - ns).clamp(0.0, 1.0));
+                            b.x.clamp(0.0, (1 - ns).clamp(0.0, 1.0));
                         final double maxY = (1 - ns * aspect).clamp(0.0, 1.0);
-                        final double ny = box.y.clamp(0.0, maxY);
-                        widget.onChanged(box.copyWith(side: ns, x: nx, y: ny));
+                        final double ny = b.y.clamp(0.0, maxY);
+                        final CropBox next = b.copyWith(side: ns, x: nx, y: ny);
+                        setState(() => _live = next);
+                        widget.onChanged(next);
                       },
+                      onPanEnd: (_) => widget.onCommit?.call(),
+                      onPanCancel: () => widget.onCommit?.call(),
                       child: const DecoratedBox(
                         decoration: BoxDecoration(
                           color: Color(0xFFFF4081),
@@ -1436,8 +1457,13 @@ class _BtnCardState extends State<_BtnCard> {
                                   revision: app.spriteRevision,
                                   box: app.buttonCropFor(curSprite),
                                   height: 440,
-                                  onChanged: (CropBox b) {
-                                    setState(() => app.setButtonCrop(curSprite, b));
+                                  // Live drag: write the box but don't rebuild
+                                  // the card (the editor renders the drag).
+                                  onChanged: (CropBox b) =>
+                                      app.setButtonCrop(curSprite, b),
+                                  // One rebuild + preview refresh on release.
+                                  onCommit: () {
+                                    setState(() {});
                                     widget.onChanged();
                                   },
                                 ),
@@ -1620,8 +1646,9 @@ class _IconCardState extends State<_IconCard> {
                           emote: app.iconEmote(),
                           revision: app.spriteRevision,
                           box: app.iconCrop,
-                          onChanged: (CropBox b) {
-                            setState(() => app.iconCrop = b);
+                          onChanged: (CropBox b) => app.iconCrop = b,
+                          onCommit: () {
+                            setState(() {});
                             widget.onChanged();
                           },
                         ),

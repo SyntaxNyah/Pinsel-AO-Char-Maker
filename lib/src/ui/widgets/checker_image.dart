@@ -1,9 +1,16 @@
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 /// Shows image bytes over a transparency checkerboard, so alpha is obvious — the
 /// standard sprite-editing backdrop. [bytes] of null renders just the checker.
+///
+/// Performance: the checker is drawn as **one** GPU-tiled rect (a cached 2×2
+/// tile image repeated via an [ui.ImageShader]) instead of a `drawRect` per
+/// cell — so a big zoom/pan canvas no longer issues thousands of draw calls per
+/// frame. Wrapped in a [RepaintBoundary] so panning/moving it just re-composites
+/// the cached layer instead of repainting.
 class CheckerImage extends StatelessWidget {
   const CheckerImage({
     super.key,
@@ -39,9 +46,11 @@ class CheckerImage extends StatelessWidget {
     if (image != null && colorFilter != null) {
       image = ColorFiltered(colorFilter: colorFilter!, child: image);
     }
-    return CustomPaint(
-      painter: _CheckerPainter(cell: cell),
-      child: image ?? const SizedBox.expand(),
+    return RepaintBoundary(
+      child: CustomPaint(
+        painter: _CheckerPainter(cell: cell),
+        child: image ?? const SizedBox.expand(),
+      ),
     );
   }
 }
@@ -50,19 +59,33 @@ class _CheckerPainter extends CustomPainter {
   _CheckerPainter({required this.cell});
   final double cell;
 
+  static const Color _a = Color(0xFF2A2A33);
+  static const Color _b = Color(0xFF22222A);
+
+  /// One small 2×2-cell tile per cell size, drawn once and repeated by the GPU.
+  static final Map<int, ui.Image> _tileCache = <int, ui.Image>{};
+
+  static ui.Image _tile(double cell) {
+    final int key = (cell * 100).round();
+    final ui.Image? cached = _tileCache[key];
+    if (cached != null) return cached;
+    final double s = cell * 2;
+    final ui.PictureRecorder rec = ui.PictureRecorder();
+    final Canvas c = Canvas(rec);
+    c.drawRect(Rect.fromLTWH(0, 0, s, s), Paint()..color = _b);
+    c.drawRect(Rect.fromLTWH(0, 0, cell, cell), Paint()..color = _a);
+    c.drawRect(Rect.fromLTWH(cell, cell, cell, cell), Paint()..color = _a);
+    final ui.Image img = rec.endRecording().toImageSync(s.ceil(), s.ceil());
+    _tileCache[key] = img;
+    return img;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint a = Paint()..color = const Color(0xFF2A2A33);
-    final Paint b = Paint()..color = const Color(0xFF22222A);
-    canvas.drawRect(Offset.zero & size, b);
-    for (double y = 0; y < size.height; y += cell) {
-      for (double x = 0; x < size.width; x += cell) {
-        final bool even = ((x ~/ cell) + (y ~/ cell)).isEven;
-        if (even) {
-          canvas.drawRect(Rect.fromLTWH(x, y, cell, cell), a);
-        }
-      }
-    }
+    final Paint p = Paint()
+      ..shader = ui.ImageShader(_tile(cell), TileMode.repeated,
+          TileMode.repeated, Matrix4.identity().storage);
+    canvas.drawRect(Offset.zero & size, p);
   }
 
   @override
