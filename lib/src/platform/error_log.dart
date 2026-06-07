@@ -16,7 +16,14 @@ Future<void> logCrash(String message) => impl.logCrash(message);
 String? get crashLogPath => impl.crashLogPath;
 
 /// The directory the crash log lives in, resolved **without writing** — so the
-/// app can show users *where to look* even before any crash. On Android this is
-/// the external app-files dir (`Android/data/<package>/files`), browsable in any
-/// file manager with no permission. Null on web / if undeterminable.
+/// app can show users *where to look* even before any crash. Null on web / if
+/// undeterminable.
 Future<String?> crashLogDir() => impl.crashLogDir();
+
+/// The crash log's contents, for showing **in-app** — the only reliable way to
+/// reach it on Android 11+, where file managers can't browse `Android/data`.
+/// Null if empty / nothing logged. (An OOM/native crash leaves nothing here.)
+Future<String?> readCrashLog() => impl.readCrashLog();
+
+/// Empty the crash log (the in-app "Clear" action).
+Future<void> clearCrashLog() => impl.clearCrashLog();

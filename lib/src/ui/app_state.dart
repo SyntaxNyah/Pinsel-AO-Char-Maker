@@ -1675,6 +1675,11 @@ class AppState extends ChangeNotifier {
     final List<SpriteGroup> groups = scan!.groups.toList();
     if (groups.isEmpty) return 0;
     _setBusy(true, 'Jiggling ${groups.length} sprites…');
+    // Breadcrumb: a hard OOM kills the app before any Dart error handler runs, so
+    // the *last* breadcrumb written here is how we know where a big bulk run died.
+    await logCrash('bulkJiggle start: ${groups.length} sprite(s), '
+        'chunk=$_bulkChunk, concurrency=$maxConcurrency, mobile=$isMobile, '
+        'boxes=${specs.length}');
 
     // Lightweight descriptors first — NO preloaded source bytes — so memory
     // doesn't grow with the cast size.
@@ -1749,9 +1754,11 @@ class AppState extends ChangeNotifier {
         await workspace.writeBytes(outRel, r.bytes);
         ok++;
       }
+      await logCrash('bulkJiggle: $end/${jobRels.length} sprite(s) done');
       await Future<void>.delayed(Duration.zero); // let the batch GC + UI breathe
     }
 
+    await logCrash('bulkJiggle finished: $ok sprite(s)');
     _invalidateImageCaches();
     scan = _scanner.fromPaths(await _projectFiles());
     _setBusy(false, 'Jiggled $ok sprite(s).');

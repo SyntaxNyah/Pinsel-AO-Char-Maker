@@ -70,18 +70,97 @@ void showAboutCreditsDialog(BuildContext context) {
               Text('Crash logs', style: Theme.of(ctx).textTheme.titleSmall),
               const SizedBox(height: 4),
               const Text(
-                'If the app crashes or misbehaves, details are appended to '
-                'pinsel_crash.log here. On Android open this folder in a file '
-                'manager and attach the file to a bug report:',
+                'Catchable errors are logged — view them here and copy the text '
+                'into a bug report. (A hard out-of-memory crash is killed by the '
+                'OS before anything can be logged, so it leaves nothing here; '
+                'breadcrumbs from bulk jobs still show how far it got.)',
                 style: TextStyle(fontSize: 12),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: () => _showCrashLogDialog(ctx),
+                  icon: const Icon(Icons.bug_report_outlined, size: 18),
+                  label: const Text('View crash log'),
+                ),
+              ),
+              const SizedBox(height: 6),
               const _CrashLogLocation(),
             ],
           ),
         ),
       ),
       actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Show the crash log **inside the app** (read from the app's own file) with
+/// Copy + Clear — the only way to reach it on Android 11+, where file managers
+/// can't browse `Android/data`.
+void _showCrashLogDialog(BuildContext context) {
+  showDialog<void>(
+    context: context,
+    builder: (BuildContext ctx) => AlertDialog(
+      title: const Text('Crash log'),
+      content: SizedBox(
+        width: 520,
+        child: FutureBuilder<String?>(
+          future: readCrashLog(),
+          builder: (BuildContext c, AsyncSnapshot<String?> snap) {
+            if (snap.connectionState == ConnectionState.waiting) {
+              return const SizedBox(
+                  height: 80,
+                  child: Center(child: CircularProgressIndicator()));
+            }
+            final String? log = snap.data;
+            if (log == null) {
+              return const Text(
+                "Nothing logged. That's normal if the app hasn't hit a catchable "
+                'error — and note that an out-of-memory crash is killed by the OS '
+                'before it can write anything here.',
+              );
+            }
+            return ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 360),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  log,
+                  style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () async {
+            final String? log = await readCrashLog();
+            if (log != null) {
+              await Clipboard.setData(ClipboardData(text: log));
+              if (ctx.mounted) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('Crash log copied')),
+                );
+              }
+            }
+          },
+          child: const Text('Copy'),
+        ),
+        TextButton(
+          onPressed: () async {
+            await clearCrashLog();
+            if (ctx.mounted) Navigator.of(ctx).pop();
+          },
+          child: const Text('Clear'),
+        ),
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(),
           child: const Text('Close'),

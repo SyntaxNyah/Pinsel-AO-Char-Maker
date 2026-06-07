@@ -605,18 +605,19 @@ The central model.
   (no symlink/junction-cycle hangs), per-file try/catch (skip unreadable), and a
   64 MB per-file size cap (skip videos/PSDs) — **no extension filter** (char.ini
   + audio must survive). Callers use `picked.files` / `picked.folderName`.
-- `logCrash(text)` / `crashLogPath` / **`crashLogDir()`** (`error_log.dart`) —
-  append to `pinsel_crash.log` in the **most user-discoverable** spot per platform:
-  **Android** the external app-files dir (`Android/data/<pkg>/files`, browsable in
-  any file manager, **no permission**) → app docs → temp; **iOS** app docs;
-  **desktop** next to the exe → temp/cwd; **web** the dev console. Uses
-  `path_provider` on mobile (guarded; falls back if the binding isn't ready) and
-  reuses the resolved file on later calls. `crashLogDir()` resolves the location
-  **without writing** so the **About dialog shows users where to look** (copyable;
-  `ui/credits.dart` `_CrashLogLocation`). Wired in `main.dart` via
-  `runZonedGuarded` + `FlutterError.onError` so an unreproducible crash becomes a
-  sendable stack trace (can't catch a hard OOM/native segfault — those never reach
-  Dart — but catches every Dart exception).
+- `logCrash(text)` / `crashLogPath` / `crashLogDir()` / **`readCrashLog()`** /
+  **`clearCrashLog()`** (`error_log.dart`) — append to `pinsel_crash.log`
+  (Android external app-files dir → app docs → temp; iOS app docs; desktop next to
+  the exe → temp/cwd; web dev console; `path_provider` on mobile, guarded; reuses
+  the resolved file). **The reliable way to reach it on Android 11+ is in-app, not
+  the file** — `Android/data/<pkg>` is no longer browsable by file managers — so
+  the **About dialog has a "View crash log"** dialog (`ui/credits.dart`
+  `_showCrashLogDialog`) that `readCrashLog()`s the content with Copy/Clear.
+  **Breadcrumbs:** long bulk jobs `logCrash` progress (`bulkJiggleAll`: start /
+  per-chunk / finish) so a hard OOM — which kills the app before any Dart handler
+  runs and writes **nothing** itself — still leaves a trail of how far it got.
+  Wired in `main.dart` via `runZonedGuarded` + `FlutterError.onError`: catches
+  every Dart exception (not a native OOM/segfault — those never reach Dart).
 - `loadSettings()` / `saveSettings(map)` (`settings_store.dart`, `_io`/`_web`
   seam) — **dependency-free** key→value persistence for UI prefs that must
   survive a restart. Native writes `pinsel_settings.json` next to the exe (same

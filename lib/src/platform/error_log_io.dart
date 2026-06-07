@@ -49,6 +49,42 @@ Future<String?> crashLogDir() async {
   return dirs.isEmpty ? null : dirs.first;
 }
 
+/// The `File` the log is (or would be) at. Prefers the already-written path; on a
+/// fresh launch that's null, so it falls back to the primary candidate dir (the
+/// same one [logCrash] writes to first).
+Future<File?> _logFile() async {
+  String? p = _path;
+  if (p == null) {
+    final List<String> dirs = await _candidateDirs();
+    if (dirs.isNotEmpty) {
+      p = '${dirs.first}${Platform.pathSeparator}pinsel_crash.log';
+    }
+  }
+  return p == null ? null : File(p);
+}
+
+/// Read the crash log's contents so the app can **show it in-app** (the only way
+/// to reach it on Android 11+, where file managers can't browse `Android/data`).
+/// Null if there's nothing to read.
+Future<String?> readCrashLog() async {
+  try {
+    final File? f = await _logFile();
+    if (f == null || !await f.exists()) return null;
+    final String s = await f.readAsString();
+    return s.trim().isEmpty ? null : s;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Empty the crash log (the in-app "Clear" action).
+Future<void> clearCrashLog() async {
+  try {
+    final File? f = await _logFile();
+    if (f != null && await f.exists()) await f.writeAsString('');
+  } catch (_) {}
+}
+
 Future<List<String>> _candidateDirs() async {
   final List<String> dirs = <String>[];
   // Mobile first: a place the USER can actually open in a file manager.
