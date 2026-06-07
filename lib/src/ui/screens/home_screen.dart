@@ -91,6 +91,25 @@ class HomeScreen extends StatelessWidget {
     }
   }
 
+  /// **Repair char.inis in a folder:** pick a parent folder, find every char.ini
+  /// (in it and subfolders), rebuild each emote list from the sprites actually
+  /// present (drop dangling refs, add an emote per orphan sprite, keep [Options]),
+  /// and download the repaired inis as a .zip. Doesn't touch the open project.
+  Future<void> _repairInis(BuildContext context) async {
+    final AppState app = context.read<AppState>();
+    final PickedFolder? picked = await pickFolderFiles();
+    if (picked == null || picked.files.isEmpty) return;
+    final String summary = await app.repairInisInFolder(<PickedFile>[
+      for (final PickedFolderFile f in picked.files) PickedFile(f.name, f.bytes),
+    ]);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text(summary),
+      ));
+    }
+  }
+
   /// **One-click: a folder of sprites → a finished, exported character.** Picks
   /// a folder, imports it (auto char.ini + emotes), converts sprites to WebP,
   /// generates buttons + char_icon, and downloads the ready-to-drop `.zip` — the
@@ -204,6 +223,11 @@ class HomeScreen extends StatelessWidget {
               onPressed: () => _bulkFolders(context),
               icon: const Icon(Icons.folder_copy_rounded),
               label: const Text('Bulk folders → characters'),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: () => _repairInis(context),
+              icon: const Icon(Icons.healing_rounded),
+              label: const Text('Repair char.inis in a folder'),
             ),
             if (app.hasProject) ...<Widget>[
               FilledButton.icon(

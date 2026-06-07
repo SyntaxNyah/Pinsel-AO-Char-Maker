@@ -355,8 +355,13 @@ class AnimEngine {
   ///  * `gravity` 0..1 — asymmetric timing: heavier fall, gentler rise.
   ///  * `organic` 0..1 — extra harmonic so the motion isn't a pure sine.
   ///  * `followThrough` 0..1 — the swinging end lags the pin, so the jiggle
-  ///    travels through the flesh as a wave (soft-body realism). All four default
-  ///    to 0 ⇒ the original motion, so existing presets are unchanged.
+  ///    travels through the flesh as a wave (soft-body realism).
+  ///  * `crossAmount` 0..1 — perpendicular cross-bounce 90° out of phase ⇒ the
+  ///    tip traces an **ellipse** (2D motion), not a straight line.
+  ///  * `swirl` deg — a back-and-forth **rotation** of the region about its centre.
+  ///  * `pulse` 0..1 — the whole jiggle **swells then fades** once per loop.
+  ///    All of these default to 0 ⇒ the original motion, so existing presets are
+  ///    unchanged, and they're a few cheap ops each (no real per-pixel cost).
   ///
   /// Pure + isolate-safe (the bulk worker calls this through [render]). Returns a
   /// new image; [src] is never mutated. Sampling is premultiplied bilinear so
@@ -381,6 +386,10 @@ class AnimEngine {
     final double gravity = r.n('gravity', 0); // asymmetric fall vs rise
     final double organic = r.n('organic', 0); // extra harmonic = less robotic
     final double followThrough = r.n('followThrough', 0); // tip lags base (wave)
+    // More "ways" of moving (all 0 by default ⇒ identical to the original):
+    final double crossAmt = r.n('crossAmount', 0); // perpendicular bounce (2D ellipse)
+    final double swirlDeg = r.n('swirl', 0); // rotational wobble about the centre
+    final double pulseAmt = r.n('pulse', 0); // intensity swells/fades over the loop
     final double pinDen = math.max(anchorPin, 1 - anchorPin);
 
     final double cx = reg.x + reg.w / 2.0;
@@ -413,6 +422,15 @@ class AnimEngine {
         2 *
         alongMax *
         math.sin(ww + 1.2);
+    // (4) cross-bounce: a perpendicular wobble 90° out of phase with the main
+    //     bounce, so the tip traces an **ellipse** instead of a straight line —
+    //     the natural "boobs move in a little circle" look.
+    // (5) swirl: a small **rotation** of the region about its centre.
+    // (6) pulse: the whole jiggle **swells and fades** once per loop.
+    final double ampEff =
+        amp * (1 + pulseAmt * 0.5 * math.sin(2 * math.pi * t));
+    final double crossDisp = crossAmt * ampEff * math.cos(ww);
+    final double swirlRad = swirlDeg * (math.pi / 180.0) * math.sin(ww);
 
     // The influence box. A **freeform [poly]** uses the drawn shape's bounds
     // grown by a feather; otherwise the radial influence around the region.
@@ -476,16 +494,24 @@ class AnimEngine {
         // (1) bounce: **mostly a uniform translation** of the mass (crisp — a
         // steep per-pixel gradient is what smears the art) with only a gentle
         // anchored lean so the swinging end still leads a little.
-        final double bAmt = amp * osc * (0.7 + 0.3 * weight);
-        // (2) squash & stretch + (3) lateral sway, summed along the two axes.
-        final double dispX =
-            (dX * bAmt + dX * (along * str) + pX * (perp * -0.5 * str) +
-                    pX * (swLat * weight)) *
-                m;
-        final double dispY =
-            (dY * bAmt + dY * (along * str) + pY * (perp * -0.5 * str) +
-                    pY * (swLat * weight)) *
-                m;
+        final double bAmt = ampEff * osc * (0.7 + 0.3 * weight);
+        final double crossW = crossDisp * weight; // perp bounce (2D ellipse)
+        final double swirlW = swirlRad * weight; // rotation (tangential)
+        // (1) bounce + (2) squash/stretch + (3) sway + (4) cross + (5) swirl.
+        final double dispX = (dX * bAmt +
+                dX * (along * str) +
+                pX * (perp * -0.5 * str) +
+                pX * (swLat * weight) +
+                pX * crossW -
+                oy * swirlW) *
+            m;
+        final double dispY = (dY * bAmt +
+                dY * (along * str) +
+                pY * (perp * -0.5 * str) +
+                pY * (swLat * weight) +
+                pY * crossW +
+                ox * swirlW) *
+            m;
         // Inverse map: this destination pixel pulls from (x,y) - disp.
         double sx = x - dispX;
         double sy = y - dispY;

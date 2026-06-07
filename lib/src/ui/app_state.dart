@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
@@ -16,6 +18,7 @@ import '../core/validator.dart';
 import '../discovery/bulk_folders.dart';
 import '../discovery/bulk_rename.dart';
 import '../discovery/character_builder.dart';
+import '../discovery/ini_repair.dart';
 import '../discovery/organizer.dart';
 import '../discovery/sprite_scanner.dart';
 import '../imaging/bulk_processor.dart';
@@ -471,6 +474,7 @@ class AppState extends ChangeNotifier {
   /// auto-built character is named after it instead of the generic "newchar".
   Future<void> importFiles(List<PickedFile> files, {String? projectName}) async {
     _setBusy(true, 'Importing ${files.length} files…');
+    await logCrash('importFiles start: ${files.length} file(s)');
     _clearWorkspaceFiles();
     for (final PickedFile f in files) {
       workspace.put(f.name, f.bytes);
@@ -551,6 +555,7 @@ class AppState extends ChangeNotifier {
       return character?.emotes.length ?? 0;
     }
     _setBusy(true, 'Adding ${files.length} sprite file(s)…');
+    await logCrash('addSprites start: ${files.length} file(s)');
     for (final PickedFile f in files) {
       workspace.put(f.name, f.bytes);
     }
@@ -579,6 +584,51 @@ class AppState extends ChangeNotifier {
             ? 'Added $added new emote(s) from new sprites.'
             : 'Imported sprites — no new emotes (all already referenced).');
     return added;
+  }
+
+  /// **Repair every char.ini in a picked folder** (and its subfolders): find
+  /// each `char.ini`, scan its sibling sprites, and rebuild its emote list from
+  /// what's actually on disk — drop emotes whose sprite is gone, add an emote for
+  /// every sprite that has none, keep the `[Options]`/shouts intact. The repaired
+  /// inis download as a `.zip` (each at its original relative path). The project
+  /// you have open is **untouched**. Returns a human summary.
+  Future<String> repairInisInFolder(List<PickedFile> files) async {
+    _setBusy(true, 'Scanning for char.ini files…');
+    await logCrash('repairInis start: ${files.length} file(s)');
+    final Map<String, Uint8List> byPath = <String, Uint8List>{
+      for (final PickedFile f in files) Workspace.norm(f.name): f.bytes,
+    };
+    final List<RepairTarget> targets = IniRepair.findCharFolders(byPath.keys);
+    if (targets.isEmpty) {
+      _setBusy(false, 'No char.ini found in that folder.');
+      return 'No char.ini found in that folder.';
+    }
+    final Archive archive = Archive();
+    int changed = 0, addedTotal = 0, droppedTotal = 0;
+    for (int i = 0; i < targets.length; i++) {
+      final RepairTarget t = targets[i];
+      final Uint8List? iniBytes = byPath[t.iniPath];
+      if (iniBytes == null) continue;
+      final String iniText = utf8.decode(iniBytes, allowMalformed: true);
+      final ({String ini, IniRepairReport report}) res =
+          IniRepair.repairText(iniText, t.spriteRelPaths);
+      final List<int> outBytes = utf8.encode(res.ini);
+      archive.addFile(ArchiveFile(t.iniPath, outBytes.length, outBytes));
+      if (res.report.changed) changed++;
+      addedTotal += res.report.added;
+      droppedTotal += res.report.dropped;
+      _progress(i + 1, targets.length, 'Repair inis');
+    }
+    final List<int>? zip = ZipEncoder().encode(archive);
+    if (zip != null) {
+      await saveBytes('repaired_inis.zip', Uint8List.fromList(zip));
+    }
+    final String summary = 'Repaired ${targets.length} char.ini '
+        '($changed changed; +$addedTotal emote(s), −$droppedTotal dangling). '
+        'Saved repaired_inis.zip.';
+    await logCrash('repairInis done: $summary');
+    _setBusy(false, summary);
+    return summary;
   }
 
   /// Workspace files that belong to the project (everything except the Mixer's
@@ -722,7 +772,7 @@ class AppState extends ChangeNotifier {
     final List<Emote> e = character!.emotes;
     final List<int> sorted =
         selected.where((int i) => i >= 0 && i < e.length).toList()..sort();
-    if (sorted.length < 2) return -1;
+    if (sorted.isEmpty) return -1;
     final List<Emote> moved = <Emote>[for (final int i in sorted) e[i]];
     // Selected items before the drop point shift the insertion left once removed.
     final int selBefore = sorted.where((int i) => i < newIndex).length;
@@ -1492,6 +1542,8 @@ class AppState extends ChangeNotifier {
     final List<SpriteGroup> groups = scan!.groups.toList();
     if (groups.isEmpty) return 0;
     _setBusy(true, 'Animating ${groups.length} sprites…');
+    await logCrash('bulkAnimate start: ${groups.length} sprite(s), '
+        'chunk=$_bulkChunk, concurrency=$maxConcurrency, mobile=$isMobile');
 
     final List<Map<String, dynamic>> recipeJson =
         recipes.map((AnimRecipe r) => r.toJson()).toList();
@@ -1942,6 +1994,8 @@ class AppState extends ChangeNotifier {
     final List<SpriteGroup> groups = scan!.groups.toList();
     if (groups.isEmpty) return 0;
     _setBusy(true, 'Adding talking mouths to ${groups.length} sprites…');
+    await logCrash('bulkMouth start: ${groups.length} sprite(s), '
+        'chunk=$_bulkChunk, concurrency=$maxConcurrency, mobile=$isMobile');
 
     // Lightweight descriptors first (no preloaded bytes) so memory doesn't grow
     // with the cast size.
@@ -2305,6 +2359,8 @@ class AppState extends ChangeNotifier {
         cells.where((SheetCell c) => c.enabled).toList();
     if (enabled.isEmpty) return 0;
     _setBusy(true, 'Ripping ${enabled.length} sprite(s)…');
+    await logCrash('exportSheetCells start: ${enabled.length} cell(s), '
+        'toProject=$toProject');
     // When adding to the project, seed the namer with the sprites **already
     // there** so a second sheet's auto names continue past them (sprite5, 6, …)
     // instead of restarting at sprite1 and overwriting the first sheet's files.
@@ -2647,6 +2703,7 @@ class AppState extends ChangeNotifier {
   Future<MemoryWorkspace> buildOutput() async {
     final MemoryWorkspace out = MemoryWorkspace();
     if (character == null || scan == null) return out;
+    await logCrash('buildOutput start: ${character!.emotes.length} emote(s)');
     await _studioOrganizer().organize(
       character: character!,
       scan: scan!,

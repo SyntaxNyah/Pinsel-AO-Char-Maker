@@ -40,6 +40,9 @@ class JiggleSpec {
     this.lobes = 1,
     this.spread = 0.5,
     this.poly = const <double>[],
+    this.crossAmount = 0.0,
+    this.swirl = 0.0,
+    this.pulse = 0.0,
   });
 
   /// Preset name (unique within [jigglePresets]).
@@ -114,6 +117,19 @@ class JiggleSpec {
   /// splitting is skipped (it's one drawn region). Empty = use the box.
   final List<double> poly;
 
+  /// 0..1 — **cross-bounce**: a perpendicular wobble 90° out of phase with the
+  /// main bounce so the tip traces an **ellipse**, not a straight line (the
+  /// natural "moves in a little circle" look). 0 = pure up/down.
+  final double crossAmount;
+
+  /// degrees — **swirl**: a small back-and-forth **rotation** of the region about
+  /// its centre on top of the bounce. 0 = none.
+  final double swirl;
+
+  /// 0..1 — **pulse**: the whole jiggle **swells then fades** once per loop (a
+  /// breathing intensity) instead of a constant strength. 0 = steady.
+  final double pulse;
+
   JiggleSpec copyWith({
     String? name,
     String? category,
@@ -136,6 +152,9 @@ class JiggleSpec {
     int? lobes,
     double? spread,
     List<double>? poly,
+    double? crossAmount,
+    double? swirl,
+    double? pulse,
   }) =>
       JiggleSpec(
         name: name ?? this.name,
@@ -159,6 +178,9 @@ class JiggleSpec {
         lobes: lobes ?? this.lobes,
         spread: spread ?? this.spread,
         poly: poly ?? this.poly,
+        crossAmount: crossAmount ?? this.crossAmount,
+        swirl: swirl ?? this.swirl,
+        pulse: pulse ?? this.pulse,
       );
 
   /// Build the [AnimEngine] recipe for an image of [imgW]×[imgH] px. The region
@@ -210,6 +232,9 @@ class JiggleSpec {
         'gravity': gravity,
         'organic': organic,
         'followThrough': followThrough,
+        'crossAmount': crossAmount,
+        'swirl': swirl,
+        'pulse': pulse,
       },
     );
   }
@@ -258,6 +283,9 @@ class JiggleSpec {
         'lobes': lobes,
         'spread': spread,
         if (poly.isNotEmpty) 'poly': poly,
+        'crossAmount': crossAmount,
+        'swirl': swirl,
+        'pulse': pulse,
       };
 
   static JiggleSpec fromJson(Map<String, Object?> m) => JiggleSpec(
@@ -285,6 +313,9 @@ class JiggleSpec {
                 ?.map((Object? v) => (v as num).toDouble())
                 .toList() ??
             const <double>[],
+        crossAmount: (m['crossAmount'] as num?)?.toDouble() ?? 0.0,
+        swirl: (m['swirl'] as num?)?.toDouble() ?? 0.0,
+        pulse: (m['pulse'] as num?)?.toDouble() ?? 0.0,
       );
 }
 
@@ -346,6 +377,21 @@ List<JiggleSpec> _buildJigglePresets() {
     JiggleSpec(name: 'Free Float', category: 'Physics', amplitude: 0.14, frequency: 2, bounciness: 0.5, squash: 0.55, sway: 3, anchor: 0.5, followThrough: 0.3),
     JiggleSpec(name: 'Triple', category: 'Physics', amplitude: 0.16, frequency: 2, bounciness: 0.6, squash: 0.6, sway: 2, lobes: 3, spread: 0.33, gravity: 0.3, followThrough: 0.4),
     JiggleSpec(name: 'Quad', category: 'Physics', amplitude: 0.14, frequency: 2, bounciness: 0.6, squash: 0.6, sway: 2, lobes: 4, spread: 0.25, gravity: 0.3, followThrough: 0.4),
+    // Lifelike — realism knobs dialed for natural, weighty, non-mechanical motion
+    // (zero extra cost: just different parameter mixes of the same warp).
+    JiggleSpec(name: 'Heave', category: 'Lifelike', amplitude: 0.2, frequency: 1, bounciness: 0.5, squash: 0.65, sway: 2, gravity: 0.7, organic: 0.4, followThrough: 0.6, twin: true, x: 0.27, y: 0.34, w: 0.46, h: 0.21),
+    JiggleSpec(name: 'Sultry', category: 'Lifelike', amplitude: 0.16, frequency: 1, bounciness: 0.6, squash: 0.7, sway: 3, gravity: 0.5, organic: 0.5, followThrough: 0.8, twin: true, x: 0.27, y: 0.34, w: 0.46, h: 0.21),
+    JiggleSpec(name: 'Quiver', category: 'Lifelike', amplitude: 0.08, frequency: 5, bounciness: 0.5, squash: 0.5, sway: 1, organic: 0.55, followThrough: 0.4),
+    JiggleSpec(name: 'Sashay', category: 'Lifelike', amplitude: 0.14, frequency: 2, bounciness: 0.45, squash: 0.5, sway: 8, direction: 90, gravity: 0.3, followThrough: 0.5),
+    JiggleSpec(name: 'Drop Settle', category: 'Lifelike', amplitude: 0.24, frequency: 2, bounciness: 0.72, squash: 0.7, sway: 2, gravity: 0.85, organic: 0.3, followThrough: 0.7, twin: true, x: 0.26, y: 0.34, w: 0.48, h: 0.22),
+    JiggleSpec(name: 'Flutter', category: 'Lifelike', amplitude: 0.1, frequency: 4, bounciness: 0.6, squash: 0.55, sway: 2, organic: 0.45, followThrough: 0.5),
+    JiggleSpec(name: 'Pillowy', category: 'Lifelike', amplitude: 0.18, frequency: 2, bounciness: 0.85, squash: 0.8, sway: 3, gravity: 0.4, organic: 0.5, followThrough: 0.75, twin: true, x: 0.26, y: 0.34, w: 0.48, h: 0.22),
+    // Motion — showcases the new ways of moving (circular / swirl / pulse).
+    JiggleSpec(name: 'Circular', category: 'Motion', amplitude: 0.16, frequency: 2, bounciness: 0.55, squash: 0.6, sway: 2, crossAmount: 0.7, gravity: 0.3, followThrough: 0.5, twin: true, x: 0.27, y: 0.34, w: 0.46, h: 0.21),
+    JiggleSpec(name: 'Swirl', category: 'Motion', amplitude: 0.14, frequency: 2, bounciness: 0.5, squash: 0.55, sway: 2, swirl: 10, gravity: 0.3, followThrough: 0.4),
+    JiggleSpec(name: 'Pulse', category: 'Motion', amplitude: 0.16, frequency: 2, bounciness: 0.6, squash: 0.6, sway: 2, pulse: 0.7, gravity: 0.3, followThrough: 0.5),
+    JiggleSpec(name: 'Orbit', category: 'Motion', amplitude: 0.15, frequency: 2, bounciness: 0.5, squash: 0.55, sway: 3, crossAmount: 0.85, swirl: 6, gravity: 0.3, followThrough: 0.5, twin: true, x: 0.27, y: 0.34, w: 0.46, h: 0.21),
+    JiggleSpec(name: 'Hypnotic', category: 'Motion', amplitude: 0.14, frequency: 1, bounciness: 0.6, squash: 0.6, sway: 4, crossAmount: 0.6, swirl: 8, pulse: 0.5, gravity: 0.3, followThrough: 0.6, twin: true, x: 0.27, y: 0.34, w: 0.46, h: 0.21),
   ];
   // (suffix, ampMul, freqDelta, bounceMul, squashMul, swayMul)
   const List<(String, double, int, double, double, double)> mods =

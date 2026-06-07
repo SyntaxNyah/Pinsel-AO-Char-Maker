@@ -204,6 +204,23 @@ class _EmoteListState extends State<_EmoteList> {
     );
   }
 
+  /// Move the ticked emotes (as a contiguous block, keeping their order) to a raw
+  /// drop index — the reliable way to reorder a multi-selection in a long list,
+  /// where dragging across hundreds of rows isn't practical.
+  void _moveSelected(AppState app, int newIndex) {
+    final int len = app.character?.emotes.length ?? 0;
+    final int n = _selected.where((int i) => i >= 0 && i < len).length;
+    if (n == 0) return;
+    final int first = app.moveEmotes(_selected, newIndex);
+    if (first >= 0) {
+      setState(() {
+        _selected
+          ..clear()
+          ..addAll(List<int>.generate(n, (int k) => first + k));
+      });
+    }
+  }
+
   /// A compact bar to select-all / clear / delete the ticked emotes. Always
   /// shown (with a hint) so multi-select is discoverable; the actions light up
   /// once something is ticked.
@@ -231,6 +248,37 @@ class _EmoteListState extends State<_EmoteList> {
                       }),
               child: Text(_selected.length == count ? 'None' : 'All'),
             ),
+            if (any)
+              PopupMenuButton<String>(
+                tooltip: 'Move selected (works across the whole list)',
+                icon: const Icon(Icons.swap_vert_rounded, size: 20),
+                onSelected: (String v) {
+                  if (v == 'top') {
+                    _moveSelected(app, 0);
+                  } else if (v == 'bottom') {
+                    _moveSelected(app, count);
+                  } else {
+                    final int mn =
+                        _selected.reduce((int a, int b) => a < b ? a : b);
+                    final int mx =
+                        _selected.reduce((int a, int b) => a > b ? a : b);
+                    _moveSelected(
+                        app,
+                        v == 'up'
+                            ? (mn - 1).clamp(0, count)
+                            : (mx + 2).clamp(0, count));
+                  }
+                },
+                itemBuilder: (BuildContext context) =>
+                    const <PopupMenuEntry<String>>[
+                  PopupMenuItem<String>(
+                      value: 'top', child: Text('Move to top')),
+                  PopupMenuItem<String>(value: 'up', child: Text('Move up')),
+                  PopupMenuItem<String>(value: 'down', child: Text('Move down')),
+                  PopupMenuItem<String>(
+                      value: 'bottom', child: Text('Move to bottom')),
+                ],
+              ),
             TextButton.icon(
               onPressed: any
                   ? () {

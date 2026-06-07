@@ -78,7 +78,10 @@ void main() {
               gravity: 0.8,
               organic: 0.7,
               followThrough: 0.8,
-              anchor: 0.3)
+              anchor: 0.3,
+              crossAmount: 0.6,
+              swirl: 12,
+              pulse: 0.6)
           .toRecipe(_sprite().width, _sprite().height);
 
   test('warpJiggle preserves size and leaves the body outside the region '
@@ -265,7 +268,10 @@ void main() {
         organic: 0.5,
         followThrough: 0.7,
         lobes: 3,
-        spread: 0.4);
+        spread: 0.4,
+        crossAmount: 0.55,
+        swirl: 9,
+        pulse: 0.35);
     final JiggleSpec back = JiggleSpec.fromJson(j.toJson());
     expect(back.anchor, closeTo(0.4, 1e-9));
     expect(back.gravity, closeTo(0.6, 1e-9));
@@ -273,5 +279,8 @@ void main() {
     expect(back.followThrough, closeTo(0.7, 1e-9));
     expect(back.lobes, 3);
     expect(back.spread, closeTo(0.4, 1e-9));
+    expect(back.crossAmount, closeTo(0.55, 1e-9));
+    expect(back.swirl, closeTo(9, 1e-9));
+    expect(back.pulse, closeTo(0.35, 1e-9));
   });
 }

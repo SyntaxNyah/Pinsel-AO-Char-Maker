@@ -186,6 +186,22 @@ The central model.
   nested `anim/…` stays inside its character; a loose folder with no sub-folders
   collapses to one character. Drives `AppState.bulkBuildCharacters`.
 
+### discovery/ini_repair.dart  ← rebuild a broken char.ini from its sprites
+- `class IniRepairReport(kept, added, dropped)` — `.total`, `.changed`, `.summary`.
+- `class RepairTarget(charDir, iniPath, spriteRelPaths)`.
+- `class IniRepair` — **`repair(Character c, ScanResult scan, {dropDangling})`**
+  reconciles `c`'s emotes with the sprites that actually exist (keeps valid emotes
+  with their metadata, **drops dangling refs**, **adds an emote per orphan
+  sprite**), preserving `[Options]`/shouts/unknown sections; **mutates `c`** and
+  returns a report. **`repairText(iniText, spriteRelPaths)`** = parse → scan →
+  repair → `serialize()` → `({ini, report})`. **`findCharFolders(paths)`** finds
+  every `char.ini` (any depth) and assigns each sprite to the **longest-prefix**
+  char dir (so nested characters claim their own sprites). Reuses
+  `SpriteScanner`/`CharacterBuilder`-style logic; pure + tested
+  (`test/ini_repair_test.dart`). Drives `AppState.repairInisInFolder(files)` (find
+  → repair each → download `repaired_inis.zip`; project untouched), surfaced as the
+  Home **"Repair char.inis in a folder"** button.
+
 ### discovery/organizer.dart
 - `typedef ButtonRenderer = Future<Uint8List?> Function(bytes, ext, size,
   framing, zoom, spriteBase)` — framing/zoom let the renderer head-crop;
@@ -480,17 +496,22 @@ The central model.
   **`followThrough`** (0..1 tip lags base = jiggle wave), and **`lobes`** (int) /
   **`spread`** (0..1 inter-lobe phase) / `twin` (bool = lobes 2), plus **`poly`**
   (freeform outline as fractions — the "draw around" lasso; ≥3 pts ⇒ masks to that
-  shape and skips lobe-splitting). **All realism knobs default to 0 / lobes 1 /
-  empty poly ⇒ original motion** (existing presets + the seam-test unchanged).
-  Plain data → `copyWith`, `toJson/fromJson`, isolate-safe.
+  shape and skips lobe-splitting), and the **motion ways** **`crossAmount`** (0..1
+  perpendicular cross-bounce ⇒ 2D elliptical tip path), **`swirl`** (deg rotation
+  wobble) and **`pulse`** (0..1 intensity swells/fades over the loop). **Every
+  knob defaults to 0 / lobes 1 / empty poly ⇒ original motion** (existing presets +
+  the seam-test unchanged); all are cheap per-pixel ops (no real perf cost). Plain
+  data → `copyWith`, `toJson/fromJson`, isolate-safe.
   **`toRecipe(imgW,imgH)`** → one `AnimRecipe('jigglePhysics', region, p:{...})`
   (amplitude→px = frac × region-height-px; the realism knobs go in `p` too).
   **`toRecipes(imgW,imgH)`** → 1 recipe, or **N opposite-phase lobe recipes** when
   `lobes>1`/`twin` (box split into N columns, ~10% gaps, phase += `spread` each =
   the two-breast "boobs" look). All AppState jiggle paths call `toRecipes` (so
   lobes/twin reach preview/save/bulk). Warped by `AnimEngine.warpJiggle`.
-- **`jigglePresets`** — ~190 presets (27 archetypes × {base,Soft,Big,Fast,Slow,
-  Springy,Extreme}) across **Bust**/Soft/Bounce/Jelly/Sway/Wild/**Physics**. The
+- **`jigglePresets`** — ~240 presets (34 archetypes × {base,Soft,Big,Fast,Slow,
+  Springy,Extreme}) across **Bust**/Soft/Bounce/Jelly/Sway/Wild/**Physics**/
+  **Lifelike**/**Motion** (Motion = Circular/Swirl/Pulse/Orbit/Hypnotic showcases
+  of the new cross-bounce/swirl/pulse ways). The
   **Bust** group leads (premium twin chest physics with gravity + follow-through);
   **Physics** showcases the new knobs (Gravity Drop/Wave/Organic/Free Float/
   Triple/Quad). `jiggleCategories`, `jiggleByName(name)`. Surfaced in the

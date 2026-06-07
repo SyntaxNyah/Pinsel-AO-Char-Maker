@@ -142,6 +142,16 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ✅ **Freeform "draw-around" jiggle region** — a lasso in the Jiggle tab traces a
   polygon (`JiggleSpec.poly` / `AnimRecipe.poly`); `warpJiggle` masks to that exact
   shape with a feathered edge (inside + edges jiggle, blends into the body). Tested.
+- ✅ **char.ini repairer** — Home "Repair char.inis in a folder": scans a folder
+  (and subfolders) for every `char.ini` and rebuilds each emote list from the
+  sprites actually present (drops dangling refs, adds orphan sprites, keeps
+  `[Options]`), downloading `repaired_inis.zip` (`discovery/ini_repair.dart`, tested).
+- ✅ **More jiggle presets** — a **Lifelike** category (Heave/Sultry/Quiver/Sashay/
+  Drop Settle/Flutter/Pillowy) tuned with the realism knobs; zero perf cost (data).
+- ✅ **Crash breadcrumbs** — every heavy op (`import`/`addSprites`/`bulkAnimate`/
+  `bulkMouth`/`bulkJiggle`/`rip`/`buildOutput`) logs a start crumb + a `session
+  start` on launch, and the log is viewable in-app (About → View crash log) — so a
+  native OOM that writes nothing itself still leaves a trail of how far it got.
 - ✅ **Mobile crash/lag fix** — bulk render concurrency capped to 2 on Android/iOS
   (`maxConcurrency`) so a big bulk job (e.g. ~500 sprites) doesn't OOM-kill the app
   or starve the UI on a phone/tablet.

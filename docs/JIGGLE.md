@@ -33,6 +33,13 @@ sprite, so it plays in-game with no extra work.
      * **Organic** — a touch of extra harmonic so it isn't a robotic sine.
      * **Anchor** — where the pinned point sits: 0 = pinned at the top (hangs and
        swings below — boobs/hair), 0.5 = centre-pinned (both ends free).
+   * **Motion styles (more ways to move):**
+     * **Circular (2D ellipse)** — adds a perpendicular wobble 90° out of phase so
+       the tip traces a little **ellipse** instead of straight up/down (natural).
+     * **Swirl** — a back-and-forth **rotation** of the region about its centre.
+     * **Pulse** — the jiggle **swells and fades** once per loop (breathing
+       intensity). See the **Motion** preset group (Circular/Swirl/Pulse/Orbit/
+       Hypnotic). All default to off and add no real cost.
    * **Preset** — pick from **180+ presets** (the **Bust** group leads — premium
      twin chest physics with gravity + follow-through; then a **Physics** group
      and subtle/bouncy/jelly/sway/wild…) as a starting point; it keeps the box
