@@ -68,8 +68,17 @@ void main() {
   // sliding-rectangle: seamless edges, actual motion, a clean loop, no blanking.
 
   AnimRecipe _strongRecipe() =>
-      // A deliberately violent spec so any deformation is unmistakable.
-      const JiggleSpec(amplitude: 0.5, squash: 1.0, sway: 12)
+      // A deliberately violent spec — and it exercises every new realism knob,
+      // so the seam/motion/loop invariants below also guard gravity/organic/
+      // follow-through/anchor (a non-periodic term would trip the loop test).
+      const JiggleSpec(
+              amplitude: 0.5,
+              squash: 1.0,
+              sway: 12,
+              gravity: 0.8,
+              organic: 0.7,
+              followThrough: 0.8,
+              anchor: 0.3)
           .toRecipe(_sprite().width, _sprite().height);
 
   test('warpJiggle preserves size and leaves the body outside the region '
@@ -165,5 +174,43 @@ void main() {
     final JiggleSpec bust = jiggleByName('Bust');
     expect(bust.name, 'Bust');
     expect(bust.twin, isTrue);
+  });
+
+  test('lobes splits into N out-of-phase regions (generalises twin)', () {
+    const JiggleSpec j =
+        JiggleSpec(x: 0.1, y: 0.3, w: 0.8, h: 0.2, lobes: 3, spread: 0.33);
+    final List<AnimRecipe> rs = j.toRecipes(100, 100);
+    expect(rs.length, 3);
+    expect(rs[1].region!.x, greaterThan(rs[0].region!.x));
+    expect(rs[2].region!.x, greaterThan(rs[1].region!.x));
+    expect(rs[1].p['phase']!, closeTo(0.33, 1e-9));
+    expect(rs[2].p['phase']!, closeTo(0.66, 1e-9));
+  });
+
+  test('toRecipe carries the new realism warp params', () {
+    final AnimRecipe r = const JiggleSpec(
+            anchor: 0.3, gravity: 0.5, organic: 0.4, followThrough: 0.6)
+        .toRecipe(100, 100);
+    expect(r.p['anchor'], closeTo(0.3, 1e-9));
+    expect(r.p['gravity'], closeTo(0.5, 1e-9));
+    expect(r.p['organic'], closeTo(0.4, 1e-9));
+    expect(r.p['followThrough'], closeTo(0.6, 1e-9));
+  });
+
+  test('new jiggle params round-trip through JSON', () {
+    const JiggleSpec j = JiggleSpec(
+        anchor: 0.4,
+        gravity: 0.6,
+        organic: 0.5,
+        followThrough: 0.7,
+        lobes: 3,
+        spread: 0.4);
+    final JiggleSpec back = JiggleSpec.fromJson(j.toJson());
+    expect(back.anchor, closeTo(0.4, 1e-9));
+    expect(back.gravity, closeTo(0.6, 1e-9));
+    expect(back.organic, closeTo(0.5, 1e-9));
+    expect(back.followThrough, closeTo(0.7, 1e-9));
+    expect(back.lobes, 3);
+    expect(back.spread, closeTo(0.4, 1e-9));
   });
 }

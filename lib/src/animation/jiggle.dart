@@ -33,6 +33,12 @@ class JiggleSpec {
     this.direction = 0.0,
     this.phase = 0.0,
     this.twin = false,
+    this.anchor = 0.0,
+    this.gravity = 0.0,
+    this.organic = 0.0,
+    this.followThrough = 0.0,
+    this.lobes = 1,
+    this.spread = 0.5,
   });
 
   /// Preset name (unique within [jigglePresets]).
@@ -71,8 +77,35 @@ class JiggleSpec {
 
   /// **Twin lobes** (boobs): when true the drawn box is split down the middle
   /// into a left + right lobe that bounce in **opposite phase** — the gacha
-  /// chest-physics look — instead of one block. See [toRecipes].
+  /// chest-physics look — instead of one block. Shorthand for [lobes] = 2. See
+  /// [toRecipes].
   final bool twin;
+
+  /// Where the **pinned point** sits along the travel axis: 0 = trailing/top
+  /// pinned (the boob "hang", default), 1 = leading pinned, 0.5 = centre pinned
+  /// (both ends swing). 0 reproduces the original motion.
+  final double anchor;
+
+  /// 0..1 — **asymmetric gravity**: a heavier, quicker fall and a gentler rise
+  /// (weighty flesh) instead of a symmetric sine. 0 = symmetric (original).
+  final double gravity;
+
+  /// 0..1 — **organic** variation: a higher harmonic so the motion reads natural
+  /// rather than a perfect robotic sine. 0 = pure (original).
+  final double organic;
+
+  /// 0..1 — **follow-through**: the swinging end lags the pin so the jiggle
+  /// travels through the flesh as a wave (soft-body realism). 0 = rigid (orig).
+  final double followThrough;
+
+  /// Number of side-by-side **lobes** to split the box into (1 = one region).
+  /// >1 generalises [twin] (which is lobes = 2); each lobe is phase-offset by
+  /// [spread] so they bounce out of sync. See [toRecipes].
+  final int lobes;
+
+  /// 0..1 — phase offset between consecutive [lobes] (0.5 = exactly opposite,
+  /// the natural two-breast look).
+  final double spread;
 
   JiggleSpec copyWith({
     String? name,
@@ -89,6 +122,12 @@ class JiggleSpec {
     double? direction,
     double? phase,
     bool? twin,
+    double? anchor,
+    double? gravity,
+    double? organic,
+    double? followThrough,
+    int? lobes,
+    double? spread,
   }) =>
       JiggleSpec(
         name: name ?? this.name,
@@ -105,6 +144,12 @@ class JiggleSpec {
         direction: direction ?? this.direction,
         phase: phase ?? this.phase,
         twin: twin ?? this.twin,
+        anchor: anchor ?? this.anchor,
+        gravity: gravity ?? this.gravity,
+        organic: organic ?? this.organic,
+        followThrough: followThrough ?? this.followThrough,
+        lobes: lobes ?? this.lobes,
+        spread: spread ?? this.spread,
       );
 
   /// Build the [AnimEngine] recipe for an image of [imgW]×[imgH] px. The region
@@ -127,6 +172,10 @@ class JiggleSpec {
         'sway': sway,
         'direction': direction,
         'phase': phase,
+        'anchor': anchor,
+        'gravity': gravity,
+        'organic': organic,
+        'followThrough': followThrough,
       },
     );
   }
@@ -137,19 +186,20 @@ class JiggleSpec {
   /// which reads as two breasts rather than one rigid block. Each lobe is a
   /// plain (non-twin) [JiggleSpec] so it goes through the normal warp path.
   List<AnimRecipe> toRecipes(int imgW, int imgH) {
-    if (!twin) return <AnimRecipe>[toRecipe(imgW, imgH)];
-    const double gap = 0.10; // fraction of the box width left clear in the middle
-    final double lobeW = math.max(0.02, w * (1 - gap) / 2.0);
-    final JiggleSpec left = copyWith(twin: false, w: lobeW);
-    final JiggleSpec right = copyWith(
-      twin: false,
-      x: x + w - lobeW,
-      w: lobeW,
-      phase: (phase + 0.5) % 1.0,
-    );
+    final int n = lobes > 1 ? lobes : (twin ? 2 : 1);
+    if (n <= 1) return <AnimRecipe>[toRecipe(imgW, imgH)];
+    const double gap = 0.10; // fraction of the box width kept clear between lobes
+    final double lobeW = math.max(0.02, w * (1 - gap) / n);
+    final double step = (w - lobeW) / (n - 1);
     return <AnimRecipe>[
-      left.toRecipe(imgW, imgH),
-      right.toRecipe(imgW, imgH),
+      for (int i = 0; i < n; i++)
+        copyWith(
+          twin: false,
+          lobes: 1,
+          x: x + step * i,
+          w: lobeW,
+          phase: (phase + spread * i) % 1.0,
+        ).toRecipe(imgW, imgH),
     ];
   }
 
@@ -165,6 +215,12 @@ class JiggleSpec {
         'direction': direction,
         'phase': phase,
         'twin': twin,
+        'anchor': anchor,
+        'gravity': gravity,
+        'organic': organic,
+        'followThrough': followThrough,
+        'lobes': lobes,
+        'spread': spread,
       };
 
   static JiggleSpec fromJson(Map<String, Object?> m) => JiggleSpec(
@@ -182,6 +238,12 @@ class JiggleSpec {
         direction: (m['direction'] as num?)?.toDouble() ?? 0.0,
         phase: (m['phase'] as num?)?.toDouble() ?? 0.0,
         twin: (m['twin'] as bool?) ?? false,
+        anchor: (m['anchor'] as num?)?.toDouble() ?? 0.0,
+        gravity: (m['gravity'] as num?)?.toDouble() ?? 0.0,
+        organic: (m['organic'] as num?)?.toDouble() ?? 0.0,
+        followThrough: (m['followThrough'] as num?)?.toDouble() ?? 0.0,
+        lobes: (m['lobes'] as num?)?.toInt() ?? 1,
+        spread: (m['spread'] as num?)?.toDouble() ?? 0.5,
       );
 }
 
@@ -211,12 +273,14 @@ JiggleSpec jiggleByName(String? name) {
 List<JiggleSpec> _buildJigglePresets() {
   // (name, category, amplitude, frequency, bounciness, squash, sway, direction)
   const List<JiggleSpec> archetypes = <JiggleSpec>[
-    // Bust (boobs): twin lobes over the chest that bounce out of phase. Listed
-    // first so the picker leads with the headline "anime jiggle" look.
-    JiggleSpec(name: 'Bust', category: 'Bust', x: 0.28, y: 0.34, w: 0.44, h: 0.20, amplitude: 0.16, frequency: 2, bounciness: 0.55, squash: 0.6, sway: 2, twin: true),
-    JiggleSpec(name: 'Bust Big', category: 'Bust', x: 0.25, y: 0.34, w: 0.50, h: 0.22, amplitude: 0.26, frequency: 2, bounciness: 0.7, squash: 0.72, sway: 3, twin: true),
-    JiggleSpec(name: 'Bust Jelly', category: 'Bust', x: 0.27, y: 0.34, w: 0.46, h: 0.20, amplitude: 0.22, frequency: 3, bounciness: 0.9, squash: 0.85, sway: 4, twin: true),
-    JiggleSpec(name: 'Bust Soft', category: 'Bust', x: 0.28, y: 0.35, w: 0.44, h: 0.18, amplitude: 0.11, frequency: 2, bounciness: 0.4, squash: 0.5, sway: 1, twin: true),
+    // Bust (boobs): twin lobes over the chest, bouncing out of phase, with the
+    // soft-body realism knobs (weighty gravity, organic harmonic, follow-through
+    // wave) dialed in so they read like pro animation. Listed first.
+    JiggleSpec(name: 'Bust Realistic', category: 'Bust', x: 0.27, y: 0.34, w: 0.46, h: 0.21, amplitude: 0.18, frequency: 2, bounciness: 0.62, squash: 0.7, sway: 3, twin: true, gravity: 0.5, organic: 0.4, followThrough: 0.65),
+    JiggleSpec(name: 'Bust', category: 'Bust', x: 0.28, y: 0.34, w: 0.44, h: 0.20, amplitude: 0.16, frequency: 2, bounciness: 0.58, squash: 0.62, sway: 2, twin: true, gravity: 0.35, organic: 0.3, followThrough: 0.5),
+    JiggleSpec(name: 'Bust Big', category: 'Bust', x: 0.25, y: 0.34, w: 0.50, h: 0.22, amplitude: 0.27, frequency: 2, bounciness: 0.72, squash: 0.74, sway: 3, twin: true, gravity: 0.45, organic: 0.35, followThrough: 0.55),
+    JiggleSpec(name: 'Bust Jelly', category: 'Bust', x: 0.27, y: 0.34, w: 0.46, h: 0.20, amplitude: 0.22, frequency: 3, bounciness: 0.9, squash: 0.85, sway: 4, twin: true, gravity: 0.25, organic: 0.45, followThrough: 0.7),
+    JiggleSpec(name: 'Bust Soft', category: 'Bust', x: 0.28, y: 0.35, w: 0.44, h: 0.18, amplitude: 0.11, frequency: 2, bounciness: 0.42, squash: 0.52, sway: 1, twin: true, gravity: 0.25, organic: 0.25, followThrough: 0.4),
     JiggleSpec(name: 'Natural', category: 'Soft', amplitude: 0.14, frequency: 2, bounciness: 0.45, squash: 0.5, sway: 0),
     JiggleSpec(name: 'Subtle', category: 'Soft', amplitude: 0.08, frequency: 2, bounciness: 0.3, squash: 0.35, sway: 0),
     JiggleSpec(name: 'Gentle', category: 'Soft', amplitude: 0.11, frequency: 2, bounciness: 0.4, squash: 0.45, sway: 0),
@@ -233,6 +297,14 @@ List<JiggleSpec> _buildJigglePresets() {
     JiggleSpec(name: 'Sideways', category: 'Sway', amplitude: 0.16, frequency: 2, bounciness: 0.5, squash: 0.4, sway: 0, direction: 90),
     JiggleSpec(name: 'Earthquake', category: 'Wild', amplitude: 0.3, frequency: 6, bounciness: 0.4, squash: 0.5, sway: 2, direction: 45),
     JiggleSpec(name: 'Rapid', category: 'Wild', amplitude: 0.12, frequency: 6, bounciness: 0.6, squash: 0.5, sway: 0),
+    // Physics showcases — the new realism knobs (gravity / follow-through /
+    // multi-lobe / centre-pin).
+    JiggleSpec(name: 'Gravity Drop', category: 'Physics', amplitude: 0.24, frequency: 2, bounciness: 0.5, squash: 0.65, sway: 1, gravity: 0.8, followThrough: 0.4),
+    JiggleSpec(name: 'Wave', category: 'Physics', amplitude: 0.2, frequency: 2, bounciness: 0.7, squash: 0.7, sway: 2, followThrough: 0.85, organic: 0.3),
+    JiggleSpec(name: 'Organic', category: 'Physics', amplitude: 0.16, frequency: 2, bounciness: 0.55, squash: 0.6, sway: 2, organic: 0.7, gravity: 0.3),
+    JiggleSpec(name: 'Free Float', category: 'Physics', amplitude: 0.14, frequency: 2, bounciness: 0.5, squash: 0.55, sway: 3, anchor: 0.5, followThrough: 0.3),
+    JiggleSpec(name: 'Triple', category: 'Physics', amplitude: 0.16, frequency: 2, bounciness: 0.6, squash: 0.6, sway: 2, lobes: 3, spread: 0.33, gravity: 0.3, followThrough: 0.4),
+    JiggleSpec(name: 'Quad', category: 'Physics', amplitude: 0.14, frequency: 2, bounciness: 0.6, squash: 0.6, sway: 2, lobes: 4, spread: 0.25, gravity: 0.3, followThrough: 0.4),
   ];
   // (suffix, ampMul, freqDelta, bounceMul, squashMul, swayMul)
   const List<(String, double, int, double, double, double)> mods =

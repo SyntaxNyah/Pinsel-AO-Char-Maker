@@ -128,8 +128,17 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   instead of a sliding cut-out rectangle (the "looks like a cropped PNG" fix), and
   **`twin`** splits a box into two opposite-phase lobes (the **Bust**/"boobs"
   presets) — i.e. multiple regions per box
-- ⬜ Arbitrary N jiggle regions in the UI (engine already takes a list; the tab
-  drives one box, or two via `twin`)
+- ✅ **Pro soft-body jiggle realism** — `anchor` (pinned point), `gravity`
+  (asymmetric weighty fall), `organic` (natural harmonic), `followThrough` (tip
+  lags base = the jiggle ripples through the flesh as a wave), and **`lobes`** N
+  (a UI slider; generalises twin) with `spread`. All loop-seamless, all neutral
+  by default. Premium **Bust** + **Physics** presets; sliders in the Jiggle tab
+- ⬜ Per-sprite jiggle regions / multiple independent boxes drawn on one sprite
+- ✅ **Button/icon crop shapes (engine)** — `imaging/crop_shape.dart`: circle /
+  rounded / polygon / star / heart presets + an AA `mask(size)`; `renderFramed`
+  clips a button to the shape (real round buttons, transparent corners) behind a
+  clip toggle. ⬜ Next: the Button Studio shape-picker UI + custom generator +
+  import-PNG-as-mask + `AppState` wiring
 - ⬜ Onion-skinning + scrubbable timeline UI
 - ⬜ Per-frame SFX/realization/screenshake authoring UI (model supports it)
 

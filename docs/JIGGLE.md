@@ -22,12 +22,21 @@ sprite, so it plays in-game with no extra work.
    * **Bounciness** — how much springy overshoot rides on top.
    * **Softness (squash & stretch)** — how much it squashes as it moves.
    * **Sway (rotation)** — a little rotational wobble.
-   * **Twin lobes (boobs)** — split the box into a **left + right lobe** that
-     bounce in **opposite phase**. This is what reads as two breasts instead of
-     one block; it's on by default for the **Bust** presets.
-   * **Preset** — pick from **100+ presets** (the **Bust** group leads — twin
-     chest physics; then subtle, bouncy, jelly, sway, wild…) as a starting point;
-     it keeps the box you placed and adopts its physics.
+   * **Lobes** — split the box into N side-by-side lobes that bounce out of
+     phase. **2 = boobs** (two breasts alternating, the natural look); 1 = a
+     single region; 3–6 for rows of jiggling parts.
+   * **Lobe spread** — phase offset between lobes (0.5 = exactly opposite).
+   * **Realism (soft-body physics):**
+     * **Gravity** — a heavier, quicker fall and a gentler rise (weighty flesh).
+     * **Follow-through** — the swinging end lags the base, so the jiggle ripples
+       *through* the flesh as a wave. This is the biggest "pro animation" tell.
+     * **Organic** — a touch of extra harmonic so it isn't a robotic sine.
+     * **Anchor** — where the pinned point sits: 0 = pinned at the top (hangs and
+       swings below — boobs/hair), 0.5 = centre-pinned (both ends free).
+   * **Preset** — pick from **180+ presets** (the **Bust** group leads — premium
+     twin chest physics with gravity + follow-through; then a **Physics** group
+     and subtle/bouncy/jelly/sway/wild…) as a starting point; it keeps the box
+     you placed and adopts its physics.
 4. **Save as (a) idle** — jiggle is an idle motion, so it saves as the `(a)`
    sprite (plays while the character is just standing there). WebP, APNG
    fallback.
@@ -62,14 +71,22 @@ there* **stretch continuously** instead of a rectangle moving:
 Per frame `t ∈ [0,1)` the time-varying drive is:
 
 ```
-w    = 2π · frequency · t + phase
-osc  = sin(w) + bounciness · 0.4 · sin(2w + 0.6)   // base + springy overshoot
-hang = 0 at the anchored edge → 1 at the free end (along `direction`)
-disp = direction·(amplitude·osc·hang)              // anchored bounce
-     + squash·velocity stretch (along) / squeeze (across)
-     + sway·(lateral, ×hang)
-sample = (x,y) − disp · mask                        // inverse map, bilinear
+w      = 2π · frequency · t + phase
+osc(a) = sin(a) + bounciness·0.4·sin(2a+0.6)        // base + springy overshoot
+         − gravity·0.28·cos(2a)                      // asymmetric fall vs rise
+         + organic·0.22·sin(3a+1.7)                  // less-robotic harmonic
+weight = 0 at the pinned point (anchor) → 1 at the swinging end
+osc_p  = lerp(osc(w), osc(w − followThrough·0.9), weight)  // tip lags = wave
+disp   = direction·(amplitude·osc_p·weight)          // anchored bounce
+       + squash·velocity stretch (along) / squeeze (across)
+       + sway·(lateral, ×weight)
+sample = (x,y) − disp · mask                          // inverse map, bilinear
 ```
+
+Every `osc` harmonic is an **integer** multiple of `w`, so the whole thing is
+periodic — `t=0` equals `t=1` and the loop is seamless (the unit test asserts
+this). `gravity`, `organic`, `followThrough` and `anchor` all default to 0, which
+reproduces the original motion exactly, so existing presets are unchanged.
 
 `frequency` is a whole number so the oscillators are periodic and `t=0 == t=1`
 (seamless loop). Amplitude is a fraction of the region height
@@ -78,12 +95,13 @@ sample = (x,y) − disp · mask                        // inverse map, bilinear
 hidden behind the region, so a continuous warp is the most natural jiggle
 achievable.
 
-### Twin lobes (boobs)
+### Lobes (boobs)
 
-`twin: true` splits the drawn box down the middle into a left + right lobe (with
-a ~10% cleavage gap) that warp **in opposite phase**. Two breasts bouncing
-alternately reads far more like real chest physics than one symmetric block — so
-the **Bust** presets ship with it on, and the Jiggle tab defaults to one.
+`lobes: N` splits the drawn box into N side-by-side lobes (with a ~10% gap)
+that warp **out of phase** by `spread` (0.5 = opposite). **`lobes: 2`** is two
+breasts bouncing alternately — far more convincing than one symmetric block — so
+the **Bust** presets ship with it and the Jiggle tab defaults to a bust preset.
+`twin: true` is kept as the back-compat shorthand for `lobes: 2`.
 
 ## In code
 
@@ -92,10 +110,11 @@ import 'package:pinsel/src/animation/jiggle.dart';
 import 'package:pinsel/src/animation/anim_engine.dart';
 
 final j = const JiggleSpec(
-  x: 0.28, y: 0.34, w: 0.44, h: 0.20,   // region (fractions)
-  amplitude: 0.16, frequency: 2, bounciness: 0.55, squash: 0.6,
-  sway: 2, direction: 0,                 // 0° = up/down
-  twin: true,                            // split into two out-of-phase lobes
+  x: 0.27, y: 0.34, w: 0.46, h: 0.21,   // region (fractions)
+  amplitude: 0.18, frequency: 2, bounciness: 0.62, squash: 0.7,
+  sway: 3, direction: 0,                 // 0° = up/down
+  lobes: 2, spread: 0.5,                 // two out-of-phase lobes (boobs)
+  gravity: 0.5, organic: 0.4, followThrough: 0.65, // soft-body realism
 );
 // toRecipes() handles twin (1 or 2 recipes); toRecipe() is the single-region form.
 final clip = AnimEngine.render(

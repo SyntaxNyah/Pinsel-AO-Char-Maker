@@ -341,6 +341,29 @@ The central model.
   bust sprites; `zoom`>1 tightens),
   `.renderComposite({sourceFrame,crop,size,background,foreground,mask,
   selectedOverlay,on})`, `.autoTrimBounds(image)`.
+- **`renderFramed`/`renderAutoOverlaid` also take `CropShape? shape, bool
+  clipShape`** (see `imaging/crop_shape.dart`): when `clipShape && shape.clips`
+  the final composite is masked to the shape (`_applyMaskAlpha` with
+  `shape.mask(outSize)`) → a real round/heart/star button with **transparent
+  corners** (PNG stays NxN). Off ⇒ the shape is just a guide (square output). A
+  square border + a round clip cuts the border's corners — pair round shapes with
+  a round/no border. **Engine + tests only so far** (`test/crop_shape_test.dart`);
+  the Button Studio shape picker UI + the global `buttonShape`/`iconShape` +
+  clip-toggle wiring in `AppState` are the next slice (not wired yet, so callers
+  default to square/off = unchanged).
+
+### imaging/crop_shape.dart  ← button/icon mask shapes
+- `enum CropShapeKind { square, circle, roundedRect, polygon }`.
+- **`class CropShape`** — `name`, `category`, `kind`, `radius` (rounded-rect
+  corner frac), `points` (flattened normalised `[x0,y0,…]` polygon, for presets +
+  custom). `.clips` (square clips nothing), `.outline({segments})` (normalised
+  closed outline → editor Path + raster), **`.mask(size)`** (AA alpha mask:
+  opaque inside, clear outside; supersampled 4× scanline-fill then area-averaged;
+  square → fully opaque). `copyWith`, `toJson/fromJson`. Generators
+  `regularPolygon(name,sides)` + `star(name,points,innerRatio)` (also drive the
+  future custom UI). `cropShapePresets` (~20: circle/rounded/pill, triangle…
+  octagon, stars, heart/blob/flower/cross), `cropShapeCategories`,
+  `cropShapeByName`. Pure Dart, no Flutter. Consumed by `ButtonMaker.renderFramed`.
 
 ### imaging/overlay_presets.dart  ← editable button/icon overlays
 - `enum OverlayKind { border, background }`.
@@ -442,21 +465,27 @@ The central model.
 - **`class JiggleSpec`** — a jiggle **region** (x/y/w/h as fractions) + physics:
   `amplitude` (frac of region height), `frequency` (int bounces/loop),
   `bounciness`, `squash`, `sway` (deg), **`direction`** (deg — bounce along ANY
-  angle: 0=up/down, 90=left/right), `phase`, **`twin`** (bool). Plain data →
-  `copyWith`, `toJson/fromJson` (incl. `twin`), isolate-safe. **`toRecipe(imgW,
-  imgH)`** → one `AnimRecipe('jigglePhysics', region: px, p: {...})` (amplitude
-  becomes px = frac × region-height-px, so preview == bake). **`toRecipes(imgW,
-  imgH)`** → 1 recipe, or — when `twin` — **2 opposite-phase lobe recipes** (the
-  box split L/R with a ~10% cleavage gap = the two-breast "boobs" look). All
-  AppState jiggle paths now call `toRecipes` (so twin reaches preview/save/bulk).
-  Drive via `AnimEngine.render` (which warps each via `warpJiggle`).
-- **`jigglePresets`** — ~140 presets (20 archetypes × {base,Soft,Big,Fast,Slow,
-  Springy,Extreme}) across **Bust**/Soft/Bounce/Jelly/Sway/Wild. The **Bust**
-  group leads (twin chest physics, `twin: true`). `jiggleCategories`,
-  `jiggleByName(name)`. Surfaced in the Animation Studio **Jiggle** tab (draggable
-  box + a **Twin lobes (boobs)** toggle + sliders + preset picker; the tab
-  defaults to the `Bust` preset) and `AppState` (`previewJiggle`/`saveJiggle`
-  (saves `(a)` idle)/`bulkJiggleAll`).
+  angle: 0=up/down, 90=left/right), `phase`, plus the **soft-body realism** knobs
+  **`anchor`** (0..1 pinned point along the axis; 0 = top-pinned hang [default]),
+  **`gravity`** (0..1 asymmetric fall), **`organic`** (0..1 extra harmonic),
+  **`followThrough`** (0..1 tip lags base = jiggle wave), and **`lobes`** (int) /
+  **`spread`** (0..1 inter-lobe phase) / `twin` (bool = lobes 2). **All realism
+  knobs default to 0 / lobes 1 ⇒ original motion** (existing presets + the
+  seam-test unchanged). Plain data → `copyWith`, `toJson/fromJson`, isolate-safe.
+  **`toRecipe(imgW,imgH)`** → one `AnimRecipe('jigglePhysics', region, p:{...})`
+  (amplitude→px = frac × region-height-px; the realism knobs go in `p` too).
+  **`toRecipes(imgW,imgH)`** → 1 recipe, or **N opposite-phase lobe recipes** when
+  `lobes>1`/`twin` (box split into N columns, ~10% gaps, phase += `spread` each =
+  the two-breast "boobs" look). All AppState jiggle paths call `toRecipes` (so
+  lobes/twin reach preview/save/bulk). Warped by `AnimEngine.warpJiggle`.
+- **`jigglePresets`** — ~190 presets (27 archetypes × {base,Soft,Big,Fast,Slow,
+  Springy,Extreme}) across **Bust**/Soft/Bounce/Jelly/Sway/Wild/**Physics**. The
+  **Bust** group leads (premium twin chest physics with gravity + follow-through);
+  **Physics** showcases the new knobs (Gravity Drop/Wave/Organic/Free Float/
+  Triple/Quad). `jiggleCategories`, `jiggleByName(name)`. Surfaced in the
+  Animation Studio **Jiggle** tab (draggable box + a **Lobes** slider + realism
+  sliders + preset picker; defaults to the `Bust Realistic` preset) and `AppState`
+  (`previewJiggle`/`saveJiggle` (saves `(a)` idle)/`bulkJiggleAll`).
 
 ### animation/timeline.dart
 - `class Keyframe({time,dx,dy,scale,angle,opacity,hue,ease})` — `.toJson/fromJson`.

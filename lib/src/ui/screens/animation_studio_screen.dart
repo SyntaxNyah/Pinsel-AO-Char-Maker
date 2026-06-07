@@ -58,8 +58,8 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
   _MouthSource _mouthSource = _MouthSource.cavity;
   MouthShape _mouthShape = LipSync.mouthShapes.first; // chosen anime mouth
 
-  // jiggle mode — default to the twin-lobe "Bust" preset (the headline use).
-  JiggleSpec _jiggle = jiggleByName('Bust');
+  // jiggle mode — default to the premium realistic bust preset (the headline use).
+  JiggleSpec _jiggle = jiggleByName('Bust Realistic');
   int _jiggleFrames = 18;
 
   // frames mode
@@ -936,22 +936,16 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
       const SizedBox(height: 8),
       const Text('Drag the box in the preview over what should jiggle.',
           style: TextStyle(fontSize: 11, color: Colors.white54)),
-      SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        dense: true,
-        value: _jiggle.twin,
-        onChanged: (bool v) {
-          setState(() => _jiggle = _jiggle.copyWith(twin: v));
-          _schedule();
-        },
-        title: const Text('Twin lobes (boobs)'),
-        subtitle: const Text(
-          'Split the box into a left + right lobe that bounce out of phase — '
-          'the two-breast look. Off = one region.',
-          style: TextStyle(fontSize: 11, color: Colors.white54),
-        ),
-      ),
       const SizedBox(height: 6),
+      _jiggleSliderInt(
+          'Lobes (2 = boobs)',
+          _jiggle.lobes > 1 ? _jiggle.lobes : (_jiggle.twin ? 2 : 1),
+          1,
+          6,
+          (int v) => _jiggle = _jiggle.copyWith(lobes: v, twin: false)),
+      _jiggleSlider('Lobe spread (out of phase)', _jiggle.spread, 0, 1,
+          (double v) => _jiggle = _jiggle.copyWith(spread: v),
+          hint: '0.5 = exactly opposite (the natural two-breast look)'),
       _jiggleSlider('Direction', _jiggle.direction, 0, 180,
           (double v) => _jiggle = _jiggle.copyWith(direction: v),
           suffix: '°', divisions: 36, hint: '0° = up/down · 90° = left/right'),
@@ -967,6 +961,20 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
       _jiggleSlider('Sway (rotation)', _jiggle.sway, 0, 20,
           (double v) => _jiggle = _jiggle.copyWith(sway: v),
           suffix: '°', divisions: 40),
+      const SizedBox(height: 4),
+      const Text('Realism (soft-body physics)',
+          style: TextStyle(fontSize: 12, color: Colors.white70)),
+      _jiggleSlider('Gravity (weighty fall)', _jiggle.gravity, 0, 1,
+          (double v) => _jiggle = _jiggle.copyWith(gravity: v),
+          hint: 'Heavier, quicker drop and a gentler rise'),
+      _jiggleSlider('Follow-through (jiggle wave)', _jiggle.followThrough, 0, 1,
+          (double v) => _jiggle = _jiggle.copyWith(followThrough: v),
+          hint: 'The tip lags the base so it ripples through the flesh'),
+      _jiggleSlider('Organic (natural variation)', _jiggle.organic, 0, 1,
+          (double v) => _jiggle = _jiggle.copyWith(organic: v)),
+      _jiggleSlider('Anchor (pinned point)', _jiggle.anchor, 0, 1,
+          (double v) => _jiggle = _jiggle.copyWith(anchor: v),
+          hint: '0 = pinned at top (hangs/swings below) · 0.5 = centre'),
       Text('Frames: $_jiggleFrames'),
       Slider(
         value: _jiggleFrames.toDouble().clamp(4, 32),

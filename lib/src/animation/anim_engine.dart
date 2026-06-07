@@ -337,6 +337,13 @@ class AnimEngine {
   ///  * `sway` deg — lateral wobble of the free end (rotation-like).
   ///  * `direction` deg — axis the jiggle travels (0 = up/down, 90 = sideways).
   ///  * `phase` 0..1 — phase offset (use opposite phases for twin lobes/boobs).
+  ///  * `anchor` 0..1 — where the pinned point sits along the travel axis (0 =
+  ///    trailing/top pinned [boobs, default], 1 = leading pinned, 0.5 = centre).
+  ///  * `gravity` 0..1 — asymmetric timing: heavier fall, gentler rise.
+  ///  * `organic` 0..1 — extra harmonic so the motion isn't a pure sine.
+  ///  * `followThrough` 0..1 — the swinging end lags the pin, so the jiggle
+  ///    travels through the flesh as a wave (soft-body realism). All four default
+  ///    to 0 ⇒ the original motion, so existing presets are unchanged.
   ///
   /// Pure + isolate-safe (the bulk worker calls this through [render]). Returns a
   /// new image; [src] is never mutated. Sampling is premultiplied bilinear so
@@ -356,6 +363,12 @@ class AnimEngine {
     final double swayDeg = r.n('sway', 0);
     final double dir = r.n('direction', 0) * math.pi / 180.0;
     final double phase = r.n('phase', 0) * 2 * math.pi;
+    // New knobs (all default to reproducing the original motion):
+    final double anchorPin = r.n('anchor', 0).clamp(0.0, 1.0); // pinned point 0..1
+    final double gravity = r.n('gravity', 0); // asymmetric fall vs rise
+    final double organic = r.n('organic', 0); // extra harmonic = less robotic
+    final double followThrough = r.n('followThrough', 0); // tip lags base (wave)
+    final double pinDen = math.max(anchorPin, 1 - anchorPin);
 
     final double cx = reg.x + reg.w / 2.0;
     final double cy = reg.y + reg.h / 2.0;
@@ -365,7 +378,19 @@ class AnimEngine {
 
     // Time-varying scalars (hoisted out of the pixel loop).
     final double ww = 2 * math.pi * freq * t + phase;
-    final double osc = math.sin(ww) + bounce * 0.4 * math.sin(2 * ww + 0.6);
+    // Oscillator (periodic ⇒ seamless loop). `gravity` skews the fall vs the
+    // rise (weighty drop, gentle return); `organic` adds a higher harmonic so it
+    // isn't a pure robotic sine. The base bounce + overshoot is the spring feel.
+    double oscAt(double a) =>
+        math.sin(a) +
+        bounce * 0.4 * math.sin(2 * a + 0.6) -
+        gravity * 0.28 * math.cos(2 * a) +
+        organic * 0.22 * math.sin(3 * a + 1.7);
+    final double oscBase = oscAt(ww);
+    // Follow-through: the swinging end runs an *earlier* phase than the pin, so
+    // the jiggle travels through the flesh as a wave (the key "pro animation"
+    // tell). Blended per-pixel by `weight`; followThrough 0 ⇒ uniform (original).
+    final double oscTip = oscAt(ww - followThrough * 0.9);
     final double velo = math.cos(ww);
     final double str = squash * 0.20 * velo; // squash-&-stretch strain
     final double dX = math.sin(dir), dY = math.cos(dir); // travel axis
@@ -397,17 +422,25 @@ class AnimEngine {
         if (m <= 0) continue;
         final double along = ox * dX + oy * dY;
         final double perp = ox * pX + oy * pY;
-        final double hang = ((along / alongMax + 1) * 0.5).clamp(0.0, 1.0);
-        // (1) anchored bounce — the free end leads, the attachment barely moves.
-        final double bAmt = amp * osc * (0.25 + 0.75 * hang);
+        // Position along the travel axis, 0 = trailing edge … 1 = leading edge.
+        final double s = ((along / alongMax) + 1) * 0.5;
+        // Distance from the pinned point (`anchor`): the pin barely moves, the
+        // far end swings most. anchor 0 = trailing pinned (boobs/top, default),
+        // 1 = leading pinned, 0.5 = centre pinned (both ends free).
+        final double weight =
+            (pinDen <= 0 ? 1.0 : (s - anchorPin).abs() / pinDen).clamp(0.0, 1.0);
+        // Per-pixel oscillator: the tip lags the pin (follow-through wave).
+        final double osc = oscBase + (oscTip - oscBase) * weight;
+        // (1) anchored bounce — the swinging end leads, the pin barely moves.
+        final double bAmt = amp * osc * (0.25 + 0.75 * weight);
         // (2) squash & stretch + (3) lateral sway, summed along the two axes.
         final double dispX =
             (dX * bAmt + dX * (along * str) + pX * (perp * -0.5 * str) +
-                    pX * (swLat * hang)) *
+                    pX * (swLat * weight)) *
                 m;
         final double dispY =
             (dY * bAmt + dY * (along * str) + pY * (perp * -0.5 * str) +
-                    pY * (swLat * hang)) *
+                    pY * (swLat * weight)) *
                 m;
         // Inverse map: this destination pixel pulls from (x,y) - disp.
         double sx = x - dispX;

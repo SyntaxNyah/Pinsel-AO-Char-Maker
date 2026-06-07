@@ -5,6 +5,7 @@ import 'package:image/image.dart' as img;
 
 import '../core/ao_constants.dart';
 import 'codecs.dart';
+import 'crop_shape.dart';
 
 /// Integer rectangle in source-image pixels.
 class IntRect {
@@ -106,6 +107,8 @@ class ButtonMaker {
     img.Image? background,
     img.Image? foreground,
     CropBox? manualCrop,
+    CropShape? shape,
+    bool clipShape = false,
   }) async {
     final img.Image? frame = Codecs.decodeFirstFrame(sourceBytes, ext: ext);
     if (frame == null) return null;
@@ -116,7 +119,9 @@ class ButtonMaker {
         offsetY: offsetY,
         background: background,
         foreground: foreground,
-        manualCrop: manualCrop);
+        manualCrop: manualCrop,
+        shape: shape,
+        clipShape: clipShape);
   }
 
   /// Frame an already-decoded [frame] into a [size]×[size] PNG icon. See
@@ -131,6 +136,8 @@ class ButtonMaker {
     img.Image? background,
     img.Image? foreground,
     CropBox? manualCrop,
+    CropShape? shape,
+    bool clipShape = false,
   }) {
     final img.Image rgba = _ensureRgba(frame);
     IntRect square;
@@ -176,14 +183,28 @@ class ButtonMaker {
             height: outSize,
             interpolation: img.Interpolation.average);
 
-    if (background == null && foreground == null) return Codecs.encodePng(scaled);
-    final img.Image canvas = img.Image(width: outSize, height: outSize, numChannels: 4);
+    final bool doClip = clipShape && shape != null && shape.clips;
+    if (background == null && foreground == null) {
+      // No overlays: clip the bare crop to the shape (transparent corners) if asked.
+      final img.Image out = doClip
+          ? _applyMaskAlpha(scaled, _fit(shape!.mask(outSize), outSize))
+          : scaled;
+      return Codecs.encodePng(out);
+    }
+    img.Image canvas = img.Image(width: outSize, height: outSize, numChannels: 4);
     if (background != null) {
       img.compositeImage(canvas, _fit(background, outSize), dstX: 0, dstY: 0);
     }
     img.compositeImage(canvas, scaled, dstX: 0, dstY: 0);
     if (foreground != null) {
       img.compositeImage(canvas, _fit(foreground, outSize), dstX: 0, dstY: 0);
+    }
+    // Clip the whole composite (bg + sprite + border) to the shape, so e.g. a
+    // circle yields a fully round button with transparent corners. (A square
+    // border + a round clip will have its corners cut — pair round shapes with a
+    // round/no border.) The PNG stays outSize×outSize, just with clear corners.
+    if (doClip) {
+      canvas = _applyMaskAlpha(canvas, _fit(shape!.mask(outSize), outSize));
     }
     return Codecs.encodePng(canvas);
   }
