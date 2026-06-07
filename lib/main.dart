@@ -16,6 +16,10 @@ void main() {
   // catch a hard OOM or a native segfault — but it catches every Dart exception.
   runZonedGuarded<void>(() {
     WidgetsFlutterBinding.ensureInitialized();
+    // Startup breadcrumb (fire-and-forget): guarantees the log file exists and is
+    // writable, so the in-app viewer always shows *something* (proving the
+    // plumbing works), and a crash on any screen leaves at least this marker.
+    logCrash('session start ${DateTime.now().toIso8601String()}');
     final FlutterExceptionHandler? original = FlutterError.onError;
     FlutterError.onError = (FlutterErrorDetails details) {
       original?.call(details); // keep the default (console / red box in debug)

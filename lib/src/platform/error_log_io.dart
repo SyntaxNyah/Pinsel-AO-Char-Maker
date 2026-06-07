@@ -31,6 +31,10 @@ Future<void> logCrash(String message) async {
   }
   for (final String dir in await _candidateDirs()) {
     try {
+      // Make sure the dir exists (some app dirs aren't pre-created) so the very
+      // first write to the primary location succeeds instead of falling back.
+      final Directory d = Directory(dir);
+      if (!await d.exists()) await d.create(recursive: true);
       final File f = File('$dir${Platform.pathSeparator}pinsel_crash.log');
       await f.writeAsString(line, mode: FileMode.append, flush: true);
       _path = f.path;
@@ -49,18 +53,22 @@ Future<String?> crashLogDir() async {
   return dirs.isEmpty ? null : dirs.first;
 }
 
-/// The `File` the log is (or would be) at. Prefers the already-written path; on a
-/// fresh launch that's null, so it falls back to the primary candidate dir (the
-/// same one [logCrash] writes to first).
+/// The `File` the log was actually written to. Prefers the path resolved this
+/// session, then **scans every candidate dir** for an existing log — because a
+/// write can land in a *fallback* dir if the primary wasn't writable, and on a
+/// fresh launch (after a crash) `_path` is null, so just trusting the first
+/// candidate would miss it. Returns null only if no log exists anywhere.
 Future<File?> _logFile() async {
-  String? p = _path;
-  if (p == null) {
-    final List<String> dirs = await _candidateDirs();
-    if (dirs.isNotEmpty) {
-      p = '${dirs.first}${Platform.pathSeparator}pinsel_crash.log';
-    }
+  final String? known = _path;
+  if (known != null) {
+    final File f = File(known);
+    if (await f.exists()) return f;
   }
-  return p == null ? null : File(p);
+  for (final String dir in await _candidateDirs()) {
+    final File f = File('$dir${Platform.pathSeparator}pinsel_crash.log');
+    if (await f.exists()) return f;
+  }
+  return null;
 }
 
 /// Read the crash log's contents so the app can **show it in-app** (the only way
