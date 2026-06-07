@@ -104,6 +104,16 @@ breasts bouncing alternately — far more convincing than one symmetric block �
 the **Bust** presets ship with it and the Jiggle tab defaults to a bust preset.
 `twin: true` is kept as the back-compat shorthand for `lobes: 2`.
 
+### Draw-around (freeform lasso)
+
+Instead of a box, hit **Draw region ✏️** in the Jiggle tab and **trace a shape**
+around exactly what should jiggle (e.g. the breasts). The outline is stored on
+`JiggleSpec.poly` (fractions); `warpJiggle` then masks to that **exact polygon
+with a feathered edge** — the inside *and* edges jiggle and blend into the body,
+no rectangle. A drawn region is one shape (lobe-splitting is skipped); "Back to
+box" clears it. You can mix multiple boxes and drawn shapes via the **Boxes**
+chips. (Multiple boxes/shapes + a per-box sprite picker live in the same tab.)
+
 ## In code
 
 ```dart

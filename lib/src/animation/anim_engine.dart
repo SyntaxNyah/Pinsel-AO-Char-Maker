@@ -40,6 +40,7 @@ class AnimRecipe {
     Map<String, double>? p,
     Map<String, String>? colors,
     this.region,
+    this.poly,
     this.ease = 'linear',
   })  : p = p ?? <String, double>{},
         colors = colors ?? <String, String>{};
@@ -55,6 +56,13 @@ class AnimRecipe {
   /// top of the otherwise-static sprite.
   IntRect? region;
 
+  /// Optional **freeform outline** (flattened `[x0,y0, x1,y1, …]` in *pixels*)
+  /// for `jigglePhysics`: when set, [AnimEngine.warpJiggle] masks to this drawn
+  /// shape (inside + a soft edge jiggle) instead of the rectangular [region]'s
+  /// ellipse — the "draw around the boobs" lasso. [region] is still the polygon's
+  /// bounding box (it drives the motion axes).
+  List<double>? poly;
+
   double n(String k, [double f = 0]) => p[k] ?? f;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -63,11 +71,13 @@ class AnimRecipe {
         if (colors.isNotEmpty) 'colors': colors,
         if (region != null)
           'region': <int>[region!.x, region!.y, region!.w, region!.h],
+        if (poly != null && poly!.isNotEmpty) 'poly': poly,
         if (ease != 'linear') 'ease': ease,
       };
 
   static AnimRecipe fromJson(Map<String, dynamic> j) {
     final List<dynamic>? r = j['region'] as List<dynamic>?;
+    final List<dynamic>? pl = j['poly'] as List<dynamic>?;
     return AnimRecipe(
       j['type'] as String,
       ease: j['ease'] as String? ?? 'linear',
@@ -78,6 +88,9 @@ class AnimRecipe {
       region: r == null
           ? null
           : IntRect(r[0] as int, r[1] as int, r[2] as int, r[3] as int),
+      poly: pl == null
+          ? null
+          : <double>[for (final Object? v in pl) (v as num).toDouble()],
     );
   }
 }
@@ -401,29 +414,53 @@ class AnimEngine {
         alongMax *
         math.sin(ww + 1.2);
 
-    // Only the influence box can change — the rest stays byte-identical, which
-    // is what guarantees the seamless join with the static body.
-    final int x0 = math.max(0, (cx - hw * inf).floor());
-    final int x1 = math.min(w - 1, (cx + hw * inf).ceil());
-    final int y0 = math.max(0, (cy - hh * inf).floor());
-    final int y1 = math.min(h - 1, (cy + hh * inf).ceil());
+    // The influence box. A **freeform [poly]** uses the drawn shape's bounds
+    // grown by a feather; otherwise the radial influence around the region.
+    // Outside it nothing changes — that's what keeps the join with the static
+    // body seamless.
+    final List<double>? poly = r.poly;
+    final bool usePoly = poly != null && poly.length >= 6;
+    final double feather =
+        math.max(3.0, 0.12 * math.min(reg.w.toDouble(), reg.h.toDouble()));
+    final int x0 = usePoly
+        ? math.max(0, (reg.x - feather).floor())
+        : math.max(0, (cx - hw * inf).floor());
+    final int x1 = usePoly
+        ? math.min(w - 1, (reg.x + reg.w + feather).ceil())
+        : math.min(w - 1, (cx + hw * inf).ceil());
+    final int y0 = usePoly
+        ? math.max(0, (reg.y - feather).floor())
+        : math.max(0, (cy - hh * inf).floor());
+    final int y1 = usePoly
+        ? math.min(h - 1, (reg.y + reg.h + feather).ceil())
+        : math.min(h - 1, (cy + hh * inf).ceil());
     if (x1 < x0 || y1 < y0) return base;
+    final int bw = x1 - x0 + 1;
+    // Feathered alpha mask over the bbox for the drawn shape (full inside, soft
+    // just outside) — built once per clip and reused across its frames.
+    final Uint8List? polyMask =
+        usePoly ? _jigglePolyMask(poly, x0, y0, bw, y1 - y0 + 1, feather) : null;
 
     final Uint8List sp = base.getBytes(order: img.ChannelOrder.rgba);
     final img.Image dst = base.clone();
 
     for (int y = y0; y <= y1; y++) {
       final double oy = y - cy;
-      final double ry = oy / hh;
-      if (ry.abs() >= inf) continue; // outside the ellipse for every x in this row
+      if (!usePoly && (oy / hh).abs() >= inf) {
+        continue; // outside the ellipse for every x in this row
+      }
       for (int x = x0; x <= x1; x++) {
         final double ox = x - cx;
-        final double rx = ox / hw;
-        // **Elliptical (radial) falloff** — no rectangular edge (the "blocky"
-        // fix): full motion inside the breast ellipse, feathering smoothly into
-        // the surrounding body so there's no visible box.
-        final double nr = math.sqrt(rx * rx + ry * ry);
-        final double m = 1.0 - _smoothstep(1.0, inf, nr);
+        final double m;
+        if (usePoly) {
+          m = polyMask![(y - y0) * bw + (x - x0)] / 255.0;
+        } else {
+          // **Elliptical (radial) falloff** — no rectangular edge (the "blocky"
+          // fix): full motion inside the breast ellipse, feathering into the
+          // surrounding body so there's no visible box.
+          final double rx = ox / hw, ry = oy / hh;
+          m = 1.0 - _smoothstep(1.0, inf, math.sqrt(rx * rx + ry * ry));
+        }
         if (m <= 0) continue;
         final double along = ox * dX + oy * dY;
         final double perp = ox * pX + oy * pY;
@@ -499,6 +536,91 @@ class AnimEngine {
       }
     }
     return dst;
+  }
+
+  // Size-1 cache so a freeform mask is built **once per clip** (its geometry is
+  // constant across frames), not per frame. Per-isolate statics are fine — render
+  // bakes all of a clip's frames in one isolate before moving on.
+  static List<double>? _pmPoly;
+  static int _pmX0 = 0, _pmY0 = 0, _pmW = 0, _pmH = 0;
+  static Uint8List? _pmMask;
+
+  /// Feathered alpha mask (0..255) over a [bw]×[bh] window at ([x0],[y0]) for the
+  /// pixel-space polygon [poly]: 255 inside the drawn shape, falling to 0 across
+  /// [feather] px just outside it (so the warp blends into the body — no hard
+  /// edge). Cached by polygon identity + window.
+  static Uint8List _jigglePolyMask(
+      List<double> poly, int x0, int y0, int bw, int bh, double feather) {
+    if (identical(poly, _pmPoly) &&
+        x0 == _pmX0 &&
+        y0 == _pmY0 &&
+        bw == _pmW &&
+        bh == _pmH &&
+        _pmMask != null) {
+      return _pmMask!;
+    }
+    final Uint8List buf = Uint8List(bw * bh);
+    final int n = poly.length ~/ 2;
+    for (int ly = 0; ly < bh; ly++) {
+      final double py = (y0 + ly) + 0.5;
+      for (int lx = 0; lx < bw; lx++) {
+        final double px = (x0 + lx) + 0.5;
+        if (_pointInPoly(poly, n, px, py)) {
+          buf[ly * bw + lx] = 255;
+        } else {
+          final double d = _distToPoly(poly, n, px, py);
+          if (d < feather) {
+            buf[ly * bw + lx] =
+                ((1.0 - _smoothstep(0, feather, d)) * 255).round().clamp(0, 255);
+          }
+        }
+      }
+    }
+    _pmPoly = poly;
+    _pmX0 = x0;
+    _pmY0 = y0;
+    _pmW = bw;
+    _pmH = bh;
+    _pmMask = buf;
+    return buf;
+  }
+
+  /// Even-odd point-in-polygon test ([poly] = flattened px x,y pairs, [n] verts).
+  static bool _pointInPoly(List<double> poly, int n, double x, double y) {
+    bool inside = false;
+    for (int i = 0, j = n - 1; i < n; j = i++) {
+      final double yi = poly[i * 2 + 1], yj = poly[j * 2 + 1];
+      if ((yi > y) != (yj > y)) {
+        final double xi = poly[i * 2], xj = poly[j * 2];
+        if (x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  /// Minimum distance from (x,y) to any of the polygon's edges.
+  static double _distToPoly(List<double> poly, int n, double x, double y) {
+    double best = double.infinity;
+    for (int i = 0, j = n - 1; i < n; j = i++) {
+      final double d = _distToSeg(
+          x, y, poly[j * 2], poly[j * 2 + 1], poly[i * 2], poly[i * 2 + 1]);
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
+  static double _distToSeg(
+      double px, double py, double ax, double ay, double bx, double by) {
+    final double dx = bx - ax, dy = by - ay;
+    final double len2 = dx * dx + dy * dy;
+    double t = len2 <= 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / len2;
+    if (t < 0) {
+      t = 0;
+    } else if (t > 1) {
+      t = 1;
+    }
+    final double ex = px - (ax + t * dx), ey = py - (ay + t * dy);
+    return math.sqrt(ex * ex + ey * ey);
   }
 
   /// Bilinear blend of four corner values.

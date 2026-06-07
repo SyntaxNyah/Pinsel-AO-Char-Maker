@@ -14,3 +14,9 @@ Future<void> logCrash(String message) => impl.logCrash(message);
 /// Absolute path of the crash log once something has been written (native), or
 /// null (web, or nothing logged yet). Shown in-app so users can find it.
 String? get crashLogPath => impl.crashLogPath;
+
+/// The directory the crash log lives in, resolved **without writing** — so the
+/// app can show users *where to look* even before any crash. On Android this is
+/// the external app-files dir (`Android/data/<package>/files`), browsable in any
+/// file manager with no permission. Null on web / if undeterminable.
+Future<String?> crashLogDir() => impl.crashLogDir();

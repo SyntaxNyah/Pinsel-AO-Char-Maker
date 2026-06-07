@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../platform/error_log.dart';
+
 /// Project identity + credits, surfaced in the About dialog and the Home card.
 /// Keep this the single source of truth so both stay in sync.
 const String kAppName = 'Pinsel AO Char Maker';
@@ -64,6 +66,17 @@ void showAboutCreditsDialog(BuildContext context) {
                   child: Text('• $t',
                       style: Theme.of(ctx).textTheme.bodySmall),
                 ),
+              const SizedBox(height: 12),
+              Text('Crash logs', style: Theme.of(ctx).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              const Text(
+                'If the app crashes or misbehaves, details are appended to '
+                'pinsel_crash.log here. On Android open this folder in a file '
+                'manager and attach the file to a bug report:',
+                style: TextStyle(fontSize: 12),
+              ),
+              const SizedBox(height: 4),
+              const _CrashLogLocation(),
             ],
           ),
         ),
@@ -145,6 +158,54 @@ class _RepoLink extends StatelessWidget {
           },
         ),
       ],
+    );
+  }
+}
+
+/// Shows where the crash log is written (resolved without writing) + a copy
+/// button, so any user — including on mobile — can find and send it.
+class _CrashLogLocation extends StatelessWidget {
+  const _CrashLogLocation();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String?>(
+      future: crashLogDir(),
+      builder: (BuildContext context, AsyncSnapshot<String?> snap) {
+        final String? dir = snap.data;
+        if (dir == null) {
+          return Text(
+            snap.connectionState == ConnectionState.waiting
+                ? 'Resolving location…'
+                : 'Logged to the browser console (web build).',
+            style: const TextStyle(fontSize: 12, color: Colors.white54),
+          );
+        }
+        final String full = '$dir/pinsel_crash.log';
+        return Row(
+          children: <Widget>[
+            const Icon(Icons.bug_report_outlined, size: 16),
+            const SizedBox(width: 6),
+            Expanded(
+              child: SelectableText(
+                full,
+                style: const TextStyle(fontSize: 12, color: Color(0xFFB58CFF)),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Copy path',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.copy_rounded, size: 16),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: full));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Crash log path copied')),
+                );
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 }

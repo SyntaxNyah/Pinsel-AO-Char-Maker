@@ -455,9 +455,13 @@ The central model.
   inverse-mapped) that stretches the flesh continuously and is **zero at the
   influence boundary** (an **elliptical/radial** falloff feathering to ~1.35× the
   box radius — *not* a box, so no visible rectangular edge), so it joins the
-  static body with no seam. The bounce is **mostly a uniform translation** of the
-  mass with only a gentle anchored lean + low squash strain, so the breast art
-  stays crisp instead of smearing (the "melty/blocky" fixes). This replaced the
+  static body with no seam. **Freeform:** if the recipe carries a `poly` (drawn
+  lasso outline in px), the mask is that exact shape with a feathered edge
+  (`_jigglePolyMask`, point-in-poly + distance feather, built once per clip via a
+  size-1 static cache) instead of the ellipse — "draw around the boobs". The
+  bounce is **mostly a uniform translation** of the mass with only a gentle
+  anchored lean + low squash strain, so the breast art stays crisp instead of
+  smearing (the "melty/blocky" fixes). This replaced the
   old "cut the rectangle and slide it" path, which looked like a sliding cropped
   PNG. NB on a flat frame there's nothing painted behind the breast, so large
   motion still smears somewhat — true Live2D needs layered/rigged art.
@@ -474,9 +478,11 @@ The central model.
   **`anchor`** (0..1 pinned point along the axis; 0 = top-pinned hang [default]),
   **`gravity`** (0..1 asymmetric fall), **`organic`** (0..1 extra harmonic),
   **`followThrough`** (0..1 tip lags base = jiggle wave), and **`lobes`** (int) /
-  **`spread`** (0..1 inter-lobe phase) / `twin` (bool = lobes 2). **All realism
-  knobs default to 0 / lobes 1 ⇒ original motion** (existing presets + the
-  seam-test unchanged). Plain data → `copyWith`, `toJson/fromJson`, isolate-safe.
+  **`spread`** (0..1 inter-lobe phase) / `twin` (bool = lobes 2), plus **`poly`**
+  (freeform outline as fractions — the "draw around" lasso; ≥3 pts ⇒ masks to that
+  shape and skips lobe-splitting). **All realism knobs default to 0 / lobes 1 /
+  empty poly ⇒ original motion** (existing presets + the seam-test unchanged).
+  Plain data → `copyWith`, `toJson/fromJson`, isolate-safe.
   **`toRecipe(imgW,imgH)`** → one `AnimRecipe('jigglePhysics', region, p:{...})`
   (amplitude→px = frac × region-height-px; the realism knobs go in `p` too).
   **`toRecipes(imgW,imgH)`** → 1 recipe, or **N opposite-phase lobe recipes** when
@@ -599,11 +605,18 @@ The central model.
   (no symlink/junction-cycle hangs), per-file try/catch (skip unreadable), and a
   64 MB per-file size cap (skip videos/PSDs) — **no extension filter** (char.ini
   + audio must survive). Callers use `picked.files` / `picked.folderName`.
-- `logCrash(text)` / `crashLogPath` (`error_log.dart`) — append to
-  `pinsel_crash.log` next to the exe (native; falls back to temp/cwd) or the dev
-  console (web). Wired in `main.dart` via `runZonedGuarded` + `FlutterError.onError`
-  so an unreproducible crash in a built app becomes a sendable stack trace
-  (can't catch a hard OOM/native segfault, but catches every Dart exception).
+- `logCrash(text)` / `crashLogPath` / **`crashLogDir()`** (`error_log.dart`) —
+  append to `pinsel_crash.log` in the **most user-discoverable** spot per platform:
+  **Android** the external app-files dir (`Android/data/<pkg>/files`, browsable in
+  any file manager, **no permission**) → app docs → temp; **iOS** app docs;
+  **desktop** next to the exe → temp/cwd; **web** the dev console. Uses
+  `path_provider` on mobile (guarded; falls back if the binding isn't ready) and
+  reuses the resolved file on later calls. `crashLogDir()` resolves the location
+  **without writing** so the **About dialog shows users where to look** (copyable;
+  `ui/credits.dart` `_CrashLogLocation`). Wired in `main.dart` via
+  `runZonedGuarded` + `FlutterError.onError` so an unreproducible crash becomes a
+  sendable stack trace (can't catch a hard OOM/native segfault — those never reach
+  Dart — but catches every Dart exception).
 - `loadSettings()` / `saveSettings(map)` (`settings_store.dart`, `_io`/`_web`
   seam) — **dependency-free** key→value persistence for UI prefs that must
   survive a restart. Native writes `pinsel_settings.json` next to the exe (same
@@ -809,6 +822,8 @@ The central model.
     `_jiggle` **getter/setter** backing the active box so all single-box slider
     code is unchanged; the active box is the draggable `_MouthBoxOverlay`, the
     others draw as faint outlines, and a **Boxes** chip row adds/selects/removes;
+    a **Draw region ✏️** lasso (`_LassoOverlay` → `_jiggle.poly`) traces a freeform
+    shape (drawn by `_JigglePainter`; "Back to box" clears it);
     a `jigglePresets` picker (applies to the active box) + sliders for **direction
     /bounce/speed/bounciness/squash/sway + realism (gravity/follow-through/organic
     /anchor) + lobes/spread** → `previewJiggle`/`saveJiggle`/`bulkJiggleAll` all

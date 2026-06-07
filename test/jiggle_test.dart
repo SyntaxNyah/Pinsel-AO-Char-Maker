@@ -197,6 +197,67 @@ void main() {
     expect(r.p['followThrough'], closeTo(0.6, 1e-9));
   });
 
+  test('freeform poly: toRecipe carries the polygon + bbox region, no split', () {
+    const JiggleSpec j = JiggleSpec(
+        poly: <double>[0.3, 0.3, 0.7, 0.3, 0.7, 0.6, 0.3, 0.6]);
+    final AnimRecipe r = j.toRecipe(100, 100);
+    expect(r.poly, isNotNull);
+    expect(r.poly!.length, 8);
+    expect(r.region!.x, 30);
+    expect(r.region!.w, 40); // (0.7-0.3)*100
+    // A drawn region is never split into lobes, even if lobes/twin are set.
+    expect(j.copyWith(lobes: 4).toRecipes(100, 100).length, 1);
+  });
+
+  test('warpJiggle (freeform) preserves size, seamless corners, moves, loops',
+      () {
+    final img.Image base = _sprite();
+    final AnimRecipe r = const JiggleSpec(
+      poly: <double>[0.3, 0.3, 0.7, 0.32, 0.68, 0.6, 0.3, 0.58],
+      amplitude: 0.5,
+      squash: 1.0,
+      sway: 10,
+      gravity: 0.5,
+      followThrough: 0.6,
+    ).toRecipe(base.width, base.height);
+    final img.Image f0 = AnimEngine.warpJiggle(base, r, 0.0);
+    final img.Image fm = AnimEngine.warpJiggle(base, r, 0.3);
+    final img.Image f1 = AnimEngine.warpJiggle(base, r, 1.0);
+    expect(f0.width, base.width);
+    expect(f0.height, base.height);
+    // Far corner is outside the drawn shape + feather → byte-identical.
+    final img.Pixel a = base.getPixel(0, 0), b = f0.getPixel(0, 0);
+    expect(<num>[b.r, b.g, b.b, b.a], <num>[a.r, a.g, a.b, a.a]);
+    int diff = 0, seam = 0;
+    for (int y = 0; y < base.height; y++) {
+      for (int x = 0; x < base.width; x++) {
+        final img.Pixel p0 = f0.getPixel(x, y);
+        final img.Pixel pmid = fm.getPixel(x, y);
+        final img.Pixel p1 = f1.getPixel(x, y);
+        if (p0.r != pmid.r || p0.g != pmid.g || p0.b != pmid.b ||
+            p0.a != pmid.a) {
+          diff++;
+        }
+        if ((p1.r - p0.r).abs() > 1 ||
+            (p1.g - p0.g).abs() > 1 ||
+            (p1.b - p0.b).abs() > 1 ||
+            (p1.a - p0.a).abs() > 1) {
+          seam++;
+        }
+      }
+    }
+    expect(diff, greaterThan(0), reason: 'freeform warp produced no motion');
+    expect(seam, 0, reason: 'freeform loop is not seamless');
+  });
+
+  test('freeform poly round-trips through JSON', () {
+    const JiggleSpec j =
+        JiggleSpec(poly: <double>[0.1, 0.2, 0.5, 0.2, 0.5, 0.6]);
+    final JiggleSpec back = JiggleSpec.fromJson(j.toJson());
+    expect(back.poly.length, 6);
+    expect(back.poly[2], closeTo(0.5, 1e-9));
+  });
+
   test('new jiggle params round-trip through JSON', () {
     const JiggleSpec j = JiggleSpec(
         anchor: 0.4,

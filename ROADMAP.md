@@ -139,8 +139,9 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ✅ **Multiple jiggle boxes + sprite picker** — the Jiggle tab holds a list of
   boxes (Add/select/Remove chips; active = editable, others = outlines; every box
   bounces with its own settings) and a sprite dropdown to jiggle any sprite.
-- ⬜ **Freeform "draw-around" jiggle region** — trace a polygon/lasso; warp masks
-  to it (inside + edges jiggle). Engine: reuse the `crop_shape` polygon→mask path.
+- ✅ **Freeform "draw-around" jiggle region** — a lasso in the Jiggle tab traces a
+  polygon (`JiggleSpec.poly` / `AnimRecipe.poly`); `warpJiggle` masks to that exact
+  shape with a feathered edge (inside + edges jiggle, blends into the body). Tested.
 - ✅ **Mobile crash/lag fix** — bulk render concurrency capped to 2 on Android/iOS
   (`maxConcurrency`) so a big bulk job (e.g. ~500 sprites) doesn't OOM-kill the app
   or starve the UI on a phone/tablet.

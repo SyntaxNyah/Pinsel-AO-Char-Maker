@@ -39,6 +39,7 @@ class JiggleSpec {
     this.followThrough = 0.0,
     this.lobes = 1,
     this.spread = 0.5,
+    this.poly = const <double>[],
   });
 
   /// Preset name (unique within [jigglePresets]).
@@ -107,6 +108,12 @@ class JiggleSpec {
   /// the natural two-breast look).
   final double spread;
 
+  /// **Freeform outline** (flattened `[x0,y0, x1,y1, …]` as fractions 0..1) — the
+  /// "draw around" lasso. When it has ≥ 3 points the jiggle masks to this exact
+  /// shape (inside + a soft edge) instead of the [x]/[y]/[w]/[h] box, and lobe
+  /// splitting is skipped (it's one drawn region). Empty = use the box.
+  final List<double> poly;
+
   JiggleSpec copyWith({
     String? name,
     String? category,
@@ -128,6 +135,7 @@ class JiggleSpec {
     double? followThrough,
     int? lobes,
     double? spread,
+    List<double>? poly,
   }) =>
       JiggleSpec(
         name: name ?? this.name,
@@ -150,6 +158,7 @@ class JiggleSpec {
         followThrough: followThrough ?? this.followThrough,
         lobes: lobes ?? this.lobes,
         spread: spread ?? this.spread,
+        poly: poly ?? this.poly,
       );
 
   /// Build the [AnimEngine] recipe for an image of [imgW]×[imgH] px. The region
@@ -157,13 +166,38 @@ class JiggleSpec {
   /// height) becomes the pixel travel — so the preview (downscaled) and the
   /// export (full-res) bounce by the same *relative* amount.
   AnimRecipe toRecipe(int imgW, int imgH) {
-    final int rx = (x * imgW).round().clamp(0, imgW);
-    final int ry = (y * imgH).round().clamp(0, imgH);
-    final int rw = math.max(1, (w * imgW).round());
-    final int rh = math.max(1, (h * imgH).round());
+    int rx, ry, rw, rh;
+    List<double>? polyPx;
+    if (poly.length >= 6) {
+      // Freeform: region = the drawn polygon's bounding box; carry the polygon
+      // (in px) so the warp masks to the actual shape.
+      double minx = 1, miny = 1, maxx = 0, maxy = 0;
+      for (int i = 0; i + 1 < poly.length; i += 2) {
+        if (poly[i] < minx) minx = poly[i];
+        if (poly[i] > maxx) maxx = poly[i];
+        if (poly[i + 1] < miny) miny = poly[i + 1];
+        if (poly[i + 1] > maxy) maxy = poly[i + 1];
+      }
+      rx = (minx * imgW).round().clamp(0, imgW);
+      ry = (miny * imgH).round().clamp(0, imgH);
+      rw = math.max(1, ((maxx - minx) * imgW).round());
+      rh = math.max(1, ((maxy - miny) * imgH).round());
+      polyPx = <double>[
+        for (int i = 0; i + 1 < poly.length; i += 2) ...<double>[
+          poly[i] * imgW,
+          poly[i + 1] * imgH,
+        ],
+      ];
+    } else {
+      rx = (x * imgW).round().clamp(0, imgW);
+      ry = (y * imgH).round().clamp(0, imgH);
+      rw = math.max(1, (w * imgW).round());
+      rh = math.max(1, (h * imgH).round());
+    }
     return AnimRecipe(
       'jigglePhysics',
       region: IntRect(rx, ry, rw, rh),
+      poly: polyPx,
       p: <String, double>{
         'amplitude': amplitude * rh,
         'frequency': frequency.toDouble(),
@@ -186,6 +220,8 @@ class JiggleSpec {
   /// which reads as two breasts rather than one rigid block. Each lobe is a
   /// plain (non-twin) [JiggleSpec] so it goes through the normal warp path.
   List<AnimRecipe> toRecipes(int imgW, int imgH) {
+    // A freeform drawn region is one shape — never split it into lobes.
+    if (poly.length >= 6) return <AnimRecipe>[toRecipe(imgW, imgH)];
     final int n = lobes > 1 ? lobes : (twin ? 2 : 1);
     if (n <= 1) return <AnimRecipe>[toRecipe(imgW, imgH)];
     const double gap = 0.10; // fraction of the box width kept clear between lobes
@@ -221,6 +257,7 @@ class JiggleSpec {
         'followThrough': followThrough,
         'lobes': lobes,
         'spread': spread,
+        if (poly.isNotEmpty) 'poly': poly,
       };
 
   static JiggleSpec fromJson(Map<String, Object?> m) => JiggleSpec(
@@ -244,6 +281,10 @@ class JiggleSpec {
         followThrough: (m['followThrough'] as num?)?.toDouble() ?? 0.0,
         lobes: (m['lobes'] as num?)?.toInt() ?? 1,
         spread: (m['spread'] as num?)?.toDouble() ?? 0.5,
+        poly: (m['poly'] as List?)
+                ?.map((Object? v) => (v as num).toDouble())
+                .toList() ??
+            const <double>[],
       );
 }
 

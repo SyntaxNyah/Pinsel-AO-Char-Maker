@@ -64,6 +64,7 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
   // for precise multi-area jiggle. preview/save/bulk pass the whole `_jiggles`.
   final List<JiggleSpec> _jiggles = <JiggleSpec>[jiggleByName('Bust Realistic')];
   int _activeJiggle = 0;
+  bool _lassoMode = false; // when true, drag on the preview traces a freeform region
   JiggleSpec get _jiggle => _jiggles[_activeJiggle.clamp(0, _jiggles.length - 1)];
   set _jiggle(JiggleSpec v) =>
       _jiggles[_activeJiggle.clamp(0, _jiggles.length - 1)] = v;
@@ -302,48 +303,60 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
                     },
                   ),
                 ),
-                // Other jiggle boxes: faint outlines (select/edit them via the
-                // "Boxes" chips). The active box stays the editable overlay below.
+                // Jiggle: outline every box (a drawn freeform shape or a rect),
+                // the active one highlighted. Selecting/editing is via the "Boxes"
+                // chips; the active *rect* also gets the draggable overlay below.
                 if (_mode == _StudioMode.jiggle)
-                  for (int i = 0; i < _jiggles.length; i++)
-                    if (i != _activeJiggle)
-                      Positioned(
-                        left: _jiggles[i].x * w,
-                        top: _jiggles[i].y * h,
-                        width: (_jiggles[i].w * w).clamp(1.0, w),
-                        height: (_jiggles[i].h * h).clamp(1.0, h),
-                        child: IgnorePointer(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              border:
-                                  Border.all(color: Colors.white54, width: 1.5),
-                              color: Colors.white10,
-                            ),
-                          ),
-                        ),
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        painter: _JigglePainter(
+                            List<JiggleSpec>.of(_jiggles), _activeJiggle),
                       ),
-                Positioned.fill(
-                  child: _MouthBoxOverlay(
-                    width: w,
-                    height: h,
-                    mouth: box,
-                    // Live drag: write the value but don't rebuild the controls
-                    // (the overlay redraws itself).
-                    onChanged: (MouthRegion m) {
-                      if (_mode == _StudioMode.mouth) {
-                        _mouth = m;
-                      } else {
-                        _jiggle = _jiggle
-                            .copyWith(x: m.x, y: m.y, w: m.w, h: m.h);
-                      }
-                    },
-                    // One rebuild (sync sliders) + re-render the loop on release.
-                    onCommit: () {
-                      setState(() {});
-                      _schedule();
-                    },
+                    ),
                   ),
-                ),
+                // Lasso draw mode: trace a freeform region for the active box.
+                if (_mode == _StudioMode.jiggle && _lassoMode)
+                  Positioned.fill(
+                    child: _LassoOverlay(
+                      onDone: (List<double> frac) {
+                        setState(() {
+                          _jiggle = _jiggle.copyWith(poly: frac);
+                          _lassoMode = false;
+                        });
+                        _schedule();
+                      },
+                    ),
+                  ),
+                // Draggable box overlay: always in Mouth mode; in Jiggle only when
+                // the active box is a plain rect (a drawn shape isn't drag-edited)
+                // and we're not mid-lasso.
+                if (_mode == _StudioMode.mouth ||
+                    (_mode == _StudioMode.jiggle &&
+                        !_lassoMode &&
+                        _jiggle.poly.length < 6))
+                  Positioned.fill(
+                    child: _MouthBoxOverlay(
+                      width: w,
+                      height: h,
+                      mouth: box,
+                      // Live drag: write the value but don't rebuild the controls
+                      // (the overlay redraws itself).
+                      onChanged: (MouthRegion m) {
+                        if (_mode == _StudioMode.mouth) {
+                          _mouth = m;
+                        } else {
+                          _jiggle =
+                              _jiggle.copyWith(x: m.x, y: m.y, w: m.w, h: m.h);
+                        }
+                      },
+                      // One rebuild (sync sliders) + re-render the loop on release.
+                      onCommit: () {
+                        setState(() {});
+                        _schedule();
+                      },
+                    ),
+                  ),
               ],
             );
           },
@@ -1044,6 +1057,40 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
           'The selected box is the editable one in the preview; the others show '
           'as faint outlines. Every box bounces (with its own settings).',
           style: TextStyle(fontSize: 11, color: Colors.white38),
+        ),
+      ),
+      Row(
+        children: <Widget>[
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => setState(() => _lassoMode = !_lassoMode),
+              icon: Icon(_lassoMode ? Icons.close : Icons.gesture, size: 18),
+              label: Text(_lassoMode ? 'Cancel draw' : 'Draw region ✏️'),
+            ),
+          ),
+          if (_jiggle.poly.length >= 6) ...<Widget>[
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: () {
+                setState(
+                    () => _jiggle = _jiggle.copyWith(poly: const <double>[]));
+                _schedule();
+              },
+              icon: const Icon(Icons.crop_square, size: 18),
+              label: const Text('Back to box'),
+            ),
+          ],
+        ],
+      ),
+      Padding(
+        padding: const EdgeInsets.only(top: 2, bottom: 6),
+        child: Text(
+          _lassoMode
+              ? 'Drag around the area on the preview to trace it — release to set.'
+              : (_jiggle.poly.length >= 6
+                  ? 'Freeform shape active: the inside + edges jiggle.'
+                  : 'Or draw a custom shape around exactly what should jiggle.'),
+          style: const TextStyle(fontSize: 11, color: Colors.white38),
         ),
       ),
       _jiggleSliderInt(
@@ -1826,4 +1873,127 @@ class _CataloguePickerState<T> extends State<_CataloguePicker<T>> {
       ],
     );
   }
+}
+
+/// Outlines every jiggle box on the preview — a drawn freeform shape (filled +
+/// stroked) or a plain rectangle — with the active one highlighted.
+class _JigglePainter extends CustomPainter {
+  _JigglePainter(this.boxes, this.active);
+  final List<JiggleSpec> boxes;
+  final int active;
+
+  @override
+  void paint(Canvas canvas, Size s) {
+    for (int i = 0; i < boxes.length; i++) {
+      final JiggleSpec j = boxes[i];
+      final bool isActive = i == active;
+      // The active *rect* is drawn by the draggable overlay; skip it here.
+      if (isActive && j.poly.length < 6) continue;
+      final Paint stroke = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = isActive ? 2 : 1.5
+        ..color = isActive ? const Color(0xFFFF6FB5) : Colors.white54;
+      if (j.poly.length >= 6) {
+        final Path path = Path()
+          ..moveTo(j.poly[0] * s.width, j.poly[1] * s.height);
+        for (int k = 2; k + 1 < j.poly.length; k += 2) {
+          path.lineTo(j.poly[k] * s.width, j.poly[k + 1] * s.height);
+        }
+        path.close();
+        canvas.drawPath(
+            path,
+            Paint()
+              ..style = PaintingStyle.fill
+              ..color =
+                  isActive ? const Color(0x33FF6FB5) : const Color(0x18FFFFFF));
+        canvas.drawPath(path, stroke);
+      } else {
+        canvas.drawRect(
+            Rect.fromLTWH(
+                j.x * s.width, j.y * s.height, j.w * s.width, j.h * s.height),
+            stroke);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_JigglePainter old) => true;
+}
+
+/// A freehand **lasso**: drag to trace a shape; on release it hands back the
+/// outline as normalised (0..1) `[x0,y0, …]` points (empty if the trace was too
+/// small — treated as a cancel). Points are decimated so the polygon stays sane.
+class _LassoOverlay extends StatefulWidget {
+  const _LassoOverlay({required this.onDone});
+  final void Function(List<double> fractionPts) onDone;
+  @override
+  State<_LassoOverlay> createState() => _LassoOverlayState();
+}
+
+class _LassoOverlayState extends State<_LassoOverlay> {
+  final List<Offset> _pts = <Offset>[];
+  Size _size = Size.zero;
+
+  void _finish() {
+    if (_pts.length < 3 || _size.width <= 0 || _size.height <= 0) {
+      widget.onDone(const <double>[]); // too small — treat as cancel
+      return;
+    }
+    final int step = (_pts.length / 48).ceil().clamp(1, 1 << 20);
+    final List<double> frac = <double>[];
+    for (int i = 0; i < _pts.length; i += step) {
+      frac.add((_pts[i].dx / _size.width).clamp(0.0, 1.0));
+      frac.add((_pts[i].dy / _size.height).clamp(0.0, 1.0));
+    }
+    widget.onDone(frac);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (_, BoxConstraints c) {
+        _size = Size(c.maxWidth, c.maxHeight);
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (DragStartDetails d) {
+            setState(() {
+              _pts
+                ..clear()
+                ..add(d.localPosition);
+            });
+          },
+          onPanUpdate: (DragUpdateDetails d) {
+            setState(() => _pts.add(d.localPosition));
+          },
+          onPanEnd: (_) => _finish(),
+          child: CustomPaint(
+            painter: _LassoPainter(List<Offset>.of(_pts)),
+            child: const SizedBox.expand(),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _LassoPainter extends CustomPainter {
+  _LassoPainter(this.pts);
+  final List<Offset> pts;
+  @override
+  void paint(Canvas canvas, Size s) {
+    if (pts.length < 2) return;
+    final Path path = Path()..moveTo(pts.first.dx, pts.first.dy);
+    for (int i = 1; i < pts.length; i++) {
+      path.lineTo(pts[i].dx, pts[i].dy);
+    }
+    canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..color = const Color(0xFFFF6FB5));
+  }
+
+  @override
+  bool shouldRepaint(_LassoPainter old) => true;
 }

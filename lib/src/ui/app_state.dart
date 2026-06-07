@@ -177,8 +177,18 @@ class AppState extends ChangeNotifier {
   /// bulk run alive and the UI responsive (slower wall-time, but it finishes).
   int get maxConcurrency {
     if (!useAllCores) return 1;
-    return cpuCount.clamp(1, isMobile ? 2 : 8);
+    // Mobile: only ONE render in flight. Each isolate holds a full-res
+    // multi-frame clip; even two at once OOM-killed the app on a tablet during a
+    // big bulk job. Desktop keeps the multi-core speed-up.
+    return isMobile ? 1 : cpuCount.clamp(1, 8);
   }
+
+  /// Big bulk bakes are processed this many sprites **at a time**, freeing each
+  /// batch before the next so peak memory doesn't grow with the cast size. This
+  /// is the fix for the OOM crash on mobile that capped a big bulk jiggle around
+  /// ~70 sprites (it had held every source byte and every encoded clip at once).
+  /// Small on phones/tablets, larger on desktop.
+  int get _bulkChunk => isMobile ? 16 : 100;
 
   /// Toggle multi-core baking.
   void setUseAllCores(bool v) {
@@ -1486,65 +1496,79 @@ class AppState extends ChangeNotifier {
     final List<Map<String, dynamic>> recipeJson =
         recipes.map((AnimRecipe r) => r.toJson()).toList();
 
-    // Gather one job per renderable sprite group (sequential, cheap reads).
+    // Lightweight descriptors first (no preloaded bytes) so memory doesn't grow
+    // with the cast size.
     final List<SpriteGroup> jobGroups = <SpriteGroup>[];
-    final List<_AnimJob> jobs = <_AnimJob>[];
+    final List<String> jobRels = <String>[];
     for (final SpriteGroup g in groups) {
       final String? rel = g.representative?.relPath;
       if (rel == null || !await workspace.exists(rel)) continue;
       jobGroups.add(g);
-      jobs.add(_AnimJob(
-        bytes: await workspace.readBytes(rel),
-        ext: p.extension(rel).replaceFirst('.', ''),
-        recipes: recipeJson,
-        frames: frames,
-        fps: fps,
-        lossless: lossless,
-        quality: quality,
-      ));
+      jobRels.add(rel);
     }
-
-    // Render + encode each on a background isolate, up to [maxConcurrency] at
-    // once — true multi-core baking (the old version was one-sprite-at-a-time).
-    // `compute` runs inline on web; falls back inline on error so the bake still
-    // completes. Order is preserved so results line up with [jobGroups].
-    final List<({Uint8List bytes, String ext, String? webpError})> results =
-        await mapParallel<_AnimJob,
-            ({Uint8List bytes, String ext, String? webpError})>(
-      jobs,
-      _computeAnim,
-      concurrency: maxConcurrency,
-      onProgress: (int d, int t) => _progress(d, t, 'Animate all'),
-    );
 
     int ok = 0;
     int webp = 0;
     String? lastError;
-    for (int i = 0; i < jobGroups.length; i++) {
-      final SpriteGroup g = jobGroups[i];
-      final ({Uint8List bytes, String ext, String? webpError}) r = results[i];
-      if (r.bytes.isEmpty || r.ext == 'none') continue;
-      final String outRel = '$prefix${g.base}.${r.ext}';
-      // Replace an existing same-state sprite for this base (different ext) so
-      // we don't leave two talk sprites for one pose.
-      final SpriteFile? existing = switch (prefix) {
-        SpritePrefix.idle => g.idle,
-        SpritePrefix.talk => g.talk,
-        SpritePrefix.post => g.post,
-        _ => null,
-      };
-      if (existing != null &&
-          existing.relPath != outRel &&
-          await workspace.exists(existing.relPath)) {
-        await workspace.delete(existing.relPath);
+    // Render + write in chunks (see [bulkJiggleAll]) so a big cast doesn't hold
+    // every source + every clip at once and OOM on mobile. `compute` runs inline
+    // on web / on error so the bake still completes; order preserved per chunk.
+    final int chunk = _bulkChunk;
+    for (int start = 0; start < jobRels.length; start += chunk) {
+      final int end =
+          start + chunk < jobRels.length ? start + chunk : jobRels.length;
+      final List<SpriteGroup> chunkGroups = <SpriteGroup>[];
+      final List<_AnimJob> jobs = <_AnimJob>[];
+      for (int i = start; i < end; i++) {
+        chunkGroups.add(jobGroups[i]);
+        jobs.add(_AnimJob(
+          bytes: await workspace.readBytes(jobRels[i]),
+          ext: p.extension(jobRels[i]).replaceFirst('.', ''),
+          recipes: recipeJson,
+          frames: frames,
+          fps: fps,
+          lossless: lossless,
+          quality: quality,
+        ));
       }
-      await workspace.writeBytes(outRel, r.bytes);
-      ok++;
-      if (r.ext == 'webp') {
-        webp++;
-      } else {
-        lastError = r.webpError;
+
+      final List<({Uint8List bytes, String ext, String? webpError})> results =
+          await mapParallel<_AnimJob,
+              ({Uint8List bytes, String ext, String? webpError})>(
+        jobs,
+        _computeAnim,
+        concurrency: maxConcurrency,
+        onProgress: (int d, int t) =>
+            _progress(start + d, jobRels.length, 'Animate all'),
+      );
+
+      for (int j = 0; j < chunkGroups.length; j++) {
+        final SpriteGroup g = chunkGroups[j];
+        final ({Uint8List bytes, String ext, String? webpError}) r = results[j];
+        if (r.bytes.isEmpty || r.ext == 'none') continue;
+        final String outRel = '$prefix${g.base}.${r.ext}';
+        // Replace an existing same-state sprite for this base (different ext) so
+        // we don't leave two talk sprites for one pose.
+        final SpriteFile? existing = switch (prefix) {
+          SpritePrefix.idle => g.idle,
+          SpritePrefix.talk => g.talk,
+          SpritePrefix.post => g.post,
+          _ => null,
+        };
+        if (existing != null &&
+            existing.relPath != outRel &&
+            await workspace.exists(existing.relPath)) {
+          await workspace.delete(existing.relPath);
+        }
+        await workspace.writeBytes(outRel, r.bytes);
+        ok++;
+        if (r.ext == 'webp') {
+          webp++;
+        } else {
+          lastError = r.webpError;
+        }
       }
+      await Future<void>.delayed(Duration.zero);
     }
 
     _invalidateImageCaches();
@@ -1652,59 +1676,80 @@ class AppState extends ChangeNotifier {
     if (groups.isEmpty) return 0;
     _setBusy(true, 'Jiggling ${groups.length} sprites…');
 
+    // Lightweight descriptors first — NO preloaded source bytes — so memory
+    // doesn't grow with the cast size.
     final List<SpriteGroup> jobGroups = <SpriteGroup>[];
-    final List<_AnimJob> jobs = <_AnimJob>[];
+    final List<String> jobRels = <String>[];
     for (final SpriteGroup g in groups) {
       final String? rel = g.representative?.relPath;
       if (rel == null || !await workspace.exists(rel)) continue;
-      // Per-sprite dims → per-sprite pixel regions (fractions are shared).
-      final img.Image? dims = await decodeFirstFrame(rel);
-      if (dims == null) continue;
-      final List<Map<String, dynamic>> recipeJson = <Map<String, dynamic>>[
-        for (final JiggleSpec j in specs)
-          for (final AnimRecipe r in j.toRecipes(dims.width, dims.height))
-            r.toJson(),
-      ];
       jobGroups.add(g);
-      jobs.add(_AnimJob(
-        bytes: await workspace.readBytes(rel),
-        ext: p.extension(rel).replaceFirst('.', ''),
-        recipes: recipeJson,
-        frames: frames,
-        fps: fps,
-        lossless: lossless,
-        quality: quality,
-      ));
+      jobRels.add(rel);
     }
 
-    final List<({Uint8List bytes, String ext, String? webpError})> results =
-        await mapParallel<_AnimJob,
-            ({Uint8List bytes, String ext, String? webpError})>(
-      jobs,
-      _computeAnim,
-      concurrency: maxConcurrency,
-      onProgress: (int d, int t) => _progress(d, t, 'Jiggle all'),
-    );
-
     int ok = 0;
-    for (int i = 0; i < jobGroups.length; i++) {
-      final SpriteGroup g = jobGroups[i];
-      final ({Uint8List bytes, String ext, String? webpError}) r = results[i];
-      if (r.bytes.isEmpty || r.ext == 'none') continue;
-      final String outRel = '$prefix${g.base}.${r.ext}';
-      final SpriteFile? existing = switch (prefix) {
-        SpritePrefix.idle => g.idle,
-        SpritePrefix.talk => g.talk,
-        SpritePrefix.post => g.post,
-        _ => null,
-      };
-      if (existing != null &&
-          existing.relPath != outRel &&
-          await workspace.exists(existing.relPath)) {
-        await workspace.delete(existing.relPath);
+    // Render + write in **chunks**, freeing each batch before the next. Without
+    // this a big cast held every source byte AND every encoded clip in RAM at
+    // once and OOM-crashed on mobile (the ~70-sprite ceiling). [_bulkChunk] caps
+    // the batch; [maxConcurrency] caps in-flight renders (1 on mobile).
+    final int chunk = _bulkChunk;
+    for (int start = 0; start < jobRels.length; start += chunk) {
+      final int end =
+          start + chunk < jobRels.length ? start + chunk : jobRels.length;
+      final List<SpriteGroup> chunkGroups = <SpriteGroup>[];
+      final List<_AnimJob> jobs = <_AnimJob>[];
+      for (int i = start; i < end; i++) {
+        final String rel = jobRels[i];
+        // Per-sprite dims → per-sprite pixel regions (fractions are shared).
+        final img.Image? dims = await decodeFirstFrame(rel);
+        if (dims == null) continue;
+        final List<Map<String, dynamic>> recipeJson = <Map<String, dynamic>>[
+          for (final JiggleSpec j in specs)
+            for (final AnimRecipe r in j.toRecipes(dims.width, dims.height))
+              r.toJson(),
+        ];
+        chunkGroups.add(jobGroups[i]);
+        jobs.add(_AnimJob(
+          bytes: await workspace.readBytes(rel),
+          ext: p.extension(rel).replaceFirst('.', ''),
+          recipes: recipeJson,
+          frames: frames,
+          fps: fps,
+          lossless: lossless,
+          quality: quality,
+        ));
       }
-      await workspace.writeBytes(outRel, r.bytes);
-      ok++;
+
+      final List<({Uint8List bytes, String ext, String? webpError})> results =
+          await mapParallel<_AnimJob,
+              ({Uint8List bytes, String ext, String? webpError})>(
+        jobs,
+        _computeAnim,
+        concurrency: maxConcurrency,
+        onProgress: (int d, int t) =>
+            _progress(start + d, jobRels.length, 'Jiggle all'),
+      );
+
+      for (int j = 0; j < chunkGroups.length; j++) {
+        final SpriteGroup g = chunkGroups[j];
+        final ({Uint8List bytes, String ext, String? webpError}) r = results[j];
+        if (r.bytes.isEmpty || r.ext == 'none') continue;
+        final String outRel = '$prefix${g.base}.${r.ext}';
+        final SpriteFile? existing = switch (prefix) {
+          SpritePrefix.idle => g.idle,
+          SpritePrefix.talk => g.talk,
+          SpritePrefix.post => g.post,
+          _ => null,
+        };
+        if (existing != null &&
+            existing.relPath != outRel &&
+            await workspace.exists(existing.relPath)) {
+          await workspace.delete(existing.relPath);
+        }
+        await workspace.writeBytes(outRel, r.bytes);
+        ok++;
+      }
+      await Future<void>.delayed(Duration.zero); // let the batch GC + UI breathe
     }
 
     _invalidateImageCaches();
@@ -1891,50 +1936,67 @@ class AppState extends ChangeNotifier {
     if (groups.isEmpty) return 0;
     _setBusy(true, 'Adding talking mouths to ${groups.length} sprites…');
 
+    // Lightweight descriptors first (no preloaded bytes) so memory doesn't grow
+    // with the cast size.
     final List<SpriteGroup> jobGroups = <SpriteGroup>[];
-    final List<_MouthJob> jobs = <_MouthJob>[];
+    final List<String> jobRels = <String>[];
     for (final SpriteGroup g in groups) {
       final String? rel = g.representative?.relPath;
       if (rel == null || !await workspace.exists(rel)) continue;
       jobGroups.add(g);
-      jobs.add(_MouthJob(
-        bytes: await workspace.readBytes(rel),
-        ext: p.extension(rel).replaceFirst('.', ''),
-        frames: frames,
-        fps: fps,
-        openAmount: openAmount,
-        style: style ?? LipSync.defaultStyle,
-        shape: shape,
-        lossless: lossless,
-        quality: quality,
-      ));
+      jobRels.add(rel);
     }
-
-    final List<({Uint8List bytes, String ext, String? webpError})> results =
-        await mapParallel<_MouthJob,
-            ({Uint8List bytes, String ext, String? webpError})>(
-      jobs,
-      _computeMouth,
-      concurrency: maxConcurrency,
-      onProgress: (int d, int t) => _progress(d, t, 'Mouth animate all'),
-    );
 
     int ok = 0;
     int webp = 0;
     String? lastError;
-    for (int i = 0; i < jobGroups.length; i++) {
-      final SpriteGroup g = jobGroups[i];
-      final ({Uint8List bytes, String ext, String? webpError}) r = results[i];
-      if (r.bytes.isEmpty || r.ext == 'none') continue;
-      final String outRel = '$prefix${g.base}.${r.ext}';
-      await _replaceStateSprite(g.base, prefix, outRel);
-      await workspace.writeBytes(outRel, r.bytes);
-      ok++;
-      if (r.ext == 'webp') {
-        webp++;
-      } else {
-        lastError = r.webpError;
+    // Chunk it (see [bulkJiggleAll]) so a big cast doesn't OOM on mobile.
+    final int chunk = _bulkChunk;
+    for (int start = 0; start < jobRels.length; start += chunk) {
+      final int end =
+          start + chunk < jobRels.length ? start + chunk : jobRels.length;
+      final List<SpriteGroup> chunkGroups = <SpriteGroup>[];
+      final List<_MouthJob> jobs = <_MouthJob>[];
+      for (int i = start; i < end; i++) {
+        chunkGroups.add(jobGroups[i]);
+        jobs.add(_MouthJob(
+          bytes: await workspace.readBytes(jobRels[i]),
+          ext: p.extension(jobRels[i]).replaceFirst('.', ''),
+          frames: frames,
+          fps: fps,
+          openAmount: openAmount,
+          style: style ?? LipSync.defaultStyle,
+          shape: shape,
+          lossless: lossless,
+          quality: quality,
+        ));
       }
+
+      final List<({Uint8List bytes, String ext, String? webpError})> results =
+          await mapParallel<_MouthJob,
+              ({Uint8List bytes, String ext, String? webpError})>(
+        jobs,
+        _computeMouth,
+        concurrency: maxConcurrency,
+        onProgress: (int d, int t) =>
+            _progress(start + d, jobRels.length, 'Mouth animate all'),
+      );
+
+      for (int j = 0; j < chunkGroups.length; j++) {
+        final SpriteGroup g = chunkGroups[j];
+        final ({Uint8List bytes, String ext, String? webpError}) r = results[j];
+        if (r.bytes.isEmpty || r.ext == 'none') continue;
+        final String outRel = '$prefix${g.base}.${r.ext}';
+        await _replaceStateSprite(g.base, prefix, outRel);
+        await workspace.writeBytes(outRel, r.bytes);
+        ok++;
+        if (r.ext == 'webp') {
+          webp++;
+        } else {
+          lastError = r.webpError;
+        }
+      }
+      await Future<void>.delayed(Duration.zero);
     }
 
     _invalidateImageCaches();
