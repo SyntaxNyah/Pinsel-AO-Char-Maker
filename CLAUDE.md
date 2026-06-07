@@ -862,12 +862,17 @@ The central model.
     to the model + commit on blur/submit; the preview is a cached `_SpritePreview`
     keyed on `rel`+`spriteRevision` (was: a 1024px re-encode on every keystroke).
     The list (`_EmoteListState`) has **multi-select** (per-row checkboxes + an
-    All/None + **Delete (N)** bar → `deleteEmotes`), **multi-drag** (dragging a
-    ticked row moves the whole selection as a block → `moveEmotes(selected,
-    newIndex)`, which uses the raw `ReorderableListView` drop index), and
-    **auto-scrolls** to the selected emote when it changes externally (keyboard
-    `Ctrl+↑/↓`) via a `ScrollController` + estimated row extent (only when
-    off-screen). **Tap sets `_lastSelected = i` before `selectEmote`** so the
+    All/None + **Delete (N)** bar → `deleteEmotes`), **drag-to-select** (a
+    `HitTestBehavior.opaque` strip over the checkbox column: tap toggles one, a
+    vertical drag *paints* many — `_paintStart`/`_paintUpdate` map y→row via the
+    **fixed `_rowExtent`** each row is pinned to, with edge auto-scroll), a
+    **Move** menu (⇅) in the select bar → top/up/down/bottom + **"Move to
+    position…"** (`moveEmotesToIndex` = drop the block at an exact final index, the
+    reliable way to reorder in a 500+ list where dragging across rows isn't
+    practical), **multi-drag** (dragging a ticked row's `≡` handle moves the whole
+    selection → `moveEmotes(selected, rawDropIndex)`), and **auto-scrolls** to the
+    selected emote when it changes externally (keyboard `Ctrl+↑/↓`) via a
+    `ScrollController` + the exact `_rowExtent` (only when off-screen). **Tap sets `_lastSelected = i` before `selectEmote`** so the
     auto-scroll is suppressed for a tap (the row is already visible) — the row-
     extent estimate is imperfect and was jumping the list to a different emote on
     every click ("click a sprite, it selects the one above"). The number badge

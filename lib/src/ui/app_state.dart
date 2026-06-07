@@ -786,6 +786,27 @@ class AppState extends ChangeNotifier {
     return insertAt;
   }
 
+  /// Move the [selected] emotes (as a block, keeping order) so the block's first
+  /// emote lands at **exactly** [finalIndex] (0-based) in the resulting list —
+  /// the "move to position N" action (e.g. the middle, or a few down), unlike the
+  /// drag's raw-drop semantics. Returns the block's new start index, or -1.
+  int moveEmotesToIndex(Set<int> selected, int finalIndex) {
+    if (character == null) return -1;
+    final List<Emote> e = character!.emotes;
+    final List<int> sorted =
+        selected.where((int i) => i >= 0 && i < e.length).toList()..sort();
+    if (sorted.isEmpty) return -1;
+    final List<Emote> moved = <Emote>[for (final int i in sorted) e[i]];
+    for (final int i in sorted.reversed) {
+      e.removeAt(i);
+    }
+    final int insertAt = finalIndex.clamp(0, e.length);
+    e.insertAll(insertAt, moved);
+    selectedEmote = insertAt;
+    commitEdit();
+    return insertAt;
+  }
+
   void undo() {
     final Character? c = history.undo();
     if (c != null) {

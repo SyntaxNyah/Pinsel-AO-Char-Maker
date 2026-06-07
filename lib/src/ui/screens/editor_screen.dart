@@ -48,14 +48,71 @@ class _EmoteListState extends State<_EmoteList> {
   final ScrollController _scroll = ScrollController();
   int _lastSelected = -1;
 
-  /// Approximate dense-row height, only used to scroll a keyboard-selected
-  /// (possibly off-screen) emote into view.
-  static const double _rowExtent = 56;
+  // Drag-to-select ("paint") state: dragging the checkbox column ticks/unticks
+  // the rows the finger passes over. `_paintValue` is set on drag-start (the
+  // opposite of the first row's state) so one swipe is consistently select OR
+  // deselect; `_listH` is the list viewport height (for edge auto-scroll).
+  bool _paintValue = true;
+  double _listH = 0;
+
+  /// **Exact** dense-row height — every row is forced to this (a `SizedBox`), so
+  /// the y→row-index maths for drag-select (and the keyboard scroll-into-view)
+  /// is precise, not an estimate. A touch above the natural dense height so the
+  /// pinned tile never overflows.
+  static const double _rowExtent = 60;
 
   @override
   void dispose() {
     _scroll.dispose();
     super.dispose();
+  }
+
+  /// Row index under a y-position in the list viewport (accounts for scroll).
+  /// -1 before the scroll is attached.
+  int _rowAtY(double localY) =>
+      _scroll.hasClients ? ((_scroll.offset + localY) ~/ _rowExtent) : -1;
+
+  /// Tap on the checkbox strip → toggle that one row.
+  void _paintTapAt(double localY, int count) {
+    final int i = _rowAtY(localY);
+    if (i >= 0 && i < count) _toggle(i);
+  }
+
+  /// Start a drag-select — paint the OPPOSITE of the first row's state so one
+  /// swipe is consistently select-or-deselect.
+  void _paintStart(double localY, int count) {
+    final int i = _rowAtY(localY);
+    if (i < 0 || i >= count) return;
+    _paintValue = !_selected.contains(i);
+    setState(() {
+      if (_paintValue) {
+        _selected.add(i);
+      } else {
+        _selected.remove(i);
+      }
+    });
+  }
+
+  /// Continue a drag-select: edge auto-scroll near the top/bottom so the swipe
+  /// can run past the visible rows, and set the row under the finger to the paint
+  /// value (only rebuilding when it actually changes).
+  void _paintUpdate(double localY, int count) {
+    if (!_scroll.hasClients) return;
+    const double edge = 52;
+    final double maxOff = _scroll.position.maxScrollExtent;
+    if (localY < edge && _scroll.offset > 0) {
+      _scroll.jumpTo((_scroll.offset - 18).clamp(0.0, maxOff));
+    } else if (localY > _listH - edge && _scroll.offset < maxOff) {
+      _scroll.jumpTo((_scroll.offset + 18).clamp(0.0, maxOff));
+    }
+    final int i = _rowAtY(localY);
+    if (i < 0 || i >= count) return;
+    final bool has = _selected.contains(i);
+    if (_paintValue && !has) {
+      setState(() => _selected.add(i));
+    } else if (!_paintValue && has) {
+      setState(() => _selected.remove(i));
+    }
   }
 
   void _toggle(int i) => setState(() {
@@ -123,77 +180,105 @@ class _EmoteListState extends State<_EmoteList> {
             ),
             if (emotes.isNotEmpty) _selectionBar(app, emotes.length),
             Expanded(
-              child: ReorderableListView.builder(
-                scrollController: _scroll,
-                itemCount: emotes.length,
-                onReorder: (int from, int to) {
-                  // Dragging one of several ticked rows moves the WHOLE selection
-                  // as a block (so you can reorder multiple at once); otherwise
-                  // it's a normal single-row move.
-                  if (_selected.length > 1 && _selected.contains(from)) {
-                    final int count =
-                        _selected.where((int i) => i < emotes.length).length;
-                    final int first = app.moveEmotes(_selected, to);
-                    if (first >= 0) {
-                      setState(() {
-                        _selected
-                          ..clear()
-                          ..addAll(
-                              List<int>.generate(count, (int k) => first + k));
-                      });
-                    }
-                  } else {
-                    app.moveEmote(from, to > from ? to - 1 : to);
-                  }
-                },
-                itemBuilder: (BuildContext context, int i) {
-                  final Emote e = emotes[i];
-                  return ListTile(
-                    key: ValueKey<int>(i),
-                    selected: i == app.selectedEmote,
-                    dense: true,
-                    leading: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Checkbox(
-                          value: _selected.contains(i),
-                          visualDensity: VisualDensity.compact,
-                          onChanged: (_) => _toggle(i),
-                        ),
-                        // Scale the number down to fit so 3+ digit emote numbers
-                        // (a 100+ sprite cast) stay fully readable instead of
-                        // being clipped by the circle.
-                        CircleAvatar(
-                          radius: 14,
-                          child: Padding(
-                            padding: const EdgeInsets.all(2),
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text('${i + 1}'),
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints cons) {
+                  _listH = cons.maxHeight; // for edge auto-scroll during paint
+                  return Stack(
+                    children: <Widget>[
+                      ReorderableListView.builder(
+                        scrollController: _scroll,
+                        itemCount: emotes.length,
+                        onReorder: (int from, int to) {
+                          // Dragging one of several ticked rows moves the WHOLE
+                          // selection as a block; otherwise a single-row move.
+                          if (_selected.length > 1 &&
+                              _selected.contains(from)) {
+                            final int count = _selected
+                                .where((int i) => i < emotes.length)
+                                .length;
+                            final int first = app.moveEmotes(_selected, to);
+                            if (first >= 0) {
+                              setState(() {
+                                _selected
+                                  ..clear()
+                                  ..addAll(List<int>.generate(
+                                      count, (int k) => first + k));
+                              });
+                            }
+                          } else {
+                            app.moveEmote(from, to > from ? to - 1 : to);
+                          }
+                        },
+                        itemBuilder: (BuildContext context, int i) {
+                          final Emote e = emotes[i];
+                          // Pinned to _rowExtent so drag-select geometry is exact.
+                          return SizedBox(
+                            key: ValueKey<int>(i),
+                            height: _rowExtent,
+                            child: ListTile(
+                              selected: i == app.selectedEmote,
+                              dense: true,
+                              leading: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  Checkbox(
+                                    value: _selected.contains(i),
+                                    visualDensity: VisualDensity.compact,
+                                    onChanged: (_) => _toggle(i),
+                                  ),
+                                  CircleAvatar(
+                                    radius: 14,
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(2),
+                                      child: FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        child: Text('${i + 1}'),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              title: Text(e.comment,
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
+                              subtitle: Text(e.sprite,
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete_outline, size: 18),
+                                tooltip: 'Delete',
+                                onPressed: () => app.deleteEmote(i),
+                              ),
+                              onTap: () {
+                                _lastSelected = i;
+                                app.selectEmote(i);
+                              },
                             ),
-                          ),
+                          );
+                        },
+                      ),
+                      // Drag-to-select strip over the checkbox column: a TAP
+                      // toggles one row, a vertical DRAG paints many (ticking the
+                      // rows the finger passes), with edge auto-scroll so a swipe
+                      // can run past the visible rows. The rest of the row still
+                      // scrolls / reorders / opens normally.
+                      Positioned(
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: 44,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          // onTapUp (not onTapDown): a real tap toggles one row,
+                          // but a drag suppresses it, so the drag-paint's first
+                          // row isn't toggled twice.
+                          onTapUp: (TapUpDetails d) =>
+                              _paintTapAt(d.localPosition.dy, emotes.length),
+                          onVerticalDragStart: (DragStartDetails d) =>
+                              _paintStart(d.localPosition.dy, emotes.length),
+                          onVerticalDragUpdate: (DragUpdateDetails d) =>
+                              _paintUpdate(d.localPosition.dy, emotes.length),
                         ),
-                      ],
-                    ),
-                    title: Text(e.comment,
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                    subtitle: Text(e.sprite,
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 18),
-                      tooltip: 'Delete',
-                      onPressed: () => app.deleteEmote(i),
-                    ),
-                    // Sync `_lastSelected` so the auto-scroll (which fires on
-                    // selection change) is suppressed for a tap — the tapped row
-                    // is already on-screen, and the row-height estimate used to
-                    // decide "is it visible" was scrolling the list to a
-                    // *different* emote on every click. Keyboard nav still
-                    // scrolls (it changes selectedEmote without touching this).
-                    onTap: () {
-                      _lastSelected = i;
-                      app.selectEmote(i);
-                    },
+                      ),
+                    ],
                   );
                 },
               ),
@@ -221,6 +306,50 @@ class _EmoteListState extends State<_EmoteList> {
     }
   }
 
+  /// Ask for a target position (1-based) and drop the ticked selection there —
+  /// for landing them in the middle, or a few down, without dragging.
+  Future<void> _moveToPositionDialog(AppState app, int count) async {
+    if (_selected.isEmpty) return;
+    final TextEditingController ctrl = TextEditingController(
+        text: '${(count / 2).round().clamp(1, count)}');
+    final int? pos = await showDialog<int>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        title: const Text('Move selected to position'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: 'Position (1–$count)',
+            helperText: 'Where the first selected emote lands',
+          ),
+          onSubmitted: (String v) => Navigator.pop(ctx, int.tryParse(v.trim())),
+        ),
+        actions: <Widget>[
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () =>
+                  Navigator.pop(ctx, int.tryParse(ctrl.text.trim())),
+              child: const Text('Move')),
+        ],
+      ),
+    );
+    if (pos == null || !mounted) return;
+    final int n = _selected.where((int i) => i >= 0 && i < count).length;
+    if (n == 0) return;
+    final int first = app.moveEmotesToIndex(_selected, (pos - 1).clamp(0, count));
+    if (first >= 0) {
+      setState(() {
+        _selected
+          ..clear()
+          ..addAll(List<int>.generate(n, (int k) => first + k));
+      });
+    }
+  }
+
   /// A compact bar to select-all / clear / delete the ticked emotes. Always
   /// shown (with a hint) so multi-select is discoverable; the actions light up
   /// once something is ticked.
@@ -234,7 +363,9 @@ class _EmoteListState extends State<_EmoteList> {
           children: <Widget>[
             Expanded(
               child: Text(
-                any ? '${_selected.length} selected' : 'Tick to select',
+                any
+                    ? '${_selected.length} selected'
+                    : 'Tap or drag ☑ to select · ≡ drag to reorder',
                 style: const TextStyle(fontSize: 12),
               ),
             ),
@@ -253,7 +384,9 @@ class _EmoteListState extends State<_EmoteList> {
                 tooltip: 'Move selected (works across the whole list)',
                 icon: const Icon(Icons.swap_vert_rounded, size: 20),
                 onSelected: (String v) {
-                  if (v == 'top') {
+                  if (v == 'pos') {
+                    _moveToPositionDialog(app, count);
+                  } else if (v == 'top') {
                     _moveSelected(app, 0);
                   } else if (v == 'bottom') {
                     _moveSelected(app, count);
@@ -277,6 +410,9 @@ class _EmoteListState extends State<_EmoteList> {
                   PopupMenuItem<String>(value: 'down', child: Text('Move down')),
                   PopupMenuItem<String>(
                       value: 'bottom', child: Text('Move to bottom')),
+                  PopupMenuDivider(),
+                  PopupMenuItem<String>(
+                      value: 'pos', child: Text('Move to position…')),
                 ],
               ),
             TextButton.icon(
