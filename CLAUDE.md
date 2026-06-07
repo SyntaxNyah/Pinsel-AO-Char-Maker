@@ -426,21 +426,36 @@ The central model.
   outlinePulse/auraGlow/shadowDance animate the spatial outline/glow/dropShadow
   colour ops. **`jigglePhysics`** (region recipe) is the engine behind the Jiggle
   tab — reads `amplitude`(px)/`frequency`/`bounciness`/`squash`/`sway`/
-  `direction`(deg, 0=vertical)/`phase` from `p`; a looping springy oscillation
-  (base sine + overshoot harmonic). See `animation/jiggle.dart`.
+  `direction`(deg, 0=vertical)/`phase` from `p`. **NOT a FrameSpec/rigid layer:**
+  `render` routes `jigglePhysics` region recipes to **`AnimEngine.warpJiggle(src,
+  r, t)`** — a **per-pixel soft-body displacement warp** (premultiplied bilinear,
+  inverse-mapped) that stretches the flesh continuously and is **zero at the
+  influence boundary** (a smooth box mask feathering to 1.5× the box), so it joins
+  the static body with no seam. This replaced the old "cut the rectangle and slide
+  it" path, which looked like a sliding cropped PNG. The free end leads (anchored
+  hang), squash couples to velocity, sway is lateral. `warpJiggle` is pure +
+  isolate-safe. The legacy `_jigglePhysics` FrameSpec stays registered only so
+  `recipeTypes` lists it / a region-less jiggle degrades gracefully. See
+  `animation/jiggle.dart` + docs/JIGGLE.md.
 
 ### animation/jiggle.dart  ← customizable jiggle physics (see docs/JIGGLE.md)
 - **`class JiggleSpec`** — a jiggle **region** (x/y/w/h as fractions) + physics:
   `amplitude` (frac of region height), `frequency` (int bounces/loop),
   `bounciness`, `squash`, `sway` (deg), **`direction`** (deg — bounce along ANY
-  angle: 0=up/down, 90=left/right), `phase`. Plain data → `copyWith`,
-  `toJson/fromJson`, isolate-safe. **`toRecipe(imgW,imgH)`** → an
-  `AnimRecipe('jigglePhysics', region: px, p: {...})` (amplitude becomes px =
-  frac × region-height-px, so preview == bake). Drive via `AnimEngine.render`.
-- **`jigglePresets`** — ~112 presets (16 archetypes × {base,Soft,Big,Fast,Slow,
-  Springy,Extreme}) across Soft/Bounce/Jelly/Sway/Wild. `jiggleCategories`,
+  angle: 0=up/down, 90=left/right), `phase`, **`twin`** (bool). Plain data →
+  `copyWith`, `toJson/fromJson` (incl. `twin`), isolate-safe. **`toRecipe(imgW,
+  imgH)`** → one `AnimRecipe('jigglePhysics', region: px, p: {...})` (amplitude
+  becomes px = frac × region-height-px, so preview == bake). **`toRecipes(imgW,
+  imgH)`** → 1 recipe, or — when `twin` — **2 opposite-phase lobe recipes** (the
+  box split L/R with a ~10% cleavage gap = the two-breast "boobs" look). All
+  AppState jiggle paths now call `toRecipes` (so twin reaches preview/save/bulk).
+  Drive via `AnimEngine.render` (which warps each via `warpJiggle`).
+- **`jigglePresets`** — ~140 presets (20 archetypes × {base,Soft,Big,Fast,Slow,
+  Springy,Extreme}) across **Bust**/Soft/Bounce/Jelly/Sway/Wild. The **Bust**
+  group leads (twin chest physics, `twin: true`). `jiggleCategories`,
   `jiggleByName(name)`. Surfaced in the Animation Studio **Jiggle** tab (draggable
-  box + sliders + preset picker) and `AppState` (`previewJiggle`/`saveJiggle`
+  box + a **Twin lobes (boobs)** toggle + sliders + preset picker; the tab
+  defaults to the `Bust` preset) and `AppState` (`previewJiggle`/`saveJiggle`
   (saves `(a)` idle)/`bulkJiggleAll`).
 
 ### animation/timeline.dart

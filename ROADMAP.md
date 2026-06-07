@@ -121,9 +121,15 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   Mesh toggle in the Mouth tab; a **drag/resize box** on the live preview
 - ✅ **Jiggle physics** — bounce any region (chest/body/hair) in **any direction**
   with amount/speed/bounciness/squash/sway (`JiggleSpec` + the `jigglePhysics`
-  recipe; ~112 presets), a draggable box, preview + Save as `(a)` idle +
+  recipe; ~140 presets), a draggable box, preview + Save as `(a)` idle +
   all-sprites — see docs/JIGGLE.md
-- ⬜ Multiple jiggle regions at once + a dedicated feathered/anchored renderer
+- ✅ **Soft-body jiggle warp + twin lobes** — `jigglePhysics` now renders as a
+  **per-pixel feathered/anchored displacement warp** (`AnimEngine.warpJiggle`)
+  instead of a sliding cut-out rectangle (the "looks like a cropped PNG" fix), and
+  **`twin`** splits a box into two opposite-phase lobes (the **Bust**/"boobs"
+  presets) — i.e. multiple regions per box
+- ⬜ Arbitrary N jiggle regions in the UI (engine already takes a list; the tab
+  drives one box, or two via `twin`)
 - ⬜ Onion-skinning + scrubbable timeline UI
 - ⬜ Per-frame SFX/realization/screenshake authoring UI (model supports it)
 

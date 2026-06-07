@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
@@ -197,8 +198,16 @@ class AnimEngine {
 
     final List<AnimRecipe> global =
         recipes.where((AnimRecipe r) => r.region == null).toList();
-    final List<AnimRecipe> regional =
-        recipes.where((AnimRecipe r) => r.region != null).toList();
+    // Region recipes split two ways: `jigglePhysics` **warps** its region with a
+    // smooth per-pixel displacement field (soft-body flesh — the pixels stretch
+    // continuously into the static body, no hard rectangle), while every other
+    // region recipe stays on the original rigid crop-and-composite layer path.
+    final List<AnimRecipe> rigidRegional = <AnimRecipe>[];
+    final List<AnimRecipe> warpRegional = <AnimRecipe>[];
+    for (final AnimRecipe r in recipes) {
+      if (r.region == null) continue;
+      (r.type == 'jigglePhysics' ? warpRegional : rigidRegional).add(r);
+    }
 
     final List<AnimFrame> out = <AnimFrame>[];
     for (int i = 0; i < frames; i++) {
@@ -218,8 +227,8 @@ class AnimEngine {
         anchorY: src.height / 2,
       );
 
-      // Region layers on top.
-      for (final AnimRecipe r in regional) {
+      // Rigid region layers on top (e.g. wave a hand).
+      for (final AnimRecipe r in rigidRegional) {
         final IntRect reg = r.region!;
         final img.Image piece =
             img.copyCrop(src, x: reg.x, y: reg.y, width: reg.w, height: reg.h);
@@ -233,6 +242,11 @@ class AnimEngine {
           anchorY: reg.y + reg.h / 2,
         );
         canvas = img.compositeImage(canvas, layer, dstX: 0, dstY: 0);
+      }
+
+      // Soft-body jiggle warps — each deforms the running canvas in place.
+      for (final AnimRecipe r in warpRegional) {
+        canvas = warpJiggle(canvas, r, t);
       }
 
       out.add(AnimFrame(canvas, delayCentis: delayCentis));
@@ -298,6 +312,173 @@ class AnimEngine {
     final int dstX = (anchorX + spec.dx - work.width / 2).round();
     final int dstY = (anchorY + spec.dy - work.height / 2).round();
     return img.compositeImage(canvas, work, dstX: dstX, dstY: dstY);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Soft-body jiggle warp
+  // ---------------------------------------------------------------------------
+
+  /// Deform the [r].`region` of [src] with a smooth per-pixel **displacement
+  /// warp** at animation phase [t] (0..1) — the soft, fleshy "anime / gacha
+  /// jiggle" look. Unlike cutting out a rectangle and sliding it (which reads as
+  /// a moving cropped PNG), this stretches the pixels that are *already there*:
+  /// the displacement is **zero at the influence boundary** so the warped flesh
+  /// blends seamlessly into the static body (no hard edges), is largest at the
+  /// **free end** of the region while the attachment stays put (the anchored
+  /// "hang"), and adds velocity-coupled **squash-&-stretch** plus an optional
+  /// lateral **sway**. On a flat sprite there is no data hidden behind the
+  /// region, so a continuous warp is the most natural jiggle achievable.
+  ///
+  /// Params (read from [r], each an independent knob):
+  ///  * `amplitude` px — peak travel of the free end.
+  ///  * `frequency` — bounces per loop (integer ⇒ seamless loop).
+  ///  * `bounciness` 0..1 — overshoot harmonic (the springy rebound).
+  ///  * `squash` 0..1 — squash-&-stretch coupled to velocity.
+  ///  * `sway` deg — lateral wobble of the free end (rotation-like).
+  ///  * `direction` deg — axis the jiggle travels (0 = up/down, 90 = sideways).
+  ///  * `phase` 0..1 — phase offset (use opposite phases for twin lobes/boobs).
+  ///
+  /// Pure + isolate-safe (the bulk worker calls this through [render]). Returns a
+  /// new image; [src] is never mutated. Sampling is premultiplied bilinear so
+  /// transparent edges don't get a dark fringe.
+  static img.Image warpJiggle(img.Image src, AnimRecipe r, double t) {
+    final IntRect? reg = r.region;
+    final img.Image base =
+        src.numChannels == 4 ? src : src.convert(numChannels: 4);
+    if (reg == null || reg.w <= 0 || reg.h <= 0) return base;
+    final int w = base.width, h = base.height;
+    if (w == 0 || h == 0) return base;
+
+    final double amp = r.n('amplitude', 6);
+    final double freq = r.n('frequency', 2);
+    final double bounce = r.n('bounciness', 0.5);
+    final double squash = r.n('squash', 0.5);
+    final double swayDeg = r.n('sway', 0);
+    final double dir = r.n('direction', 0) * math.pi / 180.0;
+    final double phase = r.n('phase', 0) * 2 * math.pi;
+
+    final double cx = reg.x + reg.w / 2.0;
+    final double cy = reg.y + reg.h / 2.0;
+    final double hw = math.max(0.5, reg.w / 2.0);
+    final double hh = math.max(0.5, reg.h / 2.0);
+    const double inf = 1.5; // influence reaches 1.5x the box; motion -> 0 there.
+
+    // Time-varying scalars (hoisted out of the pixel loop).
+    final double ww = 2 * math.pi * freq * t + phase;
+    final double osc = math.sin(ww) + bounce * 0.4 * math.sin(2 * ww + 0.6);
+    final double velo = math.cos(ww);
+    final double str = squash * 0.20 * velo; // squash-&-stretch strain
+    final double dX = math.sin(dir), dY = math.cos(dir); // travel axis
+    final double pX = math.cos(dir), pY = -math.sin(dir); // perpendicular axis
+    final double alongMax = math.max(1.0, hw * dX.abs() + hh * dY.abs());
+    final double swLat = math.sin(swayDeg * math.pi / 180.0) *
+        2 *
+        alongMax *
+        math.sin(ww + 1.2);
+
+    // Only the influence box can change — the rest stays byte-identical, which
+    // is what guarantees the seamless join with the static body.
+    final int x0 = math.max(0, (cx - hw * inf).floor());
+    final int x1 = math.min(w - 1, (cx + hw * inf).ceil());
+    final int y0 = math.max(0, (cy - hh * inf).floor());
+    final int y1 = math.min(h - 1, (cy + hh * inf).ceil());
+    if (x1 < x0 || y1 < y0) return base;
+
+    final Uint8List sp = base.getBytes(order: img.ChannelOrder.rgba);
+    final img.Image dst = base.clone();
+
+    for (int y = y0; y <= y1; y++) {
+      final double oy = y - cy;
+      final double my = 1.0 - _smoothstep(1.0, inf, oy.abs() / hh);
+      if (my <= 0) continue;
+      for (int x = x0; x <= x1; x++) {
+        final double ox = x - cx;
+        final double m = my * (1.0 - _smoothstep(1.0, inf, ox.abs() / hw));
+        if (m <= 0) continue;
+        final double along = ox * dX + oy * dY;
+        final double perp = ox * pX + oy * pY;
+        final double hang = ((along / alongMax + 1) * 0.5).clamp(0.0, 1.0);
+        // (1) anchored bounce — the free end leads, the attachment barely moves.
+        final double bAmt = amp * osc * (0.25 + 0.75 * hang);
+        // (2) squash & stretch + (3) lateral sway, summed along the two axes.
+        final double dispX =
+            (dX * bAmt + dX * (along * str) + pX * (perp * -0.5 * str) +
+                    pX * (swLat * hang)) *
+                m;
+        final double dispY =
+            (dY * bAmt + dY * (along * str) + pY * (perp * -0.5 * str) +
+                    pY * (swLat * hang)) *
+                m;
+        // Inverse map: this destination pixel pulls from (x,y) - disp.
+        double sx = x - dispX;
+        double sy = y - dispY;
+        if (sx < 0) {
+          sx = 0;
+        } else if (sx > w - 1) {
+          sx = (w - 1).toDouble();
+        }
+        if (sy < 0) {
+          sy = 0;
+        } else if (sy > h - 1) {
+          sy = (h - 1).toDouble();
+        }
+        final int xi = sx.floor();
+        final int yi = sy.floor();
+        final int xi1 = xi + 1 < w ? xi + 1 : xi;
+        final int yi1 = yi + 1 < h ? yi + 1 : yi;
+        final double fx = sx - xi;
+        final double fy = sy - yi;
+        final int i00 = (yi * w + xi) * 4;
+        final int i10 = (yi * w + xi1) * 4;
+        final int i01 = (yi1 * w + xi) * 4;
+        final int i11 = (yi1 * w + xi1) * 4;
+        final double a00 = sp[i00 + 3].toDouble();
+        final double a10 = sp[i10 + 3].toDouble();
+        final double a01 = sp[i01 + 3].toDouble();
+        final double a11 = sp[i11 + 3].toDouble();
+        final double aI = _bilerp(a00, a10, a01, a11, fx, fy);
+        if (aI <= 0.5) {
+          dst.setPixelRgba(x, y, 0, 0, 0, 0);
+          continue;
+        }
+        // Premultiplied bilinear: interpolate colour*alpha, then divide back.
+        final double rPm = _bilerp(sp[i00] * a00, sp[i10] * a10, sp[i01] * a01,
+            sp[i11] * a11, fx, fy);
+        final double gPm = _bilerp(sp[i00 + 1] * a00, sp[i10 + 1] * a10,
+            sp[i01 + 1] * a01, sp[i11 + 1] * a11, fx, fy);
+        final double bPm = _bilerp(sp[i00 + 2] * a00, sp[i10 + 2] * a10,
+            sp[i01 + 2] * a01, sp[i11 + 2] * a11, fx, fy);
+        dst.setPixelRgba(
+          x,
+          y,
+          (rPm / aI).round().clamp(0, 255),
+          (gPm / aI).round().clamp(0, 255),
+          (bPm / aI).round().clamp(0, 255),
+          aI.round().clamp(0, 255),
+        );
+      }
+    }
+    return dst;
+  }
+
+  /// Bilinear blend of four corner values.
+  static double _bilerp(double c00, double c10, double c01, double c11,
+      double fx, double fy) {
+    final double top = c00 + (c10 - c00) * fx;
+    final double bot = c01 + (c11 - c01) * fx;
+    return top + (bot - top) * fy;
+  }
+
+  /// Hermite smoothstep: 0 below [edge0], 1 above [edge1], eased between.
+  static double _smoothstep(double edge0, double edge1, double x) {
+    if (edge0 == edge1) return x < edge0 ? 0.0 : 1.0;
+    double t = (x - edge0) / (edge1 - edge0);
+    if (t < 0) {
+      t = 0;
+    } else if (t > 1) {
+      t = 1;
+    }
+    return t * t * (3 - 2 * t);
   }
 
   // ---------------------------------------------------------------------------

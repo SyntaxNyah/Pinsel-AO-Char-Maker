@@ -22,8 +22,12 @@ sprite, so it plays in-game with no extra work.
    * **Bounciness** — how much springy overshoot rides on top.
    * **Softness (squash & stretch)** — how much it squashes as it moves.
    * **Sway (rotation)** — a little rotational wobble.
-   * **Preset** — pick from **100+ presets** (subtle, bouncy, jelly, sway, wild…)
-     as a starting point; it keeps the box you placed and adopts its physics.
+   * **Twin lobes (boobs)** — split the box into a **left + right lobe** that
+     bounce in **opposite phase**. This is what reads as two breasts instead of
+     one block; it's on by default for the **Bust** presets.
+   * **Preset** — pick from **100+ presets** (the **Bust** group leads — twin
+     chest physics; then subtle, bouncy, jelly, sway, wild…) as a starting point;
+     it keeps the box you placed and adopts its physics.
 4. **Save as (a) idle** — jiggle is an idle motion, so it saves as the `(a)`
    sprite (plays while the character is just standing there). WebP, APNG
    fallback.
@@ -34,30 +38,52 @@ sprite, so it plays in-game with no extra work.
 
 A `JiggleSpec` is the region (as **fractions** of the sprite) plus the physics
 knobs. It becomes an [`AnimEngine`](ANIMATION.md) `jigglePhysics` recipe on that
-region (`JiggleSpec.toRecipe`), so it reuses the tested region-as-layer
-compositing, looping and WebP/APNG encode. The region is cut, transformed
-(translate along the direction + squash/stretch + sway) per frame, and
-composited back over the otherwise-static sprite.
+region (`JiggleSpec.toRecipe`); when **twin** is set, `JiggleSpec.toRecipes`
+expands it into two opposite-phase lobe recipes instead.
 
-Per frame `t ∈ [0,1)`:
+### Soft-body warp (not a sliding rectangle)
+
+The earlier version *cut out the rectangle and slid it* as a rigid block, which
+looked like a moving cropped PNG (hard edges sliding over the body, the original
+peeking out underneath). It's now a **per-pixel displacement warp**
+(`AnimEngine.warpJiggle`) — the standard "puppet / liquify" technique. For each
+destination pixel inside the region's influence it samples the source from a
+slightly offset point (premultiplied bilinear), so the pixels that are *already
+there* **stretch continuously** instead of a rectangle moving:
+
+* The displacement is **zero at the influence boundary** (a smooth box mask that
+  feathers out to 1.5× the box), so the warped flesh joins the static body with
+  **no seam** — this is the whole reason it stops looking like a cut-out.
+* Motion is largest at the **free end** of the region and ~zero at the
+  attachment (the anchored "hang"), so it swings rather than slides.
+* **Squash & stretch** is coupled to velocity (tallest whipping through centre),
+  and **sway** adds a lateral, free-end-weighted wobble.
+
+Per frame `t ∈ [0,1)` the time-varying drive is:
 
 ```
-w   = 2π · frequency · t + phase
-osc = sin(w) + bounciness · 0.45 · sin(2w + 0.5)   // base + overshoot
-dx  = amplitude · osc · sin(direction)
-dy  = amplitude · osc · cos(direction)
-scaleY = 1 + squash · 0.16 · cos(w)                // tallest at peak velocity
-scaleX = 1 − 0.6 · (that)
-angle  = sway · sin(w)
+w    = 2π · frequency · t + phase
+osc  = sin(w) + bounciness · 0.4 · sin(2w + 0.6)   // base + springy overshoot
+hang = 0 at the anchored edge → 1 at the free end (along `direction`)
+disp = direction·(amplitude·osc·hang)              // anchored bounce
+     + squash·velocity stretch (along) / squeeze (across)
+     + sway·(lateral, ×hang)
+sample = (x,y) − disp · mask                        // inverse map, bilinear
 ```
 
-`frequency` is a whole number so frame *n‑1 → 0* is seamless. Amplitude is a
-fraction of the region height (resolution-independent), so the **preview**
-(downscaled) and the **export** (full-res) bounce by the same relative amount.
+`frequency` is a whole number so the oscillators are periodic and `t=0 == t=1`
+(seamless loop). Amplitude is a fraction of the region height
+(resolution-independent), so the **preview** (downscaled) and the **export**
+(full-res) deform by the same relative amount. On a flat sprite there is no data
+hidden behind the region, so a continuous warp is the most natural jiggle
+achievable.
 
-Center-anchored motion reads well for chest/body at sensible amplitudes; the
-default amplitude is kept modest because very large travel reveals the
-rectangular region's edges.
+### Twin lobes (boobs)
+
+`twin: true` splits the drawn box down the middle into a left + right lobe (with
+a ~10% cleavage gap) that warp **in opposite phase**. Two breasts bouncing
+alternately reads far more like real chest physics than one symmetric block — so
+the **Bust** presets ship with it on, and the Jiggle tab defaults to one.
 
 ## In code
 
@@ -66,16 +92,21 @@ import 'package:pinsel/src/animation/jiggle.dart';
 import 'package:pinsel/src/animation/anim_engine.dart';
 
 final j = const JiggleSpec(
-  x: 0.30, y: 0.33, w: 0.40, h: 0.18,   // region (fractions)
-  amplitude: 0.18, frequency: 3, bounciness: 0.7, squash: 0.6,
-  sway: 0, direction: 0,                 // 0° = up/down
+  x: 0.28, y: 0.34, w: 0.44, h: 0.20,   // region (fractions)
+  amplitude: 0.16, frequency: 2, bounciness: 0.55, squash: 0.6,
+  sway: 2, direction: 0,                 // 0° = up/down
+  twin: true,                            // split into two out-of-phase lobes
 );
-final clip = AnimEngine.render(sprite, <AnimRecipe>[j.toRecipe(sprite.width, sprite.height)],
+// toRecipes() handles twin (1 or 2 recipes); toRecipe() is the single-region form.
+final clip = AnimEngine.render(
+    sprite, j.toRecipes(sprite.width, sprite.height),
     frames: 18, fps: 16);
 ```
 
-`JiggleSpec` JSON-round-trips (`toJson`/`fromJson`) and is isolate-safe; the
-catalogue is `jigglePresets` / `jiggleCategories` / `jiggleByName(name)`.
+`JiggleSpec` JSON-round-trips (`toJson`/`fromJson`, incl. `twin`) and is
+isolate-safe; the catalogue is `jigglePresets` / `jiggleCategories` /
+`jiggleByName(name)` (the **Bust** category leads). `AnimEngine.warpJiggle(src,
+recipe, t)` is the pure, isolate-safe soft-body warp behind it all.
 
 `AppState`:
 

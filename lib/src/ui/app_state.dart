@@ -1581,7 +1581,7 @@ class AppState extends ChangeNotifier {
           interpolation: img.Interpolation.average);
     }
     final List<AnimRecipe> recipes = <AnimRecipe>[
-      for (final JiggleSpec j in specs) j.toRecipe(base.width, base.height),
+      for (final JiggleSpec j in specs) ...j.toRecipes(base.width, base.height),
     ];
     final AnimClip clip =
         AnimEngine.render(base, recipes, frames: frames, fps: fps);
@@ -1607,7 +1607,7 @@ class AppState extends ChangeNotifier {
     final img.Image? base = await decodeFirstFrame(rel);
     if (base == null) return null;
     final List<AnimRecipe> recipes = <AnimRecipe>[
-      for (final JiggleSpec j in specs) j.toRecipe(base.width, base.height),
+      for (final JiggleSpec j in specs) ...j.toRecipes(base.width, base.height),
     ];
     // Reuse the tested full-res render+encode+write path.
     return saveAnimation(recipes,
@@ -1645,7 +1645,8 @@ class AppState extends ChangeNotifier {
       if (dims == null) continue;
       final List<Map<String, dynamic>> recipeJson = <Map<String, dynamic>>[
         for (final JiggleSpec j in specs)
-          j.toRecipe(dims.width, dims.height).toJson(),
+          for (final AnimRecipe r in j.toRecipes(dims.width, dims.height))
+            r.toJson(),
       ];
       jobGroups.add(g);
       jobs.add(_AnimJob(

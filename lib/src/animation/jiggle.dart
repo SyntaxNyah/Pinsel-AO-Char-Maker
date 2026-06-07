@@ -10,10 +10,13 @@ import 'anim_engine.dart';
 /// background isolate for bulk baking.
 ///
 /// It renders by becoming an [AnimEngine] `jigglePhysics` recipe on this region
-/// (see [toRecipe]) — i.e. it reuses the tested region-as-layer compositing,
-/// loop, and encode path. The motion is a **looping oscillation tuned to feel
+/// (see [toRecipe]/[toRecipes]), which `AnimEngine.render` deforms with a
+/// **per-pixel soft-body warp** (`AnimEngine.warpJiggle`) — the flesh stretches
+/// continuously and joins the static body seamlessly, instead of a cut-out
+/// rectangle sliding around. The motion is a **looping oscillation tuned to feel
 /// springy**, not an impulse/settle physics sim (a true damped spring wouldn't
-/// loop cleanly), so keep [frequency] a whole number for a seamless loop.
+/// loop cleanly), so keep [frequency] a whole number for a seamless loop. Set
+/// [twin] for two opposite-phase lobes (the two-breast look).
 class JiggleSpec {
   const JiggleSpec({
     this.name = 'Jiggle',
@@ -29,6 +32,7 @@ class JiggleSpec {
     this.sway = 0.0,
     this.direction = 0.0,
     this.phase = 0.0,
+    this.twin = false,
   });
 
   /// Preset name (unique within [jigglePresets]).
@@ -40,8 +44,9 @@ class JiggleSpec {
   /// Region as fractions of the sprite (top-left [x],[y]; size [w],[h]).
   final double x, y, w, h;
 
-  /// Peak travel as a fraction of the **region height** (kept low by default;
-  /// big values reveal the rectangular region as it moves).
+  /// Peak travel of the free end as a fraction of the **region height** (the
+  /// soft-body warp stretches the flesh continuously, so larger values stay
+  /// seamless — they just swing further).
   final double amplitude;
 
   /// Bounces per loop — keep a whole number so the clip loops seamlessly.
@@ -64,6 +69,11 @@ class JiggleSpec {
   /// 0..1 phase offset, so two regions can bounce out of sync.
   final double phase;
 
+  /// **Twin lobes** (boobs): when true the drawn box is split down the middle
+  /// into a left + right lobe that bounce in **opposite phase** — the gacha
+  /// chest-physics look — instead of one block. See [toRecipes].
+  final bool twin;
+
   JiggleSpec copyWith({
     String? name,
     String? category,
@@ -78,6 +88,7 @@ class JiggleSpec {
     double? sway,
     double? direction,
     double? phase,
+    bool? twin,
   }) =>
       JiggleSpec(
         name: name ?? this.name,
@@ -93,6 +104,7 @@ class JiggleSpec {
         sway: sway ?? this.sway,
         direction: direction ?? this.direction,
         phase: phase ?? this.phase,
+        twin: twin ?? this.twin,
       );
 
   /// Build the [AnimEngine] recipe for an image of [imgW]×[imgH] px. The region
@@ -119,6 +131,28 @@ class JiggleSpec {
     );
   }
 
+  /// Build the [AnimEngine] recipe(s) for an image of [imgW]x[imgH] px. Normally
+  /// just one (= [toRecipe]); when [twin] the drawn box is split into a **left +
+  /// right lobe** (with a small cleavage gap) that bounce in **opposite phase**,
+  /// which reads as two breasts rather than one rigid block. Each lobe is a
+  /// plain (non-twin) [JiggleSpec] so it goes through the normal warp path.
+  List<AnimRecipe> toRecipes(int imgW, int imgH) {
+    if (!twin) return <AnimRecipe>[toRecipe(imgW, imgH)];
+    const double gap = 0.10; // fraction of the box width left clear in the middle
+    final double lobeW = math.max(0.02, w * (1 - gap) / 2.0);
+    final JiggleSpec left = copyWith(twin: false, w: lobeW);
+    final JiggleSpec right = copyWith(
+      twin: false,
+      x: x + w - lobeW,
+      w: lobeW,
+      phase: (phase + 0.5) % 1.0,
+    );
+    return <AnimRecipe>[
+      left.toRecipe(imgW, imgH),
+      right.toRecipe(imgW, imgH),
+    ];
+  }
+
   Map<String, Object?> toJson() => <String, Object?>{
         'name': name,
         'category': category,
@@ -130,6 +164,7 @@ class JiggleSpec {
         'sway': sway,
         'direction': direction,
         'phase': phase,
+        'twin': twin,
       };
 
   static JiggleSpec fromJson(Map<String, Object?> m) => JiggleSpec(
@@ -146,6 +181,7 @@ class JiggleSpec {
         sway: (m['sway'] as num?)?.toDouble() ?? 0.0,
         direction: (m['direction'] as num?)?.toDouble() ?? 0.0,
         phase: (m['phase'] as num?)?.toDouble() ?? 0.0,
+        twin: (m['twin'] as bool?) ?? false,
       );
 }
 
@@ -175,6 +211,12 @@ JiggleSpec jiggleByName(String? name) {
 List<JiggleSpec> _buildJigglePresets() {
   // (name, category, amplitude, frequency, bounciness, squash, sway, direction)
   const List<JiggleSpec> archetypes = <JiggleSpec>[
+    // Bust (boobs): twin lobes over the chest that bounce out of phase. Listed
+    // first so the picker leads with the headline "anime jiggle" look.
+    JiggleSpec(name: 'Bust', category: 'Bust', x: 0.28, y: 0.34, w: 0.44, h: 0.20, amplitude: 0.16, frequency: 2, bounciness: 0.55, squash: 0.6, sway: 2, twin: true),
+    JiggleSpec(name: 'Bust Big', category: 'Bust', x: 0.25, y: 0.34, w: 0.50, h: 0.22, amplitude: 0.26, frequency: 2, bounciness: 0.7, squash: 0.72, sway: 3, twin: true),
+    JiggleSpec(name: 'Bust Jelly', category: 'Bust', x: 0.27, y: 0.34, w: 0.46, h: 0.20, amplitude: 0.22, frequency: 3, bounciness: 0.9, squash: 0.85, sway: 4, twin: true),
+    JiggleSpec(name: 'Bust Soft', category: 'Bust', x: 0.28, y: 0.35, w: 0.44, h: 0.18, amplitude: 0.11, frequency: 2, bounciness: 0.4, squash: 0.5, sway: 1, twin: true),
     JiggleSpec(name: 'Natural', category: 'Soft', amplitude: 0.14, frequency: 2, bounciness: 0.45, squash: 0.5, sway: 0),
     JiggleSpec(name: 'Subtle', category: 'Soft', amplitude: 0.08, frequency: 2, bounciness: 0.3, squash: 0.35, sway: 0),
     JiggleSpec(name: 'Gentle', category: 'Soft', amplitude: 0.11, frequency: 2, bounciness: 0.4, squash: 0.45, sway: 0),

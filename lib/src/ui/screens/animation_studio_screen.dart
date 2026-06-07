@@ -58,8 +58,8 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
   _MouthSource _mouthSource = _MouthSource.cavity;
   MouthShape _mouthShape = LipSync.mouthShapes.first; // chosen anime mouth
 
-  // jiggle mode
-  JiggleSpec _jiggle = const JiggleSpec();
+  // jiggle mode — default to the twin-lobe "Bust" preset (the headline use).
+  JiggleSpec _jiggle = jiggleByName('Bust');
   int _jiggleFrames = 18;
 
   // frames mode
@@ -936,6 +936,21 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
       const SizedBox(height: 8),
       const Text('Drag the box in the preview over what should jiggle.',
           style: TextStyle(fontSize: 11, color: Colors.white54)),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        dense: true,
+        value: _jiggle.twin,
+        onChanged: (bool v) {
+          setState(() => _jiggle = _jiggle.copyWith(twin: v));
+          _schedule();
+        },
+        title: const Text('Twin lobes (boobs)'),
+        subtitle: const Text(
+          'Split the box into a left + right lobe that bounce out of phase — '
+          'the two-breast look. Off = one region.',
+          style: TextStyle(fontSize: 11, color: Colors.white54),
+        ),
+      ),
       const SizedBox(height: 6),
       _jiggleSlider('Direction', _jiggle.direction, 0, 180,
           (double v) => _jiggle = _jiggle.copyWith(direction: v),
