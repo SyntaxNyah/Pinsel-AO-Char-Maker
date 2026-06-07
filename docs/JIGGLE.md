@@ -60,8 +60,9 @@ destination pixel inside the region's influence it samples the source from a
 slightly offset point (premultiplied bilinear), so the pixels that are *already
 there* **stretch continuously** instead of a rectangle moving:
 
-* The displacement is **zero at the influence boundary** (a smooth box mask that
-  feathers out to 1.5× the box), so the warped flesh joins the static body with
+* The displacement is **zero at the influence boundary** (an **elliptical/radial**
+  falloff that feathers out to ~1.35× the box radius — not a rectangle, so there's
+  no visible box edge), so the warped flesh joins the static body with
   **no seam** — this is the whole reason it stops looking like a cut-out.
 * Motion is largest at the **free end** of the region and ~zero at the
   attachment (the anchored "hang"), so it swings rather than slides.

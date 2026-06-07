@@ -158,10 +158,27 @@ class AppState extends ChangeNotifier {
   /// Logical CPU cores detected on this device.
   int get cpuCores => cpuCount;
 
+  /// Whether we're on a memory-constrained mobile OS (Android/iOS), where each
+  /// extra render isolate holds a full-res multi-frame clip in RAM.
+  bool get isMobile =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
   /// How many render/encode jobs to keep in flight during bulk operations.
   /// Capped so we never spawn an unreasonable number of background isolates
   /// (each `compute` is one isolate); 1 when multi-core is disabled.
-  int get maxConcurrency => useAllCores ? cpuCount.clamp(1, 8) : 1;
+  ///
+  /// **Mobile is capped hard at 2.** On a phone/tablet, fanning a big bulk job
+  /// (e.g. jiggling ~500 ripped sprites) across 8 isolates — each decoding a
+  /// sprite and building a full-res multi-frame WebP clip — exhausts RAM and the
+  /// OS **OOM-kills the app** (looks like "it crashed"), while saturating every
+  /// core starves the UI isolate ("really bad lag"). Two in flight keeps a huge
+  /// bulk run alive and the UI responsive (slower wall-time, but it finishes).
+  int get maxConcurrency {
+    if (!useAllCores) return 1;
+    return cpuCount.clamp(1, isMobile ? 2 : 8);
+  }
 
   /// Toggle multi-core baking.
   void setUseAllCores(bool v) {
@@ -2219,22 +2236,26 @@ class AppState extends ChangeNotifier {
         cells.where((SheetCell c) => c.enabled).toList();
     if (enabled.isEmpty) return 0;
     _setBusy(true, 'Ripping ${enabled.length} sprite(s)…');
+    // When adding to the project, seed the namer with the sprites **already
+    // there** so a second sheet's auto names continue past them (sprite5, 6, …)
+    // instead of restarting at sprite1 and overwriting the first sheet's files.
+    final Set<String> existing = <String>{};
+    if (toProject) {
+      for (final String rel in await _projectFiles()) {
+        final String b = p.basenameWithoutExtension(rel);
+        if (b.isNotEmpty) existing.add(b);
+      }
+    }
+    final List<String> names = SpriteSheet.uniqueNames(
+        existing, <String>[for (final SheetCell c in enabled) c.name], namePrefix);
+
     final List<PickedFile> out = <PickedFile>[];
-    final Set<String> used = <String>{};
     for (int i = 0; i < enabled.length; i++) {
       final SheetCell c = enabled[i];
       final img.Image piece = SpriteSheet.extract(sheet, c.rect,
           removeBg: removeBg, bgColor: bgColor, tolerance: tolerance);
       final Uint8List png = Codecs.encodePng(piece);
-      String base = c.name.trim().isEmpty ? '$namePrefix${i + 1}' : c.name.trim();
-      base = base.replaceAll(RegExp(r'[\\/:*?"<>|]+'), '_');
-      String unique = base;
-      int n = 2;
-      while (used.contains(unique.toLowerCase())) {
-        unique = '${base}_${n++}';
-      }
-      used.add(unique.toLowerCase());
-      out.add(PickedFile('$unique.png', png));
+      out.add(PickedFile('${names[i]}.png', png));
       _progress(i + 1, enabled.length, 'Rip');
       if (i % 3 == 0) await Future<void>.delayed(Duration.zero);
     }

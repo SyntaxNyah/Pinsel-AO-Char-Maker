@@ -374,7 +374,7 @@ class AnimEngine {
     final double cy = reg.y + reg.h / 2.0;
     final double hw = math.max(0.5, reg.w / 2.0);
     final double hh = math.max(0.5, reg.h / 2.0);
-    const double inf = 1.5; // influence reaches 1.5x the box; motion -> 0 there.
+    const double inf = 1.35; // elliptical influence reaches 1.35x the box radius.
 
     // Time-varying scalars (hoisted out of the pixel loop).
     final double ww = 2 * math.pi * freq * t + phase;
@@ -390,9 +390,9 @@ class AnimEngine {
     // Follow-through: the swinging end runs an *earlier* phase than the pin, so
     // the jiggle travels through the flesh as a wave (the key "pro animation"
     // tell). Blended per-pixel by `weight`; followThrough 0 ⇒ uniform (original).
-    final double oscTip = oscAt(ww - followThrough * 0.9);
+    final double oscTip = oscAt(ww - followThrough * 0.7);
     final double velo = math.cos(ww);
-    final double str = squash * 0.20 * velo; // squash-&-stretch strain
+    final double str = squash * 0.12 * velo; // squash strain (low ⇒ less smear)
     final double dX = math.sin(dir), dY = math.cos(dir); // travel axis
     final double pX = math.cos(dir), pY = -math.sin(dir); // perpendicular axis
     final double alongMax = math.max(1.0, hw * dX.abs() + hh * dY.abs());
@@ -414,11 +414,16 @@ class AnimEngine {
 
     for (int y = y0; y <= y1; y++) {
       final double oy = y - cy;
-      final double my = 1.0 - _smoothstep(1.0, inf, oy.abs() / hh);
-      if (my <= 0) continue;
+      final double ry = oy / hh;
+      if (ry.abs() >= inf) continue; // outside the ellipse for every x in this row
       for (int x = x0; x <= x1; x++) {
         final double ox = x - cx;
-        final double m = my * (1.0 - _smoothstep(1.0, inf, ox.abs() / hw));
+        final double rx = ox / hw;
+        // **Elliptical (radial) falloff** — no rectangular edge (the "blocky"
+        // fix): full motion inside the breast ellipse, feathering smoothly into
+        // the surrounding body so there's no visible box.
+        final double nr = math.sqrt(rx * rx + ry * ry);
+        final double m = 1.0 - _smoothstep(1.0, inf, nr);
         if (m <= 0) continue;
         final double along = ox * dX + oy * dY;
         final double perp = ox * pX + oy * pY;
@@ -431,8 +436,10 @@ class AnimEngine {
             (pinDen <= 0 ? 1.0 : (s - anchorPin).abs() / pinDen).clamp(0.0, 1.0);
         // Per-pixel oscillator: the tip lags the pin (follow-through wave).
         final double osc = oscBase + (oscTip - oscBase) * weight;
-        // (1) anchored bounce — the swinging end leads, the pin barely moves.
-        final double bAmt = amp * osc * (0.25 + 0.75 * weight);
+        // (1) bounce: **mostly a uniform translation** of the mass (crisp — a
+        // steep per-pixel gradient is what smears the art) with only a gentle
+        // anchored lean so the swinging end still leads a little.
+        final double bAmt = amp * osc * (0.7 + 0.3 * weight);
         // (2) squash & stretch + (3) lateral sway, summed along the two axes.
         final double dispX =
             (dX * bAmt + dX * (along * str) + pX * (perp * -0.5 * str) +

@@ -453,10 +453,15 @@ The central model.
   `render` routes `jigglePhysics` region recipes to **`AnimEngine.warpJiggle(src,
   r, t)`** — a **per-pixel soft-body displacement warp** (premultiplied bilinear,
   inverse-mapped) that stretches the flesh continuously and is **zero at the
-  influence boundary** (a smooth box mask feathering to 1.5× the box), so it joins
-  the static body with no seam. This replaced the old "cut the rectangle and slide
-  it" path, which looked like a sliding cropped PNG. The free end leads (anchored
-  hang), squash couples to velocity, sway is lateral. `warpJiggle` is pure +
+  influence boundary** (an **elliptical/radial** falloff feathering to ~1.35× the
+  box radius — *not* a box, so no visible rectangular edge), so it joins the
+  static body with no seam. The bounce is **mostly a uniform translation** of the
+  mass with only a gentle anchored lean + low squash strain, so the breast art
+  stays crisp instead of smearing (the "melty/blocky" fixes). This replaced the
+  old "cut the rectangle and slide it" path, which looked like a sliding cropped
+  PNG. NB on a flat frame there's nothing painted behind the breast, so large
+  motion still smears somewhat — true Live2D needs layered/rigged art.
+  `warpJiggle` is pure +
   isolate-safe. The legacy `_jigglePhysics` FrameSpec stays registered only so
   `recipeTypes` lists it / a region-less jiggle degrades gracefully. See
   `animation/jiggle.dart` + docs/JIGGLE.md.
@@ -798,10 +803,16 @@ The central model.
     sliders kept for precise nudging; open amount + frames/fps; **Save (b)/(a)** →
     `saveMouthTalk`, **all sprites** → `bulkMouthTalkAll`; seeds via
     `_ensureMouthSeed`/`defaultMouthRegionFor`/`currentSpriteAspect`),
-    **Jiggle** (`_jiggleControls`: the **same draggable box** over the chest/body,
-    a `jigglePresets` picker, and sliders for **direction (any angle)/bounce
-    amount/speed/bounciness/squash/sway** → `previewJiggle`/`saveJiggle` ((a)
-    idle)/`bulkJiggleAll`), and
+    **Jiggle** (`_jiggleControls`: **a sprite picker** (DropdownButton →
+    `selectEmote`) to choose which sprite to jiggle without leaving the tab;
+    **multiple boxes** — `_jiggles` (`List<JiggleSpec>`) + `_activeJiggle`, with a
+    `_jiggle` **getter/setter** backing the active box so all single-box slider
+    code is unchanged; the active box is the draggable `_MouthBoxOverlay`, the
+    others draw as faint outlines, and a **Boxes** chip row adds/selects/removes;
+    a `jigglePresets` picker (applies to the active box) + sliders for **direction
+    /bounce/speed/bounciness/squash/sway + realism (gravity/follow-through/organic
+    /anchor) + lobes/spread** → `previewJiggle`/`saveJiggle`/`bulkJiggleAll` all
+    take the whole **`_jiggles`** list ((a) idle)), and
     **Frames** (frame-by-frame: pick/reorder, fps/reverse/ping-pong/align, save).
     All share the debounced render + `ValueNotifier` playback loop. The preview's
     `_MouthBoxOverlay` is shared by Mouth + Jiggle; `showCataloguePicker<T>` is the
@@ -959,9 +970,14 @@ The central model.
     (`SheetMode.manual` — drag empty space to draw a box, drag a box to move,
     corner to resize, ×/Clear to delete; `_manualBox`/`_drawStart/Update/End`;
     Auto/Grid regenerate cells, Manual keeps them). Auto/grid overlay boxes are
-    **tap-to-toggle**; export adds to the character (`addSprites`) or a zip. Sheet
-    persists on `AppState.ripperSheetBytes`. Sliders use `divisions` (arrow-key
-    friendly). See docs/SPRITE_RIPPER.md.
+    **tap-to-toggle**; export adds to the character (`addSprites`) or a zip. The
+    canvas is wrapped in an **`InteractiveViewer`** (pinch / mouse-wheel **zoom** +
+    pan; `minScale 1` ⇒ zoom-out returns to fit) so you can box tiny sprites
+    precisely — pan is disabled in **Manual** mode (a drag draws a box there);
+    box gestures read child-local coords so they stay correct at any zoom. Sheet
+    persists on `AppState.ripperSheetBytes`. Export naming continues past sprites
+    already added (`SpriteSheet.uniqueNames`) so a 2nd sheet doesn't overwrite the
+    1st. Sliders use `divisions` (arrow-key friendly). See docs/SPRITE_RIPPER.md.
   - `theme_maker`: seven tabs — **Layout** (X/Y/W/H rows + add from ~95 known
     widgets, Courtroom/Lobby toggle, filter), **Colours** (swatch → hue-wheel),
     **Fonts** (size/family/colour/bold/sharp), **Images** (replace any asset with

@@ -58,8 +58,15 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
   _MouthSource _mouthSource = _MouthSource.cavity;
   MouthShape _mouthShape = LipSync.mouthShapes.first; // chosen anime mouth
 
-  // jiggle mode — default to the premium realistic bust preset (the headline use).
-  JiggleSpec _jiggle = jiggleByName('Bust Realistic');
+  // jiggle mode — a LIST of jiggle boxes (default one premium bust preset). The
+  // sliders/preset edit the **active** box via the `_jiggle` getter/setter, so
+  // all the existing single-box code keeps working while you can add more boxes
+  // for precise multi-area jiggle. preview/save/bulk pass the whole `_jiggles`.
+  final List<JiggleSpec> _jiggles = <JiggleSpec>[jiggleByName('Bust Realistic')];
+  int _activeJiggle = 0;
+  JiggleSpec get _jiggle => _jiggles[_activeJiggle.clamp(0, _jiggles.length - 1)];
+  set _jiggle(JiggleSpec v) =>
+      _jiggles[_activeJiggle.clamp(0, _jiggles.length - 1)] = v;
   int _jiggleFrames = 18;
 
   // frames mode
@@ -114,7 +121,7 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
           mesh: _mouthSource == _MouthSource.mesh);
     } else if (_mode == _StudioMode.jiggle) {
       await _ensureMouthSeed(app); // also seeds the sprite aspect for the box
-      imgs = await app.previewJiggle(<JiggleSpec>[_jiggle],
+      imgs = await app.previewJiggle(_jiggles,
           frames: _jiggleFrames, fps: _fps);
     } else {
       final int n = _recipes.isEmpty ? 1 : _frames;
@@ -295,6 +302,26 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
                     },
                   ),
                 ),
+                // Other jiggle boxes: faint outlines (select/edit them via the
+                // "Boxes" chips). The active box stays the editable overlay below.
+                if (_mode == _StudioMode.jiggle)
+                  for (int i = 0; i < _jiggles.length; i++)
+                    if (i != _activeJiggle)
+                      Positioned(
+                        left: _jiggles[i].x * w,
+                        top: _jiggles[i].y * h,
+                        width: (_jiggles[i].w * w).clamp(1.0, w),
+                        height: (_jiggles[i].h * h).clamp(1.0, h),
+                        child: IgnorePointer(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border:
+                                  Border.all(color: Colors.white54, width: 1.5),
+                              color: Colors.white10,
+                            ),
+                          ),
+                        ),
+                      ),
                 Positioned.fill(
                   child: _MouthBoxOverlay(
                     width: w,
@@ -915,6 +942,33 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
         style: TextStyle(fontSize: 12, color: Colors.white60),
       ),
       const SizedBox(height: 10),
+      if (app.character != null && app.character!.emotes.isNotEmpty) ...<Widget>[
+        Text('Sprite to jiggle', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 4),
+        DropdownButton<int>(
+          isExpanded: true,
+          value: app.selectedEmote < 0
+              ? 0
+              : app.selectedEmote.clamp(0, app.character!.emotes.length - 1),
+          items: <DropdownMenuItem<int>>[
+            for (int i = 0; i < app.character!.emotes.length; i++)
+              DropdownMenuItem<int>(
+                value: i,
+                child: Text(
+                  '${i + 1}. ${app.character!.emotes[i].comment.trim().isEmpty ? app.character!.emotes[i].sprite : app.character!.emotes[i].comment.trim()}',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+          onChanged: (int? v) {
+            if (v == null) return;
+            app.selectEmote(v);
+            setState(() {});
+            _schedule();
+          },
+        ),
+        const SizedBox(height: 10),
+      ],
       Text('Preset', style: Theme.of(context).textTheme.labelLarge),
       const SizedBox(height: 4),
       OutlinedButton.icon(
@@ -937,6 +991,61 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
       const Text('Drag the box in the preview over what should jiggle.',
           style: TextStyle(fontSize: 11, color: Colors.white54)),
       const SizedBox(height: 6),
+      Text('Boxes (jiggle several areas at once)',
+          style: Theme.of(context).textTheme.labelLarge),
+      const SizedBox(height: 4),
+      Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: <Widget>[
+          for (int i = 0; i < _jiggles.length; i++)
+            ChoiceChip(
+              label: Text('Box ${i + 1}'),
+              selected: i == _activeJiggle,
+              onSelected: (_) {
+                setState(() => _activeJiggle = i);
+                _schedule();
+              },
+            ),
+          ActionChip(
+            avatar: const Icon(Icons.add, size: 18),
+            label: const Text('Add box'),
+            onPressed: () {
+              setState(() {
+                _jiggles.add(_jiggle.copyWith(
+                  x: (_jiggle.x + 0.06).clamp(0.0, 0.92),
+                  y: (_jiggle.y + 0.06).clamp(0.0, 0.92),
+                ));
+                _activeJiggle = _jiggles.length - 1;
+              });
+              _schedule();
+            },
+          ),
+          if (_jiggles.length > 1)
+            ActionChip(
+              avatar: const Icon(Icons.close, size: 18),
+              label: const Text('Remove'),
+              onPressed: () {
+                setState(() {
+                  _jiggles.removeAt(_activeJiggle);
+                  if (_activeJiggle >= _jiggles.length) {
+                    _activeJiggle = _jiggles.length - 1;
+                  }
+                });
+                _schedule();
+              },
+            ),
+        ],
+      ),
+      const Padding(
+        padding: EdgeInsets.only(top: 2, bottom: 6),
+        child: Text(
+          'The selected box is the editable one in the preview; the others show '
+          'as faint outlines. Every box bounces (with its own settings).',
+          style: TextStyle(fontSize: 11, color: Colors.white38),
+        ),
+      ),
       _jiggleSliderInt(
           'Lobes (2 = boobs)',
           _jiggle.lobes > 1 ? _jiggle.lobes : (_jiggle.twin ? 2 : 1),
@@ -993,7 +1102,7 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
         child: FilledButton.icon(
           onPressed: app.current == null
               ? null
-              : () => app.saveJiggle(<JiggleSpec>[_jiggle],
+              : () => app.saveJiggle(_jiggles,
                   frames: _jiggleFrames, fps: _fps),
           icon: const Icon(Icons.save_rounded),
           label: const Text('Save as (a) idle'),
@@ -1107,7 +1216,7 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
       ),
     );
     if (go != true) return;
-    await app.bulkJiggleAll(<JiggleSpec>[_jiggle],
+    await app.bulkJiggleAll(_jiggles,
         frames: _jiggleFrames, fps: _fps);
   }
 

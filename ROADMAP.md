@@ -133,7 +133,19 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   lags base = the jiggle ripples through the flesh as a wave), and **`lobes`** N
   (a UI slider; generalises twin) with `spread`. All loop-seamless, all neutral
   by default. Premium **Bust** + **Physics** presets; sliders in the Jiggle tab
-- ⬜ Per-sprite jiggle regions / multiple independent boxes drawn on one sprite
+- ✅ **Smeary/blocky jiggle fix** — radial (elliptical) influence mask instead of
+  a box (no rectangular edge), and the bounce is mostly a uniform translation of
+  the mass with low shear (so the art stays crisp instead of melting).
+- ✅ **Multiple jiggle boxes + sprite picker** — the Jiggle tab holds a list of
+  boxes (Add/select/Remove chips; active = editable, others = outlines; every box
+  bounces with its own settings) and a sprite dropdown to jiggle any sprite.
+- ⬜ **Freeform "draw-around" jiggle region** — trace a polygon/lasso; warp masks
+  to it (inside + edges jiggle). Engine: reuse the `crop_shape` polygon→mask path.
+- ✅ **Mobile crash/lag fix** — bulk render concurrency capped to 2 on Android/iOS
+  (`maxConcurrency`) so a big bulk job (e.g. ~500 sprites) doesn't OOM-kill the app
+  or starve the UI on a phone/tablet.
+- ✅ **Ripper zoom** — `InteractiveViewer` pinch/wheel zoom + pan on the sheet
+  canvas (pan off in Manual mode where drag draws boxes).
 - ✅ **Button/icon crop shapes (engine)** — `imaging/crop_shape.dart`: circle /
   rounded / polygon / star / heart presets + an AA `mask(size)`; `renderFramed`
   clips a button to the shape (real round buttons, transparent corners) behind a

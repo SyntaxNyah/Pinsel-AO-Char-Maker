@@ -167,10 +167,20 @@ class _SpriteRipperScreenState extends State<SpriteRipperScreen> {
     final int sw = _sheet!.width, sh = _sheet!.height;
     return Padding(
       padding: const EdgeInsets.all(12),
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints cons) {
-          final double scale =
-              (cons.maxWidth / sw).clamp(0.0, cons.maxHeight / sh);
+      // Zoom + pan the sheet so you can box tiny sprites precisely. Pinch or
+      // mouse-wheel to zoom; drag to pan — except in Manual mode, where a drag
+      // **draws** a box, so pan is disabled there (pinch/wheel still zooms). The
+      // box gestures below read child-local coordinates, so they stay correct at
+      // any zoom. minScale 1.0 ⇒ zooming all the way out returns to the fit view.
+      child: InteractiveViewer(
+        minScale: 1.0,
+        maxScale: 10.0,
+        panEnabled: _mode != SheetMode.manual,
+        clipBehavior: Clip.hardEdge,
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints cons) {
+            final double scale =
+                (cons.maxWidth / sw).clamp(0.0, cons.maxHeight / sh);
           final double dw = sw * scale, dh = sh * scale;
           final double ox = (cons.maxWidth - dw) / 2, oy = (cons.maxHeight - dh) / 2;
           return Stack(
@@ -219,7 +229,8 @@ class _SpriteRipperScreenState extends State<SpriteRipperScreen> {
                 ),
             ],
           );
-        },
+          },
+        ),
       ),
     );
   }

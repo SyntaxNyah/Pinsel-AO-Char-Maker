@@ -235,6 +235,48 @@ class SpriteSheet {
     return out;
   }
 
+  /// Assign each ripped cell a **unique** base name (no extension) so a second
+  /// sheet added to a project doesn't reuse — and overwrite — the first sheet's
+  /// sprite files (the reported bug: rip sheet A → `sprite1..4`, rip sheet B →
+  /// `sprite1..4` again, clobbering A).
+  ///
+  /// [existing] is the set of base names already in the project (any case).
+  /// Cells the ripper auto-named (`"<prefix><number>"`) are **renumbered to
+  /// continue past** what exists (so sheet B becomes `sprite5, sprite6, …`),
+  /// while hand-typed names are preserved. Illegal filename characters are
+  /// sanitised and any remaining duplicates get a `_2`, `_3`, … suffix. Dedups
+  /// case-insensitively (Windows paths are case-insensitive). Pure → testable.
+  static List<String> uniqueNames(
+      Set<String> existing, List<String> rawNames, String prefix) {
+    final Set<String> used = <String>{
+      for (final String e in existing) e.toLowerCase(),
+    };
+    final RegExp autoName = RegExp('^${RegExp.escape(prefix)}\\d+\$');
+    int counter = 1;
+    String nextAuto() {
+      while (used.contains('$prefix$counter'.toLowerCase())) {
+        counter++;
+      }
+      return '$prefix${counter++}';
+    }
+
+    final List<String> out = <String>[];
+    for (final String raw0 in rawNames) {
+      final String raw = raw0.trim();
+      String base = (raw.isEmpty || autoName.hasMatch(raw)) ? nextAuto() : raw;
+      base = base.replaceAll(RegExp(r'[\\/:*?"<>|]+'), '_');
+      if (base.isEmpty) base = nextAuto();
+      String unique = base;
+      int n = 2;
+      while (used.contains(unique.toLowerCase())) {
+        unique = '${base}_${n++}';
+      }
+      used.add(unique.toLowerCase());
+      out.add(unique);
+    }
+    return out;
+  }
+
   // ---------------------------------------------------------------------------
   // internals
   // ---------------------------------------------------------------------------
