@@ -1026,9 +1026,12 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
             label: const Text('Add box'),
             onPressed: () {
               setState(() {
+                // New box copies the active box's physics but is a fresh
+                // rectangle (drop any drawn shape) nudged so it's visible.
                 _jiggles.add(_jiggle.copyWith(
                   x: (_jiggle.x + 0.06).clamp(0.0, 0.92),
                   y: (_jiggle.y + 0.06).clamp(0.0, 0.92),
+                  poly: const <double>[],
                 ));
                 _activeJiggle = _jiggles.length - 1;
               });
@@ -1235,9 +1238,16 @@ class _AnimationStudioScreenState extends State<AnimationStudioScreen> {
       selectedName: _jiggle.name,
     );
     if (picked == null || !mounted) return;
-    // Keep the box the user placed; adopt the preset's physics.
+    // Keep the region the user placed — both the box AND any **drawn freeform
+    // shape** — and only adopt the preset's *physics*. So you can lasso the boobs
+    // once and then audition presets/speeds without losing your selection.
     setState(() => _jiggle = picked.copyWith(
-        x: _jiggle.x, y: _jiggle.y, w: _jiggle.w, h: _jiggle.h));
+          x: _jiggle.x,
+          y: _jiggle.y,
+          w: _jiggle.w,
+          h: _jiggle.h,
+          poly: _jiggle.poly,
+        ));
     _schedule();
   }
 
