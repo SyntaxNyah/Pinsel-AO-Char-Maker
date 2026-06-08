@@ -27,7 +27,9 @@ import '../imaging/codecs.dart';
 import '../imaging/color_matrix.dart';
 import '../imaging/color_ops.dart';
 import '../imaging/overlay_presets.dart';
+import '../imaging/paint.dart';
 import '../imaging/parallel.dart';
+import '../imaging/region_edit.dart';
 import '../imaging/sprite_edit.dart';
 import '../imaging/sprite_sheet.dart';
 import '../imaging/webp_codec.dart';
@@ -213,6 +215,21 @@ class AppState extends ChangeNotifier {
   bool generateButtons = true;
   int buttonSize = CharFolder.defaultButtonSize;
 
+  /// On export, **regenerate** buttons + `char_icon.png` from the current studio
+  /// framing/overlays and drop the imported `emotions/` folder, instead of
+  /// keeping the imported buttons. **On by default** — imported buttons are often
+  /// named for a different emote order, so keeping them showed the wrong sprite on
+  /// a button ("buttons were not correct to the sprite", the yuigahama bug). Turn
+  /// off to preserve hand-imported buttons. Drives `OrganizeConfig
+  /// .overwriteExistingButtons` (+ the matching `emotions/` copy-skip). Persisted.
+  bool regenerateButtonsOnExport = true;
+  void setRegenerateButtonsOnExport(bool v) {
+    if (regenerateButtonsOnExport == v) return;
+    regenerateButtonsOnExport = v;
+    _persistSettings();
+    notifyListeners();
+  }
+
   /// Button framing — **head/face by default** (AO buttons show expressions).
   CropFraming buttonFraming = CropFraming.defaultValue;
   double buttonZoom = 1.0;
@@ -287,6 +304,27 @@ class AppState extends ChangeNotifier {
     buttonCrops[to.sprite] = carryFrom ?? await headCropFor(to);
   }
 
+  /// Seed [to]'s button **overlays** when arriving while framing **forward**: if
+  /// [to] has no border/background of a kind yet, it **inherits the carried one**
+  /// so a KFO-style border you put on one button *stays on* the next instead of
+  /// having to re-pick it for every sprite (the "the overlay simply isn't kept
+  /// on" complaint). Overlays the sprite already has are left untouched. Mirrors
+  /// [arriveButtonCrop] for the crop box. Use "Apply to all sprites" for the
+  /// whole cast at once.
+  void arriveButtonOverlay(Emote? to,
+      {OverlaySlot? carryFg, OverlaySlot? carryBg}) {
+    if (to == null || to.sprite.isEmpty) return;
+    void carry(OverlaySlot? src, {required bool fg}) {
+      if (src == null || !src.isSet) return; // nothing to carry
+      final OverlaySlot? existing = buttonOverlay(to.sprite, fg: fg);
+      if (existing != null && existing.isSet) return; // keep its own
+      buttonOverlaySlotFor(to.sprite, fg: fg).copyFrom(src);
+    }
+
+    carry(carryFg, fg: true);
+    carry(carryBg, fg: false);
+  }
+
   /// Select emote [target] for **button framing**, carrying the current box
   /// forward when stepping to a later (un-framed) sprite. The single source of
   /// truth for framing navigation — the inline studio AND the big framing editor
@@ -296,14 +334,19 @@ class AppState extends ChangeNotifier {
     if (n == 0) return;
     final int t = target.clamp(0, n - 1);
     final Emote? from = current;
-    final CropBox? carry = (t > selectedEmote &&
-            from != null &&
-            from.sprite.isNotEmpty)
-        ? buttonCropRaw(from.sprite)
-        : null;
+    final bool forward =
+        t > selectedEmote && from != null && from.sprite.isNotEmpty;
+    // Carry the current sprite's box AND its overlays forward onto the next
+    // un-customised sprite, so framing + borders both "stick" as you advance.
+    final CropBox? carry = forward ? buttonCropRaw(from.sprite) : null;
+    final OverlaySlot? carryFg =
+        forward ? buttonOverlay(from!.sprite, fg: true) : null;
+    final OverlaySlot? carryBg =
+        forward ? buttonOverlay(from!.sprite, fg: false) : null;
     selectEmote(t); // notifies
     await arriveButtonCrop(current, carryFrom: carry);
-    notifyListeners(); // surface the seeded/carried box
+    arriveButtonOverlay(current, carryFg: carryFg, carryBg: carryBg);
+    notifyListeners(); // surface the seeded/carried box + overlay
   }
 
   /// Re-seed [e]'s sprite box from its auto head-square — the Manual "reset this
@@ -498,6 +541,7 @@ class AppState extends ChangeNotifier {
     _buttonSrcCache.clear();
     _previewCache.clear();
     _thumbCache.clear();
+    paintOps.clear();
   }
 
   /// Sanitise a picked folder name into a usable character/folder name, or null
@@ -1157,6 +1201,153 @@ class AppState extends ChangeNotifier {
     await workspace.writeBytes(outRel, Codecs.encodeForExtension(image, outExt));
     if (outRel != rel) await workspace.delete(rel);
     return outRel;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Paint Studio — gradient fills, brushes, region recolour
+  // ---------------------------------------------------------------------------
+
+  /// The Paint Studio's working journal for the selected sprite: a stack of
+  /// [PaintOp]s (gradient/solid/ops fills + brush strokes) in normalized coords.
+  /// Preview and bake both just replay this — see [previewPaint]/[applyPaint].
+  final List<PaintOp> paintOps = <PaintOp>[];
+
+  /// User-saved gradients (the Paint Studio's gradient editor "Save" action).
+  /// Persisted across sessions via [settings_store], alongside overlay presets.
+  final List<PaintGradient> userGradients = <PaintGradient>[];
+
+  bool get hasPaintOps => paintOps.isNotEmpty;
+
+  /// Append a paint op (a finished brush stroke or a fill) and refresh. Called
+  /// by the Paint Studio on every committed edit.
+  void addPaintOp(PaintOp op) {
+    paintOps.add(op);
+    notifyListeners();
+  }
+
+  /// Undo the last paint op (the Studio's per-op undo, independent of the
+  /// character-level [history] — paint only commits to the sprite on Apply).
+  void undoPaintOp() {
+    if (paintOps.isEmpty) return;
+    paintOps.removeLast();
+    notifyListeners();
+  }
+
+  /// Discard the whole working journal without touching the sprite.
+  void clearPaintOps() {
+    if (paintOps.isEmpty) return;
+    paintOps.clear();
+    notifyListeners();
+  }
+
+  /// Save [g] as a reusable user gradient (replacing one of the same name).
+  void saveGradient(PaintGradient g) {
+    final String clean = g.name.trim();
+    if (clean.isEmpty) return;
+    userGradients.removeWhere((PaintGradient e) => e.name == clean);
+    userGradients.add(g.copy());
+    _persistSettings();
+    notifyListeners();
+  }
+
+  void deleteGradient(String name) {
+    userGradients.removeWhere((PaintGradient e) => e.name == name);
+    _persistSettings();
+    notifyListeners();
+  }
+
+  /// Sample the ARGB colour of the selected sprite at normalized ([nx],[ny]) —
+  /// the Paint Studio's eyedropper. Uses the downscaled button source (fast;
+  /// colour is unaffected by the resample).
+  Future<int?> pickColorAt(double nx, double ny) async {
+    final Emote? e = current;
+    if (e == null) return null;
+    final String? rel = spriteRelFor(e);
+    if (rel == null) return null;
+    final img.Image? im = await _decodeButtonSource(rel);
+    if (im == null) return null;
+    final int x = (nx * im.width).round().clamp(0, im.width - 1);
+    final int y = (ny * im.height).round().clamp(0, im.height - 1);
+    final img.Pixel p = im.getPixel(x, y);
+    return (p.a.toInt() << 24) |
+        (p.r.toInt() << 16) |
+        (p.g.toInt() << 8) |
+        p.b.toInt();
+  }
+
+  /// PNG preview of the selected sprite (frame 0, downscaled) with the working
+  /// [paintOps] replayed — instant feedback that matches the bake because the
+  /// journal is resolution-independent.
+  Future<Uint8List?> previewPaint(String rel, {int maxEdge = 640}) async {
+    final img.Image? src = await decodeFirstFrame(rel);
+    if (src == null) return null;
+    img.Image work = src.clone();
+    final int longest = work.width > work.height ? work.width : work.height;
+    if (longest > maxEdge) {
+      final double s = maxEdge / longest;
+      work = img.copyResize(work,
+          width: (work.width * s).round(),
+          height: (work.height * s).round(),
+          interpolation: img.Interpolation.average);
+    }
+    Painter.applyAll(work, paintOps);
+    return Codecs.encodePng(work);
+  }
+
+  /// Bake the working [paintOps] into the selected emote's sprite files (or every
+  /// sprite when [allSprites]). For each file: decode all frames, build each op's
+  /// content-derived mask **once** from frame 0 (so a magic-wand recolour can't
+  /// shimmer across an animation), replay onto every frame, then re-encode in
+  /// place via [_writeSpriteInPlace] (WebP stays WebP/lossless, APNG fallback).
+  /// Clears the journal on success.
+  Future<int> applyPaint({required bool allSprites}) async {
+    if (paintOps.isEmpty || scan == null) return 0;
+    _setBusy(true, 'Painting sprites…');
+
+    final List<SpriteGroup> groups = <SpriteGroup>[];
+    if (allSprites) {
+      groups.addAll(scan!.groups);
+    } else if (current != null) {
+      final SpriteGroup? g = scan!.groups
+          .firstWhereOrNull((SpriteGroup g) => g.base == current!.sprite);
+      if (g != null) groups.add(g);
+    }
+
+    final List<String> targets = <String>[
+      for (final SpriteGroup g in groups)
+        for (final SpriteFile f in <SpriteFile?>[g.idle, g.talk, g.post, ...g.statics]
+            .whereType<SpriteFile>())
+          f.relPath,
+    ];
+
+    int ok = 0;
+    int done = 0;
+    for (final String rel in targets) {
+      if (await workspace.exists(rel)) {
+        final img.Image? im = Codecs.decode(await workspace.readBytes(rel),
+            ext: p.extension(rel).replaceFirst('.', ''));
+        if (im != null) {
+          // One mask per op, derived from the file's first frame, reused on every
+          // frame so an animated sprite stays temporally stable.
+          final img.Image first = im.frames.first;
+          final List<SelectionMask?> masks = <SelectionMask?>[
+            for (final PaintOp op in paintOps) op.buildMask(first),
+          ];
+          for (final img.Image frame in im.frames) {
+            Painter.applyAll(frame, paintOps, masks: masks);
+          }
+          await _writeSpriteInPlace(rel, im);
+          ok++;
+        }
+      }
+      _progress(++done, targets.length, 'Paint');
+      await Future<void>.delayed(Duration.zero);
+    }
+    paintOps.clear();
+    _invalidateImageCaches();
+    scan = _scanner.fromPaths(await _projectFiles());
+    _setBusy(false, 'Painted $ok sprite file(s).');
+    return ok;
   }
 
   // ---------------------------------------------------------------------------
@@ -2518,7 +2709,28 @@ class AppState extends ChangeNotifier {
     changed |= _applySavedKeys(s['framingKeys'], framingKeys);
     changed |= _applySavedKeys(s['nudgeKeys'], nudgeKeys);
     changed |= _applySavedOverlayPresets(s['overlayPresets']);
+    changed |= _applySavedGradients(s['gradients']);
+    final Object? regen = s['regenButtons'];
+    if (regen is bool && regen != regenerateButtonsOnExport) {
+      regenerateButtonsOnExport = regen;
+      changed = true;
+    }
     if (changed) notifyListeners();
+  }
+
+  /// Restore saved user gradients. Returns whether any loaded.
+  bool _applySavedGradients(Object? saved) {
+    if (saved is! List) return false;
+    bool changed = false;
+    for (final Object? item in saved) {
+      if (item is! Map) continue;
+      final PaintGradient g = PaintGradient.fromJson(item.cast<String, dynamic>());
+      if (g.name.isEmpty) continue;
+      userGradients.removeWhere((PaintGradient e) => e.name == g.name);
+      userGradients.add(g);
+      changed = true;
+    }
+    return changed;
   }
 
   /// Restore saved overlay presets (`[{name, spec}]`). Returns whether any
@@ -2582,6 +2794,10 @@ class AppState extends ChangeNotifier {
         for (final ({String name, OverlaySpec spec}) p in userOverlayPresets)
           <String, dynamic>{'name': p.name, 'spec': p.spec.toJson()},
       ],
+      'gradients': <Map<String, dynamic>>[
+        for (final PaintGradient g in userGradients) g.toJson(),
+      ],
+      'regenButtons': regenerateButtonsOnExport,
     });
   }
 
@@ -2696,6 +2912,10 @@ class AppState extends ChangeNotifier {
         buttonSize: buttonSize,
         buttonFraming: buttonFraming,
         buttonZoom: buttonZoom,
+        // When on (default), regenerate buttons/icon from the current framing and
+        // drop the imported `emotions/` folder so a button can't show the wrong
+        // sprite (the yuigahama bug); off keeps imported buttons.
+        overwriteExistingButtons: regenerateButtonsOnExport,
         generateCharIcon: generateCharIcon,
         iconSize: iconSize,
         iconFraming: iconFraming,

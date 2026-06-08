@@ -145,7 +145,16 @@ class Organizer {
     final OrganizePlan plan = OrganizePlan(charDir);
 
     // Copy every source file into the character folder, preserving structure.
+    // EXCEPT, when the studio is regenerating buttons/icon in **overwrite mode**,
+    // skip carrying the imported `emotions/` buttons + `char_icon.png` — otherwise
+    // stale imported art (often named for a different emote order) survives and
+    // the freshly-framed buttons never appear ("override the emotions folder when
+    // you load a folder"). With the default `overwriteExistingButtons:false`,
+    // imported chrome is still copied + kept as before.
     for (final String rel in sourceFiles) {
+      if (config.overwriteExistingButtons && _isRegeneratedChrome(rel, config)) {
+        continue;
+      }
       plan.fileOps.add(FileOp(rel, joinRel(charDir, rel)));
     }
 
@@ -194,6 +203,24 @@ class Organizer {
       }
     }
     return plan;
+  }
+
+  /// True when [rel] is button/icon "chrome" the studio is about to regenerate
+  /// (a file inside an `emotions/` folder when [OrganizeConfig.generateButtons],
+  /// or a `char_icon.png` when [OrganizeConfig.generateCharIcon]) — so it can be
+  /// skipped from the copy in overwrite mode instead of shadowing the fresh art.
+  static bool _isRegeneratedChrome(String rel, OrganizeConfig config) {
+    final List<String> segs = Workspace.norm(rel).split('/');
+    if (config.generateButtons &&
+        segs.any((String s) => s.toLowerCase() == CharFolder.emotionsDir)) {
+      return true;
+    }
+    if (config.generateCharIcon &&
+        segs.isNotEmpty &&
+        segs.last.toLowerCase() == CharFolder.charIcon.toLowerCase()) {
+      return true;
+    }
+    return false;
   }
 
   /// Execute a [plan]: copy/move files, write the ini, and render buttons.

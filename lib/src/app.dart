@@ -14,6 +14,7 @@ import 'ui/screens/editor_screen.dart';
 import 'ui/screens/home_screen.dart';
 import 'ui/screens/ini_builder_screen.dart';
 import 'ui/screens/mixer_screen.dart';
+import 'ui/screens/paint_studio_screen.dart';
 import 'ui/screens/plugins_screen.dart';
 import 'ui/screens/sprite_ripper_screen.dart';
 import 'ui/screens/theme_maker_screen.dart';
@@ -48,6 +49,7 @@ const List<({IconData icon, String label})> _dests =
   (icon: Icons.extension_rounded, label: 'Plugins'),
   (icon: Icons.grid_on_rounded, label: 'Ripper'),
   (icon: Icons.brush_rounded, label: 'Theme'),
+  (icon: Icons.format_paint_rounded, label: 'Paint'),
 ];
 
 /// Screens that work without a loaded character: Home, Plugins, the Sprite
@@ -97,6 +99,8 @@ class _HomeShellState extends State<HomeShell> {
         return const SpriteRipperScreen();
       case 11:
         return const ThemeMakerScreen();
+      case 12:
+        return const PaintStudioScreen();
       case 0:
       default:
         return const HomeScreen();

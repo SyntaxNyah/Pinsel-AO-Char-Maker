@@ -1466,6 +1466,19 @@ class _BtnCardState extends State<_BtnCard> {
                 const Text('Generate'),
               ],
             ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text('Regenerate buttons on export'),
+              subtitle: const Text(
+                  'Rebuild buttons + char_icon from this framing and drop the '
+                  "imported emotions/ folder (fixes buttons that don't match the "
+                  'sprite). Off keeps hand-imported buttons.'),
+              value: app.regenerateButtonsOnExport,
+              onChanged: (bool? v) =>
+                  setState(() => app.setRegenerateButtonsOnExport(v ?? true)),
+            ),
             const SizedBox(height: 8),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,

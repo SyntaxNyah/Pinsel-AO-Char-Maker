@@ -66,7 +66,8 @@ lib/src/
   discovery/   folder → character (scanner, builder, organizer, bulk rename,
                bulk folders → many characters)
   imaging/     codecs, colour ops, region edit, sprite edit (crop/trim/bg),
-               compositor, buttons, bulk, webp, **sprite sheet ripper**
+               compositor, buttons, bulk, webp, sprite sheet ripper,
+               **paint (gradients / brushes / blend modes)**
   animation/   clip, easing, recipe engine, keyframe timeline, lipsync, jiggle
   theme/       **AO2 client theme model + defaults catalogue + randomizer**
   presets/     built-in preset library
@@ -221,7 +222,16 @@ The central model.
   `.organize(...)` (plan+execute one-shot). Copies files, writes ini, renders
   buttons + `char_icon.png`. `iconRenderer` falls back to `buttonRenderer`; set
   it when the icon needs a different (or no) border. Existing buttons/icon are
-  kept unless `overwriteExistingButtons`. **`execute` yields (`await
+  kept unless `overwriteExistingButtons` — and when that flag is set, `plan` also
+  **skips copying the imported `emotions/` buttons + `char_icon.png`** (via
+  `_isRegeneratedChrome`) so stale imported chrome (often named for a different
+  emote order) can't shadow the freshly-rendered art. This is the "override the
+  imported emotions folder on export" capability, surfaced as the Button Studio
+  **"Regenerate buttons on export"** toggle (`AppState.regenerateButtonsOnExport`,
+  **on by default**, persisted) → `_studioConfig.overwriteExistingButtons`. It
+  fixes imported buttons that showed the **wrong sprite** (named for a different
+  emote order — the yuigahama bug); turn it off to preserve hand-imported buttons.
+  **`execute` yields (`await
   Future.delayed(Duration.zero)`) between buttons** — button rendering is sync
   CPU on the UI isolate, so a big cast (100 emotes, or bulk-folders) would
   otherwise block long enough that the OS marks the app "not responding" and the
@@ -286,6 +296,37 @@ The central model.
   `erase(image,mask)`, `fill(image,mask,argb)`,
   `removeBackgroundFromCorners(image,{tolerance,feather})`,
   `eraseColor(image,argb,{tolerance})`.
+
+### imaging/paint.dart  ← gradient fills / brushes / blend modes (see docs/PAINT.md)
+Pure Dart; the engine behind the **Paint Studio**. A paint edit is a
+**serialisable journal** of `PaintOp`s in **normalized 0..1 coords** (so the
+small preview == the full-res + every-frame bake), mirroring `OpPipeline`/
+`AnimRecipe`.
+- `enum GradientType { linear, reflected, radial, diamond, conic }` (+`.label`,
+  `.fromId`); `enum PaintBlend { normal…multiply…hue,saturation,color,luminosity }`
+  (18 modes; the HSL ones make recolour-keeps-shading possible — **color** =
+  source hue+sat over base luma); `enum BrushMode { paint, erase, dodge, burn,
+  smudge }`; `enum SelectionKind { whole, wand, rect, ellipse, lasso, luminance }`;
+  `enum PaintOpKind { fillSolid, fillGradient, fillOps, brush }`.
+- `class GradientStop(pos,argb)`; **`class PaintGradient`** (`stops`, `type`,
+  `angle`, `reverse`) — `colorAt(t)`, `fromColors`, `blackwhite`, `copy`,
+  `toJson/fromJson`. The fill maps the ramp across the **selected region's bbox**.
+- `class PaintSelection(kind,{x,y,w,h,tolerance,contiguous,ignoreTransparent,
+  lumMin,lumMax,poly,feather,grow,invert})` — `build(frame)`→`SelectionMask`
+  (reuses `RegionEditor` + a point-in-poly lasso). Geometry normalized.
+- `class BrushSpec(mode,argb,size,hardness,opacity,blend,clipToOpaque)` —
+  size/hardness are fractions of the shorter side (resolution-independent).
+- **`class PaintOp`** — `buildMask(frame)` (null for brush), `applyTo(frame,
+  {mask})` (pass a pre-built mask to keep a wand recolour **temporally stable**
+  across animation frames), `toJson/fromJson`.
+- **`class Painter`** — `applyAll`, `fillSolid`, `fillGradient` (per-type ramp +
+  `_composite`), `fillOps` (a `ColorOp` pipeline through a mask), `stroke`
+  (max-stamps a soft brush along interpolated points, then composites). All
+  mutate the `img.Image` in place. `blendRgb(...)` is the pure blend fn.
+- **`GradientLibrary`** — ~40 preset gradients (Fire/Cool/Sky/Neon/Pastel/Metal/
+  Character/Neutral): `presets`, `categories`, `byName`, `forCategory`. Tested in
+  `test/paint_test.dart`. Driven by `AppState` (`paintOps`/`previewPaint`/
+  `applyPaint`/`pickColorAt`/`userGradients`+`saveGradient`).
 
 ### imaging/sprite_edit.dart  ← crop / **grow** / **resize** / trim / bg removal
 - `class SpriteEditSpec({cropLeft,cropTop,cropRight,cropBottom,
@@ -720,6 +761,14 @@ The central model.
     and `applyEdit` both use it, then refresh `scan` from `_projectFiles()`. This
     fixes the old bug where WebP sprites (the default!) were recoloured into a
     phantom `.apng` while the original `.webp` — still referenced — was untouched.
+  - **Paint Studio** (see docs/PAINT.md + `imaging/paint.dart`): `paintOps`
+    (`List<PaintOp>` journal) + `addPaintOp`/`undoPaintOp`/`clearPaintOps`,
+    `previewPaint(rel)` (downscaled PNG with the journal replayed),
+    **`applyPaint({allSprites})`** (decode all frames → build each op's
+    content-derived mask **once** from frame 0 → replay on every frame →
+    `_writeSpriteInPlace`, lossless; clears the journal), `pickColorAt(nx,ny)`
+    (eyedropper), and persisted `userGradients`/`saveGradient`/`deleteGradient`.
+    `paintOps` cleared on reset/import.
   - **Frame-by-frame**: `spriteFiles()` lists project frames; `renderFrameSequence`
     (preview) / `saveFrameSequence(rels,{fps,reverse,pingPong,align,prefix,name})`
     assemble chosen sprites into ONE animation (normalise to a shared canvas →
@@ -732,14 +781,25 @@ The central model.
   - **Buttons & char_icon settings** (public fields, mutated directly by the
     studio for zero-rebuild lag): `generateButtons`, `buttonSize`, `buttonFraming`,
     `buttonZoom`, `button/iconOffsetX/Y`; `generateCharIcon`, `iconSize` (default
-    40), `iconFraming`, `iconZoom`, `iconSourceEmote`. **Button overlays are
+    40), `iconFraming`, `iconZoom`, `iconSourceEmote`;
+    **`regenerateButtonsOnExport`** (default true, persisted; → the Button Studio
+    "Regenerate buttons on export" toggle + `_studioConfig.overwriteExistingButtons`
+    — drops imported `emotions/` so buttons can't show the wrong sprite). **Button
+    overlays are
     PER-SPRITE by default** (mirrors `buttonCrops`): `buttonFgBySprite`/
     `buttonBgBySprite` (`Map<spriteBase, OverlaySlot>`) — putting a border on one
     button only affects that sprite. `buttonOverlay(base,{fg})`/
     `buttonOverlayImage(base,{fg})` (null = plain button), `buttonOverlaySlotFor(
     base,{fg})` (get-or-create, for the editor), `setButtonOverlay(base,bytes,{fg,
     ext,spec})`, **`applyButtonOverlayToAll(fromBase,{fg})`** (the "Apply to all
-    sprites" action), `buttonOverlayCoverage` (→ `(customised,total)`). The
+    sprites" action), `buttonOverlayCoverage` (→ `(customised,total)`). **Overlays
+    now carry forward like the box**: `navigateButtonFraming` calls
+    **`arriveButtonOverlay(to,{carryFg,carryBg})`** which copies the previous
+    sprite's border/background onto the next *un-overlaid* sprite when you advance
+    forward — so a KFO border you set "stays on" the next button instead of
+    having to re-pick it each sprite (the "the overlay simply isn't kept on the
+    next emote" fix). Existing overlays are kept; "Apply to all sprites" is still
+    the whole-cast path. The
     char_icon keeps **single** `iconBg/Fg` slots (set via `setOverlay`).
     `OverlaySlot` now has `.rev` (bumped on `.set`/`.copyFrom`) so a sprite's
     thumbnail invalidates only when ITS overlay changes. Maps cleared on
@@ -800,7 +860,8 @@ The central model.
     `spriteRevision` (not every notify) so typing a field never re-bakes.
 - `screens/` — home, **ini_builder** (the `[Options]`/char.ini editor), editor,
   color_lab, animation_studio, button_studio, edit, mixer, bulk, plugins,
-  **sprite_ripper** (sheet → sprites), **theme_maker** (AO2 theme editor).
+  **sprite_ripper** (sheet → sprites), **theme_maker** (AO2 theme editor),
+  **paint_studio** (gradient/brush/region painting).
   `widgets/` — `CheckerImage` (**perf**: the transparency checker is **one**
   GPU-tiled rect — a cached 2×2 `ui.Image` tile via `ImageShader` — NOT a
   `drawRect` per cell, and the whole thing is `RepaintBoundary`-wrapped, so a big
@@ -1039,6 +1100,19 @@ The central model.
     custom, optional proportional `Ao2Theme.resize`) / Export .zip. Edits commit
     on blur; `_rev` keys refresh fields after import/randomise. See
     docs/THEME_MAKER.md.
+  - `paint_studio`: **Paint Studio** — advanced region/pixel painting on the
+    selected sprite (see docs/PAINT.md). A tool row (**Brush** / **Bucket** /
+    **Gradient** / **Pick**), a fit-to-aspect canvas with a `GestureDetector`
+    (tap = fill/dot/pick; drag = freehand brush, shown live via `_StrokePainter`
+    and baked on pan-end), and a right sidebar of per-tool controls. Brush
+    (paint/erase/dodge/burn/smudge + size/hardness/opacity/blend/clip); Bucket &
+    Gradient fills target a **region** (whole sprite or a magic-wand at the tap,
+    with tolerance/feather/grow + keep-alpha) through any **blend mode** (pick
+    *Color* to recolour keeping shading). `_GradientEditor` = multi-stop ramp +
+    type/angle/reverse + `GradientLibrary` presets + Save. Every edit is an
+    `AppState.paintOps` entry (per-op **Undo**/**Clear**); **nothing touches the
+    sprite until Apply** (`applyPaint` bakes the journal into every frame,
+    lossless, then clears it). Non-destructive, project-gated nav screen.
 - `app.dart` (`HomeShell`) hosts a global `CallbackShortcuts` map (undo/redo,
   import, export `.zip` `Ctrl/⌘+S`, **save-as-folder `Ctrl/⌘+Shift+S` →
   `exportFolder`**, export `char.ini` `Ctrl/⌘+E`, add emote, prev/next emote,
@@ -1053,9 +1127,11 @@ The central model.
   and per Theme-Maker nudge direction, each via the shared `captureKey`; rebinds
   persist (see `settings_store`). Reset buttons restore the plain defaults. The nav
   now has a **Character** destination at index 1 (the ini builder), plus
-  **Ripper** and **Theme** at the end (both project-independent). The no-project
-  guard uses the `_projectFreeIndices` set (`{Home, Plugins, Ripper, Theme}`)
-  instead of a hard-coded index, so adding destinations won't silently break it.
+  **Ripper** and **Theme** (project-independent) then **Paint** (project-gated)
+  at the end. The no-project guard uses the `_projectFreeIndices` set (`{Home,
+  Plugins, Ripper, Theme}` — note **Paint is *not* in it**, so it's gated like the
+  other editors) instead of a hard-coded index, so adding destinations won't
+  silently break it.
   Document new keys in `docs/SHORTCUTS.md`.
 
 ---
@@ -1077,6 +1153,11 @@ the `_registry` map, document it in `docs/COLOR_OPS.md`, optionally add a preset
 
 **A plugin pack:** author JSON (schema in `docs/PLUGINS.md`); load via the
 Plugins screen or `ExtensionRegistry.instance.installPackJson`.
+
+**A paint blend mode / gradient type / brush mode / gradient preset:** see the
+"How to add to it" recipes at the end of `docs/PAINT.md` (`imaging/paint.dart` —
+add the enum value + `label`, then the matching `case`; presets go in
+`GradientLibrary._build()`). Cover it in `test/paint_test.dart`.
 
 **A screen:** create `ui/screens/foo_screen.dart`, add it to `_dests` and the
 `_screenFor` switch in `lib/src/app.dart`, and — if it works **without** a loaded

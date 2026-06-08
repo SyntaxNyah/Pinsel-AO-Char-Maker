@@ -54,6 +54,13 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ✅ ~25 composable colour ops + pipeline
 - ✅ Hundreds of presets / palettes / gradients
 - ✅ Region/outfit editor (magic wand, masks, feather, recolour/erase/fill)
+- ✅ **Paint Studio** (`imaging/paint.dart` + Paint screen, see docs/PAINT.md) —
+  freehand **brush** (paint/erase/dodge/burn/smudge), **bucket** + **gradient**
+  fills into a magic-wand region or the whole sprite, **18 blend modes** (incl. the
+  HSL *Color* mode = recolour-keeps-shading), a multi-stop **gradient editor** with
+  a ~40-gradient `GradientLibrary` + saveable user gradients, and an eyedropper.
+  Non-destructive journal of `PaintOp`s (per-op undo); Apply bakes into every
+  animation frame losslessly (per-frame-stable masks)
 - ✅ 43 colour ops incl. split-tone, vignette, scanlines, grain, chroma shift,
   pixelate, solarize, dither, cross-process, bleach-bypass, sharpen, blur
 - ✅ Custom colour wheel/picker → recolour / tint / solid / gradient (blendable)
