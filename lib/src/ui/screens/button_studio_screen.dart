@@ -15,6 +15,7 @@ import '../../imaging/codecs.dart';
 import '../../imaging/overlay_presets.dart';
 import '../app_state.dart';
 import '../widgets/checker_image.dart';
+import '../widgets/confirm_replace.dart';
 import '../widgets/key_capture.dart';
 import '../widgets/overlay_builder.dart';
 
@@ -169,7 +170,9 @@ class _ButtonStudioScreenState extends State<ButtonStudioScreen> {
         const SizedBox(height: 16),
 
         FilledButton.icon(
-          onPressed: () => app.exportFolder(),
+          onPressed: () => app.exportFolder(
+              confirmReplace: (String name) =>
+                  confirmReplaceFolder(context, name)),
           icon: const Icon(Icons.drive_folder_upload_rounded),
           label: const Text(
               'Save as a folder (no zip) — drops straight into AO'),

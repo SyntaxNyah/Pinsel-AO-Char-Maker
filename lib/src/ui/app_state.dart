@@ -3080,11 +3080,18 @@ class AppState extends ChangeNotifier {
   /// no zip, so the finished character folder just *appears* on disk (DRO/KFO
   /// button-maker style) ready to drop into AO's `characters/`. Native desktop
   /// only; on web (no filesystem) it transparently falls back to [exportZip].
-  Future<String?> exportFolder() async {
+  ///
+  /// [confirmReplace] (provided by the UI) is asked before overwriting an
+  /// existing character folder so stale buttons/sprites from an older build are
+  /// cleared instead of mixing with the new files; returning false aborts.
+  Future<String?> exportFolder({
+    Future<bool> Function(String charName)? confirmReplace,
+  }) async {
     if (character == null) return null;
     _setBusy(true, 'Building character…');
     final MemoryWorkspace out = await buildOutput();
-    final String? dir = await exportToFolder(out.snapshot);
+    final String? dir =
+        await exportToFolder(out.snapshot, confirmReplace: confirmReplace);
     if (dir != null) {
       _setBusy(false, 'Saved the character folder to $dir.');
       return dir;

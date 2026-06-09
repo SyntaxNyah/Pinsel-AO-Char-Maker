@@ -19,6 +19,7 @@ import 'ui/screens/plugins_screen.dart';
 import 'ui/screens/sprite_ripper_screen.dart';
 import 'ui/screens/theme_maker_screen.dart';
 import 'ui/theme.dart';
+import 'ui/widgets/confirm_replace.dart';
 import 'ui/widgets/key_capture.dart';
 
 class PinselApp extends StatelessWidget {
@@ -175,7 +176,12 @@ class _HomeShellState extends State<HomeShell> {
     bind(LogicalKeyboardKey.keyY, app.redo);
     bind(LogicalKeyboardKey.keyZ, app.redo, shift: true); // Ctrl+Shift+Z
     bind(LogicalKeyboardKey.keyS, () => app.exportZip());
-    bind(LogicalKeyboardKey.keyS, () => app.exportFolder(), shift: true); // Ctrl+Shift+S
+    bind(
+        LogicalKeyboardKey.keyS,
+        () => app.exportFolder(
+            confirmReplace: (String name) =>
+                confirmReplaceFolder(context, name)),
+        shift: true); // Ctrl+Shift+S
     bind(LogicalKeyboardKey.keyE, () => app.exportIni());
     bind(LogicalKeyboardKey.keyO, () => _importFolder(context));
     bind(LogicalKeyboardKey.keyN, () {
@@ -450,7 +456,11 @@ class _TopBar extends StatelessWidget {
                 ),
                 IconButton(
                   tooltip: 'Save as a folder — no zip (Ctrl+Shift+S)',
-                  onPressed: hasProject ? () => app.exportFolder() : null,
+                  onPressed: hasProject
+                      ? () => app.exportFolder(
+                          confirmReplace: (String name) =>
+                              confirmReplaceFolder(context, name))
+                      : null,
                   icon: const Icon(Icons.drive_folder_upload_rounded),
                 ),
                 IconButton(

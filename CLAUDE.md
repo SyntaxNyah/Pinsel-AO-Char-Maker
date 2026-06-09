@@ -690,12 +690,22 @@ small preview == the full-res + every-frame bake), mirroring `OpPipeline`/
   the file from two places or they clobber). Values must be JSON-encodable;
   `LogicalKeyboardKey`s are stored as integer `keyId`s, overlays via
   `OverlaySpec.toJson`.
-- `exportToFolder(files)` (`folder_export.dart`, `_io`/`_web` seam) — native: pick
-  a directory (`FilePicker.getDirectoryPath`) then write every `relPath → bytes`
-  under it (splits the `/`-keyed rel + re-joins with the platform separator), so
-  the built character folder just *appears* on disk (no zip). Returns the chosen
-  dir or null (cancelled / web, where it's unsupported → caller falls back to the
-  `.zip`). Drives `AppState.exportFolder`.
+- `exportToFolder(files, {confirmReplace})` (`folder_export.dart`, `_io`/`_web`
+  seam) — native: pick a directory (`FilePicker.getDirectoryPath`) then write
+  every `relPath → bytes` under it (splits the `/`-keyed rel + re-joins with the
+  platform separator), so the built character folder just *appears* on disk (no
+  zip). **A folder is written *over* whatever's there** (unlike a fresh zip), so a
+  stale `<charName>/` from an older build would leave behind buttons +
+  renamed-away sprites that **mix with the new files** (the "non-zip export mixes
+  the buttons" / "rename didn't change the folder" bugs). So when the target
+  already has a `<charName>/` this build writes, **`confirmReplace(charName)`** is
+  asked (the UI shows a "Replace existing <name>?" dialog via
+  `ui/widgets/confirm_replace.dart` `confirmReplaceFolder`); **yes → delete that
+  one folder first** (clean replace, other folders untouched), **no → abort**.
+  With `confirmReplace` null the legacy overwrite-by-name behaviour is kept (no
+  deletes). Returns the chosen dir or null (picker cancelled / replace declined /
+  web, where it's unsupported → caller falls back to the `.zip`). Drives
+  `AppState.exportFolder({confirmReplace})`.
 - `MemoryWorkspace.clear()` — drop all files (used by fresh import + reset).
 
 ### ui/
@@ -821,10 +831,13 @@ small preview == the full-res + every-frame bake), mirroring `OpPipeline`/
     `_ButtonThumb`'s reload key) — so editing one sprite's box re-renders **one**
     thumbnail, not the whole visible list (the fix for the drag-stop freeze on a
     big cast). Kept separate from `spriteRevision` (pixels).
-    **Export:** `exportZip()` (`.zip`), **`exportFolder()`** (writes the built
-    character to a picked directory via the `folder_export` seam — no zip, falls
-    back to `exportZip` on web), `exportIni()` (just `char.ini`). All three build
-    through `buildOutput()`.
+    **Export:** `exportZip()` (`.zip`), **`exportFolder({confirmReplace})`**
+    (writes the built character to a picked directory via the `folder_export`
+    seam — no zip, falls back to `exportZip` on web; the UI passes
+    `confirmReplaceFolder` so an existing `<charName>/` is **cleanly replaced**
+    after a confirm instead of letting stale buttons/sprites mix in — see
+    `exportToFolder`), `exportIni()` (just `char.ini`). All three build through
+    `buildOutput()`.
   - **Per-sprite manual crops**: `buttonCrops` is a `Map<spriteBase, CropBox>`
     (replaces the old single `buttonCrop`) so each sprite gets its own hand-placed
     box in Manual mode; a sprite with no entry renders with its auto head-square.
