@@ -144,13 +144,11 @@ class RegionEditor {
   static SelectionMask selectByLuminance(img.Image image,
       {int min = 0, int max = 255}) {
     final SelectionMask m = SelectionMask(image.width, image.height);
-    for (int y = 0; y < image.height; y++) {
-      for (int x = 0; x < image.width; x++) {
-        final img.Pixel p = image.getPixel(x, y);
-        if (p.a == 0) continue;
-        final int l = (0.299 * p.r + 0.587 * p.g + 0.114 * p.b).round();
-        if (l >= min && l <= max) m.set(x, y, 255);
-      }
+    // Sequential pixel cursor instead of per-pixel getPixel(x,y) random access.
+    for (final img.Pixel p in image) {
+      if (p.a == 0) continue;
+      final int l = (0.299 * p.r + 0.587 * p.g + 0.114 * p.b).round();
+      if (l >= min && l <= max) m.set(p.x, p.y, 255);
     }
     return m;
   }
@@ -313,14 +311,10 @@ class RegionEditor {
 
   /// Erase (make transparent) through the mask — cut a region out of the sprite.
   static void erase(img.Image image, SelectionMask mask) {
-    for (int y = 0; y < image.height; y++) {
-      for (int x = 0; x < image.width; x++) {
-        final int wgt = mask.get(x, y);
-        if (wgt == 0) continue;
-        final img.Pixel p = image.getPixel(x, y);
-        final int a = (p.a.toInt() * (255 - wgt)) ~/ 255;
-        image.setPixelRgba(x, y, p.r.toInt(), p.g.toInt(), p.b.toInt(), a);
-      }
+    for (final img.Pixel p in image) {
+      final int wgt = mask.get(p.x, p.y);
+      if (wgt == 0) continue;
+      p.a = (p.a.toInt() * (255 - wgt)) ~/ 255;
     }
   }
 
@@ -328,41 +322,31 @@ class RegionEditor {
   static void fill(img.Image image, SelectionMask mask, int argb) {
     final int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF;
     final int a = (argb >> 24) & 0xFF;
-    for (int y = 0; y < image.height; y++) {
-      for (int x = 0; x < image.width; x++) {
-        final int wgt = mask.get(x, y);
-        if (wgt == 0) continue;
-        final double f = wgt / 255.0;
-        final img.Pixel p = image.getPixel(x, y);
-        image.setPixelRgba(
-          x,
-          y,
-          (p.r + (r - p.r) * f).round(),
-          (p.g + (g - p.g) * f).round(),
-          (p.b + (b - p.b) * f).round(),
-          (p.a + (a - p.a) * f).round(),
-        );
-      }
+    for (final img.Pixel p in image) {
+      final int wgt = mask.get(p.x, p.y);
+      if (wgt == 0) continue;
+      final double f = wgt / 255.0;
+      p
+        ..r = (p.r + (r - p.r) * f).round()
+        ..g = (p.g + (g - p.g) * f).round()
+        ..b = (p.b + (b - p.b) * f).round()
+        ..a = (p.a + (a - p.a) * f).round();
     }
   }
 
   static void _blendByMask(img.Image base, img.Image edited, SelectionMask mask) {
-    for (int y = 0; y < base.height; y++) {
-      for (int x = 0; x < base.width; x++) {
-        final int wgt = mask.get(x, y);
-        if (wgt == 0) continue;
-        final double f = wgt / 255.0;
-        final img.Pixel b = base.getPixel(x, y);
-        final img.Pixel e = edited.getPixel(x, y);
-        base.setPixelRgba(
-          x,
-          y,
-          (b.r + (e.r - b.r) * f).round(),
-          (b.g + (e.g - b.g) * f).round(),
-          (b.b + (e.b - b.b) * f).round(),
-          (b.a + (e.a - b.a) * f).round(),
-        );
-      }
+    // Walk `base` with the sequential cursor (the write-back side); `edited` is
+    // sampled by coordinate.
+    for (final img.Pixel b in base) {
+      final int wgt = mask.get(b.x, b.y);
+      if (wgt == 0) continue;
+      final double f = wgt / 255.0;
+      final img.Pixel e = edited.getPixel(b.x, b.y);
+      b
+        ..r = (b.r + (e.r - b.r) * f).round()
+        ..g = (b.g + (e.g - b.g) * f).round()
+        ..b = (b.b + (e.b - b.b) * f).round()
+        ..a = (b.a + (e.a - b.a) * f).round();
     }
   }
 }

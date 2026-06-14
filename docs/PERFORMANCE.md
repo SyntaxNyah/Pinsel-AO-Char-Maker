@@ -177,11 +177,17 @@ from the code, not measured — treat the impact ratings as estimates.
   the `scan` setter (and invalidated at the one in-place `groups.add`), so those
   lookups are O(1). **Impact: high** on list scroll / button thumbnails / export
   plan for 100+ casts; **effort: low-medium.**
-- **No wasted full-res clone in the live preview.** `previewWithPipeline` cloned
-  the cached decode *then* downscaled — but `copyResize` already returns a fresh
-  image off the (read-only) cached frame, so the clone was a wasted full-res copy
-  on every preview/Colour-Lab tick. Now it clones only when keeping full size with
-  a mutating pipeline. **Effort: low.**
+- **No wasted full-res clone in the live previews.** `previewWithPipeline`,
+  `previewEdit` and `previewPaint` cloned the cached decode *then* downscaled —
+  but `copyResize` already returns a fresh image off the (read-only) cached frame,
+  so the clone was a wasted full-res copy on every preview / Colour-Lab tick. Now
+  they clone only when keeping full size with a mutating op. **Effort: low.**
+- **Cursor-based region ops.** `selectByLuminance`, `erase`, `fill` and
+  `_blendByMask` (region_edit.dart) now iterate the **sequential pixel cursor**
+  (and mutate it) instead of per-pixel `getPixel(x,y)`/`setPixelRgba(x,y,…)`
+  random access — the documented fast path. Behaviour-equivalent; covered by
+  `test/region_edit_test.dart`. **Impact: medium** on region/outfit/bg editing of
+  big sprites; **effort: low-medium.**
 - **Bounded (LRU) decode/preview/thumbnail caches.** `_decodeCache`,
   `_buttonSrcCache`, `_previewCache` and `_thumbCache` were unbounded `Map`s — a
   big cast filled them with full decoded frames until the OS OOM-killed the app.
@@ -241,21 +247,12 @@ from the code, not measured — treat the impact ratings as estimates.
   a **single pass** (one `_eachPixel` that runs the whole chain per pixel) cuts
   memory bandwidth ~N× for multi-op presets on full-res sprites. **Effort:
   medium-high** (needs a fused executor; spatial ops stay separate).
-- **Cursor-based region ops.** `selectByLuminance`, `erase`, `fill` and
-  `_blendByMask` (region_edit.dart) use nested `getPixel(x, y)` **random access**;
-  switching to the sequential pixel cursor + indexing the mask by `p.y*w + p.x`
-  (the `_eachPixel` pattern) is the documented faster path. **Impact: medium** on
-  region/outfit/bg editing of big sprites; **effort: low-medium.**
 - **One multi-source flood fill for background removal.**
   `removeBackgroundFromCorners` runs **four** separate `selectByColor` flood fills
   (one per corner) and unions them; seeding **one** flood fill from all four
   corners does it in a single pass. Also, the flood fill **pushes neighbours
   before checking `seen`**, so the stack can hold up to ~4×N entries — checking
   `seen` before pushing cuts that churn. **Effort: low.**
-- **Apply the same clone-avoidance to `previewEdit` / `previewPaint`.** Same
-  pattern as the now-fixed `previewWithPipeline` — they still `clone()` then
-  downscale. (Their mutating op means the *non*-downscale branch must still clone.)
-  **Effort: low.**
 - **Spatial-op clones.** Each spatial op (`blur`/`sharpen`/`outline`/`glow`/
   `dropShadow`/`chromaShift`) clones the whole frame; stacking several clones
   repeatedly. A shared read-only snapshot per pipeline would avoid the repeats.

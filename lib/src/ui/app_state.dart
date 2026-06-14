@@ -1188,15 +1188,15 @@ class AppState extends ChangeNotifier {
       {int maxEdge = 640}) async {
     final img.Image? src = await decodeFirstFrame(rel);
     if (src == null) return null;
-    img.Image work = src.clone();
-    final int longest = work.width > work.height ? work.width : work.height;
-    if (longest > maxEdge) {
-      final double s = maxEdge / longest;
-      work = img.copyResize(work,
-          width: (work.width * s).round(),
-          height: (work.height * s).round(),
-          interpolation: img.Interpolation.average);
-    }
+    final int longest = src.width > src.height ? src.width : src.height;
+    // Downscale straight off the cached decode (copyResize is non-mutating); only
+    // clone at full size, since SpriteEdit.apply mutates `work` in place.
+    final img.Image work = longest > maxEdge
+        ? img.copyResize(src,
+            width: (src.width * (maxEdge / longest)).round(),
+            height: (src.height * (maxEdge / longest)).round(),
+            interpolation: img.Interpolation.average)
+        : src.clone();
     return Codecs.encodePng(SpriteEdit.apply(work, spec));
   }
 
@@ -1463,15 +1463,14 @@ class AppState extends ChangeNotifier {
   Future<Uint8List?> previewPaint(String rel, {int maxEdge = 640}) async {
     final img.Image? src = await decodeFirstFrame(rel);
     if (src == null) return null;
-    img.Image work = src.clone();
-    final int longest = work.width > work.height ? work.width : work.height;
-    if (longest > maxEdge) {
-      final double s = maxEdge / longest;
-      work = img.copyResize(work,
-          width: (work.width * s).round(),
-          height: (work.height * s).round(),
-          interpolation: img.Interpolation.average);
-    }
+    final int longest = src.width > src.height ? src.width : src.height;
+    // Downscale off the cached decode; only clone at full size (Painter mutates).
+    final img.Image work = longest > maxEdge
+        ? img.copyResize(src,
+            width: (src.width * (maxEdge / longest)).round(),
+            height: (src.height * (maxEdge / longest)).round(),
+            interpolation: img.Interpolation.average)
+        : src.clone();
     Painter.applyAll(work, paintOps);
     return Codecs.encodePng(work);
   }

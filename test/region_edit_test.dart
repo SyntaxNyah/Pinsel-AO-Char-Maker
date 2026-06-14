@@ -113,4 +113,53 @@ void main() {
       expect(m.get(2, 0), 255); // matched despite the gap
     });
   });
+
+  // Lock the sequential-cursor conversions of the masked ops.
+  group('mask ops (cursor-based)', () {
+    test('erase lowers alpha by the mask weight', () {
+      final img.Image im = _row(<List<int>>[
+        <int>[255, 0, 0, 255],
+        <int>[0, 255, 0, 255],
+      ]);
+      final SelectionMask m = SelectionMask(2, 1);
+      m.set(0, 0, 255); // fully erase pixel 0
+      // pixel 1 left at 0 → untouched
+      RegionEditor.erase(im, m);
+      expect(im.getPixel(0, 0).a, 0);
+      expect(im.getPixel(1, 0).a, 255);
+    });
+
+    test('erase at half weight halves the alpha', () {
+      final img.Image im = _row(<List<int>>[
+        <int>[10, 20, 30, 200],
+      ]);
+      final SelectionMask m = SelectionMask(1, 1)..set(0, 0, 128);
+      RegionEditor.erase(im, m);
+      // a = 200 * (255-128) ~/ 255 = 99; rgb untouched.
+      expect(im.getPixel(0, 0).a, 99);
+      expect(im.getPixel(0, 0).r, 10);
+    });
+
+    test('fill blends the colour by the mask weight', () {
+      final img.Image im = _row(<List<int>>[
+        <int>[0, 0, 0, 255],
+      ]);
+      final SelectionMask m = SelectionMask(1, 1)..set(0, 0, 255);
+      RegionEditor.fill(im, m, 0xFFFF0000); // full red
+      final img.Pixel p = im.getPixel(0, 0);
+      expect(p.r, 255);
+      expect(p.g, 0);
+      expect(p.b, 0);
+    });
+
+    test('selectByLuminance picks the bright band only', () {
+      final img.Image im = _row(<List<int>>[
+        <int>[250, 250, 250, 255], // bright
+        <int>[10, 10, 10, 255], // dark
+      ]);
+      final SelectionMask m = RegionEditor.selectByLuminance(im, min: 200);
+      expect(m.get(0, 0), 255);
+      expect(m.get(1, 0), 0);
+    });
+  });
 }
