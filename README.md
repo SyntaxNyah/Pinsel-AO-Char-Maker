@@ -74,6 +74,12 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
 - **Crop, auto-trim & background removal** — crop sprites (uniform across all
   frames + (a)/(b)), trim transparent margins, or knock out a flat background by
   flood-filling from the corners.
+- **Zoom Studio** — is a character drawn tiny in a big empty frame so it looks
+  lost in-game? Pull it in with a **virtual camera**: **mouse-wheel to zoom,
+  drag to pan** on a WYSIWYG canvas that shows exactly what AO will render, or hit
+  **Auto-frame** to do it instantly. Apply to the whole cast at once (one shared
+  framing, so poses stay aligned) — baked into every animation frame, losslessly.
+  See [docs/ZOOM_STUDIO.md](docs/ZOOM_STUDIO.md).
 - **Full char.ini editor** — a dedicated **Character** tab for the `[Options]`
   block: name, showname, `needs_showname`, side, **blips**, **chat**, category,
   scaling, stretch, and more. The auto-builder fills defaults; tweak any of them
@@ -156,6 +162,11 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
   a freeze). Editing fields (Emotes, Character) writes to the model and commits
   on blur — **no per-keystroke re-render**, so typing stays smooth even with a
   big sprite in the preview.
+- **Cancel any bulk job** — every long bake (animate / jiggle / mouth all,
+  recolour / convert all, apply zoom / edit / paint, bulk-build characters) shows
+  a live **progress bar** and a **Cancel** button that stops it cleanly — your
+  safety valve on a huge cast (nothing already saved is undone). See
+  [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 ---
 
@@ -213,9 +224,12 @@ platform via [`.github/workflows/build.yml`](.github/workflows/build.yml).
 | [docs/AUTO_BUILD.md](docs/AUTO_BUILD.md) | How folder → character works |
 | [docs/ONE_CLICK.md](docs/ONE_CLICK.md) | ⚡ One-click: folder → finished, exported character |
 | [docs/COLOR_OPS.md](docs/COLOR_OPS.md) | Every colour operation + parameters |
+| [docs/PAINT.md](docs/PAINT.md) | Paint Studio — brushes, gradient/region fills, blend modes |
+| [docs/ZOOM_STUDIO.md](docs/ZOOM_STUDIO.md) | Zoom Studio — camera zoom/framing to fill the AO viewport |
 | [docs/ANIMATION.md](docs/ANIMATION.md) | Recipes, easing, timeline, lip-sync, regions |
 | [docs/LIPSYNC.md](docs/LIPSYNC.md) | Talking mouths from one drawing (preview + adjust) |
-| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | GPU previews + multi-core baking |
+| [docs/JIGGLE.md](docs/JIGGLE.md) | Jiggle physics — soft-body bounce for any region |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | GPU previews, multi-core baking + cancellable jobs |
 | [docs/MIXER.md](docs/MIXER.md) | Snip, stack & link sprites (mouse-driven; multi-snip + layers) |
 | [docs/SPRITE_RIPPER.md](docs/SPRITE_RIPPER.md) | Slice sprite sheets into sprites (auto-detect / grid) |
 | [docs/THEME_MAKER.md](docs/THEME_MAKER.md) | Design & export an AO2 client theme (drag layout, random, custom images) |

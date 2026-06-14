@@ -363,9 +363,13 @@ every sprite keeps the cast aligned in-game.
   irrelevant then), `.copyWith` (clamps), `.toJson/fromJson`.
 - `class SpriteZoom` — `cameraRect(w,h,spec)`→`IntRect` (the source region the
   camera sees; **may be negative/oversize** when zoomed out, like a grow box),
-  **`apply(image,spec)`** = `SpriteEdit.cropTo(cameraRect)` → `SpriteEdit.resize`
-  back to the original size × `outputScale` (frame-aware, preserves frame count +
-  durations; reuses the tested Edit primitives rather than a new resampler),
+  **`apply(image,spec)`** crops to `cameraRect` then resizes back to the original
+  size × `outputScale`, **per frame on an isolated single-frame copy**
+  (`_isolateFrame` → crop/pad → resize → reassemble with `addFrame`, the
+  animation-exporter pattern). Doing it per-isolated-frame (NOT via
+  `SpriteEdit.cropTo`, whose per-frame `copyCrop` re-processes a shared animation
+  and tripled the frame count — the bug a multi-frame test caught) preserves
+  frame count + durations,
   **`fitToContent(images, {coverage})`**→`SpriteZoomSpec` = auto-frame from the
   **union** of every image's non-transparent content (one shared transform so
   the cast stays aligned — *not* per-sprite), **only ever zooms in** (lower bound
@@ -1269,6 +1273,13 @@ round-trip test. Preserve anything you don't model in `unknownSections`/`extra`.
   through it, so keep it allocation-free. Long bake loops (`applyPipeline`,
   `applyEdit`, `BulkProcessor.run`) `await Future.delayed(Duration.zero)`
   periodically so the progress UI repaints instead of freezing.
+- **No `math.pow(x, 2)` / `sqrt` in per-pixel loops:** for colour distance, use
+  `dr*dr+dg*dg+db*db` and compare against `tol*tol` (don't `sqrt`) — `pow` is much
+  slower than a multiply. Already applied in `_replaceColor`/`_vignette` +
+  `RegionEditor.selectByColor`/`eraseColor`; don't reintroduce them.
+  **docs/PERFORMANCE.md → "Audit"** tracks the remaining performance wins
+  (O(1) sprite lookup, off-isolate "apply to all" bakes, parallel export buttons,
+  bounded LRU caches, op fusion) — check it before optimising.
 - **Tests:** `flutter test`. Add a test when you touch the ini model, scanner,
   colour ops, or animation engine.
 ```

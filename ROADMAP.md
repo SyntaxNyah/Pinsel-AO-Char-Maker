@@ -75,8 +75,9 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   strip, **Auto-frame** (`fitToContent` — frames the **union** of the cast's
   content so poses stay aligned), and Apply to the whole cast (default) or one
   sprite. Bakes into every frame + (a)/(b)/(c) losslessly (`applyZoom` →
-  `_writeSpriteInPlace`); reuses the frame-aware `SpriteEdit.cropTo`/`resize`
-  primitives. Tested in `test/sprite_zoom_test.dart`
+  `_writeSpriteInPlace`), processing each frame on an isolated single-frame copy
+  so animations keep their frame count + durations. Tested in
+  `test/sprite_zoom_test.dart`
 - ✅ Sprite compositor / mixer (snip + stack layers; head-on-body) with a
   two-folder workflow (load a 2nd character's folder to graft parts from),
   **multiple snips at once**, **mouse drag/scale/rotate**, and a **Layers mode**

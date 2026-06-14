@@ -101,14 +101,16 @@ class RegionEditor {
     final SelectionMask m = SelectionMask(w, h);
     final img.Pixel target = image.getPixel(x.clamp(0, w - 1), y.clamp(0, h - 1));
     final int tr = target.r.toInt(), tg = target.g.toInt(), tb = target.b.toInt();
+    // Compare *squared* distance to the squared tolerance — exactly equivalent to
+    // `sqrt(...) <= tolerance` but with no per-pixel `sqrt`/`pow` (the magic-wand
+    // flood fill touches every connected pixel).
+    final double tolSq = tolerance * tolerance;
 
     bool matches(int px, int py) {
       final img.Pixel p = image.getPixel(px, py);
       if (ignoreTransparent && p.a == 0) return false;
-      final double d = math.sqrt(math.pow(p.r - tr, 2) +
-          math.pow(p.g - tg, 2) +
-          math.pow(p.b - tb, 2));
-      return d <= tolerance;
+      final int dr = p.r.toInt() - tr, dg = p.g.toInt() - tg, db = p.b.toInt() - tb;
+      return dr * dr + dg * dg + db * db <= tolSq;
     }
 
     if (!contiguous) {
@@ -244,16 +246,12 @@ class RegionEditor {
   /// a known background colour anywhere in the image).
   static void eraseColor(img.Image image, int argb, {double tolerance = 40}) {
     final int tr = (argb >> 16) & 0xFF, tg = (argb >> 8) & 0xFF, tb = argb & 0xFF;
-    for (int y = 0; y < image.height; y++) {
-      for (int x = 0; x < image.width; x++) {
-        final img.Pixel p = image.getPixel(x, y);
-        if (p.a == 0) continue;
-        final double d = math.sqrt(math.pow(p.r - tr, 2) +
-            math.pow(p.g - tg, 2) +
-            math.pow(p.b - tb, 2));
-        if (d <= tolerance) {
-          image.setPixelRgba(x, y, p.r.toInt(), p.g.toInt(), p.b.toInt(), 0);
-        }
+    final double tolSq = tolerance * tolerance; // squared compare, no sqrt/pow
+    for (final img.Pixel p in image) {
+      if (p.a == 0) continue;
+      final int dr = p.r.toInt() - tr, dg = p.g.toInt() - tg, db = p.b.toInt() - tb;
+      if (dr * dr + dg * dg + db * db <= tolSq) {
+        p.a = 0;
       }
     }
   }

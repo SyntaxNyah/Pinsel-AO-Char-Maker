@@ -18,6 +18,7 @@ If you just want to try it with nothing installed, use the **website build** (se
 7. [Animate — make sprites move](#7-animate--make-sprites-move)
 8. [Buttons — emote buttons & char_icon](#8-buttons--emote-buttons--the-char_icon)
 9. [Edit — crop, trim & remove background](#9-edit--crop-trim--remove-background)
+    - [9a. Zoom Studio — pull a too-small character in](#9a-zoom-studio--pull-a-too-small-character-in)
 10. [Mixer — snip & combine sprites](#10-mixer--snip--combine-sprites)
 11. [Bulk — do everything at once](#11-bulk--do-everything-at-once)
 12. [Plugins — add more content](#12-plugins--add-more-content)
@@ -526,6 +527,40 @@ afterwards.)
 
 ---
 
+## 9a. Zoom Studio — pull a too-small character in
+
+Open the **Zoom** tab. This is the dead-simple fix for art where the character is
+drawn **tiny in a big empty frame**, so it looks lost in the AO viewport. You
+point a **virtual camera** at the character and bake that framing in.
+
+- **The canvas shows exactly what AO will display.** **Scroll the mouse wheel to
+  zoom** (toward the cursor), and **drag to pan**. That's the whole idea — what
+  you see is what you get.
+- **Auto-frame** — one button finds the character and frames it for you, leaving a
+  little breathing room. With *Whole cast* selected it computes **one** framing
+  from everyone's content so the poses stay aligned.
+- **Zoom controls** — a slider, a typeable **%** box, quick **1 / 1.5 / 2 / 3 / 4×**
+  buttons, a **Recenter** D-pad, and a **grid** toggle (rule-of-thirds + centre
+  cross) to help you line things up.
+- **Pose strip** — the row of thumbnails along the bottom lets you click any other
+  sprite to frame it without leaving the tab.
+- **Export resolution** — leave at **1×** for AO (the character just fills more of
+  the frame); pick **2×** to bake at higher resolution for big HD themes.
+- **Apply to** — **Whole cast** (the default, recommended) bakes the same framing
+  into every sprite so the character is a consistent size across all poses;
+  **This sprite** does just the selected one.
+
+The framing is baked into **every animation frame** and every `(a)`/`(b)`/`(c)`,
+losslessly. Keyboard on the canvas (click it first): wheel/`+`/`−` zoom, arrows
+recenter, **R** reset, **G** grid, **F** auto-frame. (Like the other editors, a
+bake writes to the sprite files — Export afterwards.)
+
+> Tip: zooming *in* crops to the character and scales it up to the same output
+> size, so it appears bigger in-game. Need *more* canvas / margin instead? That's
+> the **Edit** tab's *grow* sliders.
+
+---
+
 ## 10. Mixer — snip & combine sprites
 
 The "frankensprite" tool. It's **mouse-driven** with sliders as a precise backup,
@@ -595,6 +630,15 @@ sprite.
    priority.
 4. **Convert ALL sprites** — animation frames are preserved for PNG/APNG/GIF (and
    animated WebP on native).
+
+**Cancelling a long job**
+- Any big bake (here, plus *Animate / Jiggle / Talking-mouth ALL*, *Apply* in
+  Zoom/Edit/Paint, and bulk-build) shows a **progress bar** and a **Cancel**
+  button in the bottom status bar while it runs.
+- **Cancel** stops it cleanly at the next batch boundary — **everything already
+  finished is kept**, nothing is undone. Use it if a job on a huge cast is taking
+  too long or you started it by mistake. (On phones/tablets it's near-instant;
+  on desktop it finishes the current batch first.)
 
 ---
 

@@ -4,7 +4,6 @@ import 'package:image/image.dart' as img;
 
 import '../core/ao_constants.dart';
 import 'button_maker.dart' show IntRect, ButtonMaker;
-import 'sprite_edit.dart';
 
 /// A **normalized camera** over a sprite: where to look ([focusX]/[focusY], the
 /// 0..1 point that lands in the centre of the output) and how close
@@ -15,9 +14,10 @@ import 'sprite_edit.dart';
 /// applied to **every** sprite of a character produces an identical transform,
 /// so the cast stays aligned in-game — exactly what AO needs (it anchors and
 /// rescales sprites; mismatched framing makes poses visibly jump). The maths is
-/// just [SpriteEdit.cropTo] (frame-aware, transparent-fills out-of-bounds) →
-/// [SpriteEdit.resize] (frame-aware, crisp), so a zoom round-trips every frame
-/// + its duration the same way a crop does.
+/// a crop to the camera region (transparent-fills out-of-bounds when zoomed out)
+/// then a single crisp resize back to the output size — applied **per frame** on
+/// an isolated single-frame copy, so an animated sprite round-trips every frame
+/// + its duration intact (see [SpriteZoom.apply]).
 class SpriteZoomSpec {
   const SpriteZoomSpec({
     this.zoom = ZoomLimits.defaultZoom,
@@ -94,14 +94,83 @@ class SpriteZoom {
   /// durations). The output is the camera's region scaled to the sprite's
   /// original size × [SpriteZoomSpec.outputScale]. Lossless-friendly: a crop
   /// then a single high-quality resize.
+  ///
+  /// Each frame is processed on an **isolated single-frame copy**
+  /// ([_isolateFrame]) before cropping/resizing, then reassembled with
+  /// `addFrame` (the same pattern as the animation exporter). This is deliberate:
+  /// frames pulled from `image.frames` still reference the shared animation, so a
+  /// frame-aware `copyCrop`/`copyResize` applied to one of them would re-process
+  /// the *whole* clip and corrupt the frame count — isolating first keeps every
+  /// frame + its duration intact.
   static img.Image apply(img.Image image, SpriteZoomSpec spec) {
     if (spec.isNoop) return image;
     final int w = image.width, h = image.height;
     final IntRect rect = cameraRect(w, h, spec);
-    final img.Image cropped = SpriteEdit.cropTo(image, rect);
     final int outW = math.max(1, (w * spec.outputScale).round());
     final int outH = math.max(1, (h * spec.outputScale).round());
-    return SpriteEdit.resize(cropped, outW / rect.w, outH / rect.h);
+
+    final List<img.Image> srcFrames =
+        image.frames.isEmpty ? <img.Image>[image] : image.frames.toList();
+    final List<img.Image> outFrames = <img.Image>[];
+    for (final img.Image f in srcFrames) {
+      final img.Image single = _isolateFrame(f);
+      final img.Image cropped = _cropOrPad(single, rect);
+      final img.Image scaled = _resizeTo(cropped, outW, outH);
+      scaled.frameDuration = f.frameDuration;
+      outFrames.add(scaled);
+    }
+    final img.Image out = outFrames.first;
+    for (int i = 1; i < outFrames.length; i++) {
+      out.addFrame(outFrames[i]);
+    }
+    return out;
+  }
+
+  /// Copy one [frame]'s own pixels into a fresh **standalone single-frame**
+  /// image, so subsequent frame-aware ops can't reach back into the animation it
+  /// came from. Pure getPixel/setPixel — independent of the codec's internals.
+  static img.Image _isolateFrame(img.Image frame) {
+    final img.Image out =
+        img.Image(width: frame.width, height: frame.height, numChannels: 4);
+    for (final img.Pixel p in frame) {
+      out.setPixelRgba(p.x, p.y, p.r, p.g, p.b, p.a);
+    }
+    return out;
+  }
+
+  /// Crop [single] (a single-frame image) to [r], or — when [r] extends past an
+  /// edge (zoomed out / panned to a border) — paint the overlapping region onto
+  /// a transparent canvas of size [r] so the extra area is empty.
+  static img.Image _cropOrPad(img.Image single, IntRect r) {
+    final int w = single.width, h = single.height;
+    if (r.x == 0 && r.y == 0 && r.w == w && r.h == h) return single;
+    final bool inside = r.x >= 0 && r.y >= 0 && r.x + r.w <= w && r.y + r.h <= h;
+    if (inside) {
+      return img.copyCrop(single, x: r.x, y: r.y, width: r.w, height: r.h);
+    }
+    final img.Image canvas = img.Image(width: r.w, height: r.h, numChannels: 4);
+    final int ox0 = r.x < 0 ? 0 : r.x;
+    final int oy0 = r.y < 0 ? 0 : r.y;
+    final int ox1 = math.min(w, r.x + r.w);
+    final int oy1 = math.min(h, r.y + r.h);
+    final int ow = ox1 - ox0, oh = oy1 - oy0;
+    if (ow > 0 && oh > 0) {
+      final img.Image piece =
+          img.copyCrop(single, x: ox0, y: oy0, width: ow, height: oh);
+      img.compositeImage(canvas, piece, dstX: ox0 - r.x, dstY: oy0 - r.y);
+    }
+    return canvas;
+  }
+
+  /// Resize a single-frame image to [outW]×[outH] (cubic up / average down).
+  static img.Image _resizeTo(img.Image single, int outW, int outH) {
+    if (single.width == outW && single.height == outH) return single;
+    final bool down = outW < single.width || outH < single.height;
+    return img.copyResize(single,
+        width: outW,
+        height: outH,
+        interpolation:
+            down ? img.Interpolation.average : img.Interpolation.cubic);
   }
 
   /// Compute a single camera that frames the **union** of the non-transparent

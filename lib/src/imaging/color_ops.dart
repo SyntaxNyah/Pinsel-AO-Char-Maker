@@ -394,9 +394,10 @@ class ImageOps {
     final int fr = (from >> 16) & 0xFF, fg = (from >> 8) & 0xFF, fb = from & 0xFF;
     final int tr = (to >> 16) & 0xFF, tg = (to >> 8) & 0xFF, tb = to & 0xFF;
     _eachPixel(f, (int x, int y, _Rgba px) {
-      final double d = math.sqrt(math.pow(px.r - fr, 2) +
-          math.pow(px.g - fg, 2) +
-          math.pow(px.b - fb, 2));
+      // Squared colour distance avoids three per-pixel `math.pow` calls; sqrt is
+      // kept because the soft-edge weight below needs the real distance.
+      final int dr = px.r - fr, dg = px.g - fg, db = px.b - fb;
+      final double d = math.sqrt((dr * dr + dg * dg + db * db).toDouble());
       if (d > tol + soft) return;
       final double w = d <= tol ? 1.0 : (1.0 - (d - tol) / soft).clamp(0.0, 1.0);
       px.r = (px.r + (tr - px.r) * w).round();
@@ -540,7 +541,8 @@ class ImageOps {
     final double cx = f.width / 2, cy = f.height / 2;
     final double maxD = math.sqrt(cx * cx + cy * cy);
     _eachPixel(f, (int x, int y, _Rgba px) {
-      final double d = math.sqrt(math.pow(x - cx, 2) + math.pow(y - cy, 2)) / maxD;
+      final double ex = x - cx, ey = y - cy;
+      final double d = math.sqrt(ex * ex + ey * ey) / maxD;
       final double t = ((d - (1 - feather)) / feather).clamp(0.0, 1.0);
       final double k = 1 - t * amt;
       px.r = (px.r * k).round();

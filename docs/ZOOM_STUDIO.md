@@ -28,9 +28,10 @@ you switch emotes or talk). That's why **"Whole cast"** is the default Apply
 target.
 
 The maths is a crop to the camera's region followed by one high-quality resize
-(`imaging/sprite_zoom.dart` → `SpriteZoom.apply`, built on the same frame-aware
-`SpriteEdit.cropTo`/`resize` primitives the Edit screen uses), so every frame of
-an animation and every `(a)/(b)/(c)` of an emote round-trips identically.
+(`imaging/sprite_zoom.dart` → `SpriteZoom.apply`). It runs **per frame on an
+isolated single-frame copy** of each frame, so every frame of an animation (and
+every `(a)/(b)/(c)` of an emote) round-trips with its frame count + timing
+intact.
 
 ---
 
