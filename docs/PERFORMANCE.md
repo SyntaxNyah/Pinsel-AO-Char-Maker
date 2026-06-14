@@ -170,6 +170,15 @@ from the code, not measured — treat the impact ratings as estimates.
 
 ### ✅ Done this session
 
+- **Recolour-all is off the UI isolate.** `applyPipeline` now fans the
+  decode→recolour→re-encode out across cores via `compute` + `mapParallel`, in
+  memory-bounded chunks, cancellable + progress-reported — the WebP/APNG encode
+  no longer blocks the UI. Output is byte-identical to the old path (`_recolorWorker`
+  + the shared `_encodeSpriteInWorker` mirror `_writeSpriteInPlace`; the colour
+  pipeline round-trips through JSON to reach the isolate), and `_computeRecolor`
+  falls back to inline work if the handoff fails — so it never does worse than
+  before. **Impact: high; effort: medium.** (Proof slice; `applyZoom`/`applyPaint`/
+  `applyEdit` follow next.)
 - **O(1) sprite lookup.** `spriteRelFor` / `relForBase` / the apply-zoom-edit-
   paint group selectors did `scan.groups.firstWhereOrNull((g) => g.base == base)`
   — O(groups) **per emote row** on every list build, i.e. **O(N²)** on a big cast.
@@ -211,13 +220,16 @@ from the code, not measured — treat the impact ratings as estimates.
 
 ### 🔴 High-impact, planned
 
-- **Move "apply to all" bakes off the UI isolate.** `applyPipeline` (recolour),
-  `applyEdit`, `applyZoom` and `applyPaint` decode → apply → **encode** on the UI
-  isolate, only yielding *between* sprite groups. The WebP/APNG encode is the
-  expensive part and blocks the UI. *Fix:* fan out render+encode per sprite via
-  `compute` + `mapParallel`, exactly like `bulkAnimateAll`/`bulkMouthTalkAll`
-  (stay lossless). **Impact: high** (responsiveness + true multi-core on the
-  most-used bulk actions); **effort: medium.**
+- **Move the rest of the "apply to all" bakes off the UI isolate.** ✅
+  **`applyPipeline` (recolour) is done** — it now fans out decode→recolour→encode
+  per sprite via `compute` + `mapParallel` in memory-bounded chunks (the
+  `_recolorWorker` + shared `_encodeSpriteInWorker` mirror `_writeSpriteInPlace`
+  exactly; falls back to inline if the isolate handoff fails). Still on the UI
+  isolate: **`applyZoom`**, **`applyPaint`** (per-file frame-0 masks) and
+  **`applyEdit`** (needs its shared per-group crop rect computed on the main
+  isolate first). They follow the same pattern + the shared worker encoder — the
+  next slice. **Impact: high** (responsiveness + multi-core on the most-used bulk
+  actions); **effort: medium.**
 - **Parallelise export button/icon rendering.** `Organizer.execute` renders every
   button **sequentially and synchronously** on the UI isolate (a single
   `Future.delayed(zero)` yield between each — enough to avoid "not responding",

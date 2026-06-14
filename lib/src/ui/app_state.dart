@@ -1558,10 +1558,17 @@ class AppState extends ChangeNotifier {
 
   /// Bake the live pipeline into the project's sprites: every file of the
   /// selected emote (so its `(a)`/`(b)`/`(c)` and all animation frames recolour
-  /// together) or, when [allSprites] is set, every sprite. Each sprite is
-  /// re-encoded **in place** in its original format via [_writeSpriteInPlace]
-  /// (WebP stays WebP, falling back to APNG only when the encoder is missing) so
-  /// the recolour actually lands on the file the app previews and exports.
+  /// together) or, when [allSprites] is set, every sprite.
+  ///
+  /// The decode → recolour → **re-encode** runs on a background isolate
+  /// (`compute` via [mapParallel]) in memory-bounded chunks — the same pattern as
+  /// the bulk animate path — so a big recolour-all uses every core and keeps the
+  /// UI responsive (the WebP/APNG encode is the expensive part and used to block
+  /// the UI isolate). The worker re-encodes in the sprite's own format (mirroring
+  /// [_writeSpriteInPlace]: WebP stays lossless WebP, APNG fallback); this isolate
+  /// just writes the bytes back, handling the webp→apng rename. Cancellable +
+  /// progress-reported per chunk; falls back to inline work if the isolate handoff
+  /// fails, so it never does *worse* than the old single-isolate path.
   Future<int> applyPipeline({required bool allSprites}) async {
     if (livePipeline.isEmpty || scan == null) return 0;
     _setBusy(true, 'Applying colour pipeline…');
@@ -1582,23 +1589,50 @@ class AppState extends ChangeNotifier {
     ];
 
     _beginProgress(targets.length);
+    final List<Map<String, dynamic>> pipelineJson =
+        livePipeline.map((ColorOp o) => o.toJson()).toList();
+
     int ok = 0;
-    int done = 0;
-    for (final String rel in targets) {
-      if (_cancelled) break; // stop cleanly between sprite files
-      if (await workspace.exists(rel)) {
-        final img.Image? im = Codecs.decode(await workspace.readBytes(rel),
-            ext: p.extension(rel).replaceFirst('.', ''));
-        if (im != null) {
-          ImageOps.applyAll(im, livePipeline);
-          await _writeSpriteInPlace(rel, im);
-          ok++;
-        }
+    final int chunk = _bulkChunk;
+    for (int start = 0; start < targets.length; start += chunk) {
+      if (_cancelled) break; // stop cleanly at the chunk boundary
+      final int end =
+          start + chunk < targets.length ? start + chunk : targets.length;
+      final List<String> rels = <String>[];
+      final List<_RecolorJob> jobs = <_RecolorJob>[];
+      for (int i = start; i < end; i++) {
+        final String rel = targets[i];
+        if (!await workspace.exists(rel)) continue;
+        rels.add(rel);
+        jobs.add(_RecolorJob(
+          bytes: await workspace.readBytes(rel),
+          ext: p.extension(rel).replaceFirst('.', '').toLowerCase(),
+          pipeline: pipelineJson,
+        ));
       }
-      _progress(++done, targets.length, 'Recolour');
-      // Yield to the event loop so the progress bar repaints and the UI stays
-      // responsive instead of freezing for the whole batch.
-      if (done % 3 == 0) await Future<void>.delayed(Duration.zero);
+
+      final List<({Uint8List bytes, String outExt})> results =
+          await mapParallel<_RecolorJob, ({Uint8List bytes, String outExt})>(
+        jobs,
+        _computeRecolor,
+        concurrency: maxConcurrency,
+        onProgress: (int d, int t) =>
+            _progress(start + d, targets.length, 'Recolour'),
+      );
+
+      for (int j = 0; j < rels.length; j++) {
+        final ({Uint8List bytes, String outExt}) r = results[j];
+        if (r.bytes.isEmpty || r.outExt == 'none') continue;
+        final String rel = rels[j];
+        final String ext = p.extension(rel).replaceFirst('.', '').toLowerCase();
+        final String outRel = ext == r.outExt
+            ? rel
+            : '${rel.substring(0, rel.length - ext.length)}${r.outExt}';
+        await workspace.writeBytes(outRel, r.bytes);
+        if (outRel != rel) await workspace.delete(rel);
+        ok++;
+      }
+      await Future<void>.delayed(Duration.zero);
     }
 
     _invalidateImageCaches();
@@ -1607,6 +1641,17 @@ class AppState extends ChangeNotifier {
     _setBusy(false,
         '${_cancelled ? 'Cancelled — recoloured' : 'Recoloured'} $ok sprite(s).');
     return ok;
+  }
+
+  /// `compute` the recolour+re-encode for one sprite, falling back inline if the
+  /// isolate handoff fails (and always inline on web).
+  Future<({Uint8List bytes, String outExt})> _computeRecolor(
+      _RecolorJob job) async {
+    try {
+      return await compute(_recolorWorker, job);
+    } catch (_) {
+      return await _recolorWorker(job);
+    }
   }
 
   /// Preview the auto-generated **button** for the selected emote at [size] px,
@@ -3405,6 +3450,49 @@ Future<({Uint8List bytes, String ext, String? webpError})> _bulkAnimateWorker(
   final AnimClip clip =
       AnimEngine.render(base, recipes, frames: job.frames, fps: job.fps);
   return clip.encodePreferWebp(lossless: job.lossless, quality: job.quality);
+}
+
+/// Sendable job for [_recolorWorker]: one sprite + the colour pipeline (as JSON).
+class _RecolorJob {
+  const _RecolorJob(
+      {required this.bytes, required this.ext, required this.pipeline});
+  final Uint8List bytes;
+  final String ext;
+  final List<Map<String, dynamic>> pipeline; // ColorOp JSON
+}
+
+/// Off-main-isolate worker for [AppState.applyPipeline] (`compute` on native,
+/// inline on web): decode → apply the colour pipeline to **every frame** →
+/// re-encode in the sprite's own format. Returns the bytes + the container
+/// actually used (so the caller can do the webp→apng rename).
+Future<({Uint8List bytes, String outExt})> _recolorWorker(
+    _RecolorJob job) async {
+  final img.Image? im = Codecs.decode(job.bytes, ext: job.ext);
+  if (im == null) return (bytes: Uint8List(0), outExt: 'none');
+  ImageOps.applyAll(im, job.pipeline.map(ColorOp.fromJson).toList());
+  return _encodeSpriteInWorker(im, job.ext);
+}
+
+/// Re-encode [image] in [ext]'s container — WebP **lossless** (multi-frame aware)
+/// with an APNG fallback, else APNG/PNG/GIF via [Codecs.encodeForExtension].
+/// Returns the bytes + the extension actually used. **Mirrors
+/// `AppState._writeSpriteInPlace`'s encode** so the off-isolate bake bytes match
+/// the on-isolate path exactly; shared by the bake workers.
+Future<({Uint8List bytes, String outExt})> _encodeSpriteInWorker(
+    img.Image image, String ext) async {
+  if (ext == 'webp') {
+    final WebpResult r = image.frames.length > 1
+        ? await WebpEncoder.instance.encodeAnimation(
+            image.frames.toList(),
+            image.frames
+                .map((img.Image f) => f.frameDuration <= 0 ? 100 : f.frameDuration)
+                .toList(),
+            lossless: true)
+        : await WebpEncoder.instance.encode(image, lossless: true);
+    if (r.ok && r.bytes != null) return (bytes: r.bytes!, outExt: 'webp');
+  }
+  final String outExt = ext == 'webp' ? 'apng' : Codecs.outputExtensionFor(ext);
+  return (bytes: Codecs.encodeForExtension(image, outExt), outExt: outExt);
 }
 
 /// Sendable job for [_mouthWorker]: one sprite's talking-mouth parameters. The

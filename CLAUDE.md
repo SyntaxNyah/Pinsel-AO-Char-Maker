@@ -829,10 +829,20 @@ every sprite keeps the cast aligned in-game.
     `_buildConfigNamed(name)` clones `buildConfig` with the sub-folder name.
   - **Recolour/edit write back in place** via `_writeSpriteInPlace(rel,image)`:
     re-encodes in the file's own format (WebP via the encoder, APNG/PNG/GIF
-    otherwise) and only changes the path/extension on a fallback. `applyPipeline`
-    and `applyEdit` both use it, then refresh `scan` from `_projectFiles()`. This
-    fixes the old bug where WebP sprites (the default!) were recoloured into a
-    phantom `.apng` while the original `.webp` — still referenced — was untouched.
+    otherwise) and only changes the path/extension on a fallback. `applyEdit`
+    (+ `applyZoom`/`applyPaint`) use it on the UI isolate; then they refresh `scan`
+    from `_projectFiles()`. This fixes the old bug where WebP sprites (the
+    default!) were recoloured into a phantom `.apng` while the original `.webp` —
+    still referenced — was untouched.
+    **`applyPipeline` (recolour-all) runs OFF the UI isolate**: it fans
+    decode→recolour→encode across cores via `compute`+`mapParallel` in `_bulkChunk`
+    batches (cancellable, progress-reported), using the **top-level**
+    `_recolorWorker` + the shared **`_encodeSpriteInWorker`** (which mirrors
+    `_writeSpriteInPlace`'s encode exactly — WebP lossless / APNG fallback) so the
+    bytes are identical; the main isolate does the file write + webp→apng rename.
+    `_computeRecolor` falls back to inline if the isolate handoff fails. Mirror
+    this pattern (+ reuse `_encodeSpriteInWorker`) when moving `applyZoom`/
+    `applyPaint`/`applyEdit` off-isolate.
   - **Paint Studio** (see docs/PAINT.md + `imaging/paint.dart`): `paintOps`
     (`List<PaintOp>` journal) + `addPaintOp`/`undoPaintOp`/`clearPaintOps`,
     `previewPaint(rel)` (downscaled PNG with the journal replayed),
