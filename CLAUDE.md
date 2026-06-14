@@ -1293,6 +1293,12 @@ round-trip test. Preserve anything you don't model in `unknownSections`/`extra`.
   `dr*dr+dg*dg+db*db` and compare against `tol*tol` (don't `sqrt`) — `pow` is much
   slower than a multiply. Already applied in `_replaceColor`/`_vignette` +
   `RegionEditor.selectByColor`/`eraseColor`; don't reintroduce them.
+- **Sprite lookup is O(1), not a scan:** `AppState.spriteRelFor`/`relForBase`/the
+  group selectors use the lazy `_groupFor(base)` index (a `base → SpriteGroup`
+  map), NOT `scan.groups.firstWhereOrNull(...)` (that was O(N) **per emote row** →
+  O(N²)). The index rebuilds via the **`scan` setter**; if you ever mutate
+  `scan.groups` **in place** (only `addCompositeSprite` does), null `_groupByBase`
+  to invalidate it.
   **docs/PERFORMANCE.md → "Audit"** tracks the remaining performance wins
   (O(1) sprite lookup, off-isolate "apply to all" bakes, parallel export buttons,
   bounded LRU caches, op fusion) — check it before optimising.

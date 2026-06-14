@@ -190,9 +190,12 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   so browsing a 200+ cast can't grow resident memory without bound (the OOM
   cause). A cold key just re-decodes. Tested (`test/lru_cache_test.dart`)
 - ✅ **Per-pixel speed-ups** — dropped `math.pow`/`sqrt` from the colour-distance
-  hot loops (magic-wand, colour-erase, replace-colour, vignette); see
-  docs/PERFORMANCE.md → "Audit" for the tracked remaining wins (O(1) sprite
-  lookup, off-isolate apply-to-all bakes, parallel export buttons, op fusion)
+  hot loops (magic-wand, colour-erase, replace-colour, vignette)
+- ✅ **O(1) sprite lookup** — `spriteRelFor` & the group selectors now use a lazy
+  `base → SpriteGroup` index instead of an `O(groups)` scan per emote row (was
+  `O(N²)` on a big cast); plus dropped a wasted full-res clone per live preview.
+  See docs/PERFORMANCE.md → "Audit" for the remaining tracked wins (off-isolate
+  apply-to-all bakes, parallel export buttons, op fusion)
 - ✅ **Ripper zoom** — `InteractiveViewer` pinch/wheel zoom + pan on the sheet
   canvas (pan off in Manual mode where drag draws boxes).
 - ✅ **Button/icon crop shapes (engine)** — `imaging/crop_shape.dart`: circle /

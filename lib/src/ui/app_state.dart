@@ -119,7 +119,31 @@ class AppState extends ChangeNotifier {
   final EditHistory history = EditHistory();
   final SpriteScanner _scanner = const SpriteScanner();
 
-  ScanResult? scan;
+  ScanResult? _scan;
+  ScanResult? get scan => _scan;
+
+  /// Setting the scan rebuilds the base→group index lazily (see [_groupFor]).
+  set scan(ScanResult? v) {
+    _scan = v;
+    _groupByBase = null;
+  }
+
+  /// Lazy `base → SpriteGroup` index over [scan]. `spriteRelFor` and the
+  /// apply/zoom/edit/paint group selectors used to `groups.firstWhereOrNull(...)`
+  /// — an **O(groups)** scan called **per emote row** on every list build, i.e.
+  /// **O(N²)** on a big cast (list scroll, button thumbnails, the export plan).
+  /// The index makes those lookups O(1). Built on first use after [scan] changes,
+  /// and invalidated in place when a group is appended ([addCompositeSprite]).
+  Map<String, SpriteGroup>? _groupByBase;
+
+  SpriteGroup? _groupFor(String base) {
+    final ScanResult? s = _scan;
+    if (s == null) return null;
+    return (_groupByBase ??= <String, SpriteGroup>{
+      for (final SpriteGroup g in s.groups) g.base: g,
+    })[base];
+  }
+
   Character? character;
   BuildConfig buildConfig = const BuildConfig();
 
@@ -932,11 +956,8 @@ class AppState extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   /// The representative sprite file (rel path) for an emote, if discovered.
-  String? spriteRelFor(Emote e) {
-    final SpriteGroup? g =
-        scan?.groups.firstWhereOrNull((SpriteGroup g) => g.base == e.sprite);
-    return g?.representative?.relPath;
-  }
+  /// O(1) via the [_groupFor] index (called per emote row on list builds).
+  String? spriteRelFor(Emote e) => _groupFor(e.sprite)?.representative?.relPath;
 
   Future<img.Image?> decodeFirstFrame(String rel) async {
     if (_decodeCache.containsKey(rel)) return _decodeCache[rel];
@@ -976,15 +997,21 @@ class AppState extends ChangeNotifier {
       {int maxEdge = 640}) async {
     final img.Image? src = await decodeFirstFrame(rel);
     if (src == null) return null;
-    img.Image work = src.clone();
-    final int longest = work.width > work.height ? work.width : work.height;
+    final int longest = src.width > src.height ? src.width : src.height;
+    // Avoid a wasted full-res clone: when we downscale (the common case — sprites
+    // are usually > maxEdge) `copyResize` already returns a fresh image straight
+    // off the cached decode (it never mutates the source). Only clone when we keep
+    // full size **and** a mutating pipeline would otherwise scribble on the cached
+    // image; a no-op pipeline can encode the cached frame read-only.
+    img.Image work;
     if (longest > maxEdge) {
       final double s = maxEdge / longest;
-      // Use a good downscale filter so the preview isn't pixelated.
-      work = img.copyResize(work,
-          width: (work.width * s).round(),
-          height: (work.height * s).round(),
+      work = img.copyResize(src, // good filter so the preview isn't pixelated
+          width: (src.width * s).round(),
+          height: (src.height * s).round(),
           interpolation: img.Interpolation.average);
+    } else {
+      work = pipeline.isEmpty ? src : src.clone();
     }
     if (pipeline.isNotEmpty) ImageOps.applyAll(work, pipeline);
     return Codecs.encodePng(work);
@@ -1040,8 +1067,7 @@ class AppState extends ChangeNotifier {
   String _safeSprite(String s) => s.replaceAll(RegExp(r'[\\/]+'), '_').trim();
 
   Future<void> _renameSpriteFiles(String oldBase, String newBase) async {
-    final SpriteGroup? g =
-        scan?.groups.firstWhereOrNull((SpriteGroup g) => g.base == oldBase);
+    final SpriteGroup? g = _groupFor(oldBase);
     if (g == null) return;
     final List<SpriteFile> files =
         <SpriteFile?>[g.idle, g.talk, g.post, ...g.statics].whereType<SpriteFile>().toList();
@@ -1063,10 +1089,8 @@ class AppState extends ChangeNotifier {
   List<String> spriteBases() =>
       (scan?.groups ?? <SpriteGroup>[]).map((SpriteGroup g) => g.base).toList();
 
-  String? relForBase(String base) => scan?.groups
-      .firstWhereOrNull((SpriteGroup g) => g.base == base)
-      ?.representative
-      ?.relPath;
+  String? relForBase(String base) =>
+      _groupFor(base)?.representative?.relPath;
 
   // ---------------------------------------------------------------------------
   // Mixer "parts" sources — load a SECOND folder to graft sprites from
@@ -1135,6 +1159,7 @@ class AppState extends ChangeNotifier {
         base: safe,
       ));
     scan?.groups.add(group);
+    _groupByBase = null; // in-place append bypasses the scan setter — invalidate
 
     character?.emotes.add(Emote(comment: safe, sprite: safe, deskMod: DeskModifier.show));
     selectedEmote = (character?.emotes.length ?? 1) - 1;
@@ -1185,8 +1210,7 @@ class AppState extends ChangeNotifier {
     if (allSprites) {
       groups.addAll(scan!.groups);
     } else if (current != null) {
-      final SpriteGroup? g =
-          scan!.groups.firstWhereOrNull((SpriteGroup g) => g.base == current!.sprite);
+      final SpriteGroup? g = _groupFor(current!.sprite);
       if (g != null) groups.add(g);
     }
 
@@ -1245,8 +1269,7 @@ class AppState extends ChangeNotifier {
     if (allSprites) {
       groups.addAll(scan!.groups);
     } else if (current != null) {
-      final SpriteGroup? g = scan!.groups
-          .firstWhereOrNull((SpriteGroup g) => g.base == current!.sprite);
+      final SpriteGroup? g = _groupFor(current!.sprite);
       if (g != null) groups.add(g);
     }
     return groups;
@@ -1467,8 +1490,7 @@ class AppState extends ChangeNotifier {
     if (allSprites) {
       groups.addAll(scan!.groups);
     } else if (current != null) {
-      final SpriteGroup? g = scan!.groups
-          .firstWhereOrNull((SpriteGroup g) => g.base == current!.sprite);
+      final SpriteGroup? g = _groupFor(current!.sprite);
       if (g != null) groups.add(g);
     }
 
@@ -1549,8 +1571,7 @@ class AppState extends ChangeNotifier {
     if (allSprites) {
       groups.addAll(scan!.groups);
     } else if (current != null) {
-      final SpriteGroup? g =
-          scan!.groups.firstWhereOrNull((SpriteGroup g) => g.base == current!.sprite);
+      final SpriteGroup? g = _groupFor(current!.sprite);
       if (g != null) groups.add(g);
     }
 
@@ -2484,8 +2505,7 @@ class AppState extends ChangeNotifier {
   /// `(b)foo.webp`). No-op if the group/file isn't found.
   Future<void> _replaceStateSprite(
       String base, String prefix, String outRel) async {
-    final SpriteGroup? g =
-        scan?.groups.firstWhereOrNull((SpriteGroup g) => g.base == base);
+    final SpriteGroup? g = _groupFor(base);
     if (g == null) return;
     final SpriteFile? existing = switch (prefix) {
       SpritePrefix.idle => g.idle,

@@ -170,6 +170,18 @@ from the code, not measured — treat the impact ratings as estimates.
 
 ### ✅ Done this session
 
+- **O(1) sprite lookup.** `spriteRelFor` / `relForBase` / the apply-zoom-edit-
+  paint group selectors did `scan.groups.firstWhereOrNull((g) => g.base == base)`
+  — O(groups) **per emote row** on every list build, i.e. **O(N²)** on a big cast.
+  `AppState` now keeps a lazy `base → SpriteGroup` index (`_groupFor`), rebuilt via
+  the `scan` setter (and invalidated at the one in-place `groups.add`), so those
+  lookups are O(1). **Impact: high** on list scroll / button thumbnails / export
+  plan for 100+ casts; **effort: low-medium.**
+- **No wasted full-res clone in the live preview.** `previewWithPipeline` cloned
+  the cached decode *then* downscaled — but `copyResize` already returns a fresh
+  image off the (read-only) cached frame, so the clone was a wasted full-res copy
+  on every preview/Colour-Lab tick. Now it clones only when keeping full size with
+  a mutating pipeline. **Effort: low.**
 - **Bounded (LRU) decode/preview/thumbnail caches.** `_decodeCache`,
   `_buttonSrcCache`, `_previewCache` and `_thumbCache` were unbounded `Map`s — a
   big cast filled them with full decoded frames until the OS OOM-killed the app.
@@ -193,12 +205,6 @@ from the code, not measured — treat the impact ratings as estimates.
 
 ### 🔴 High-impact, planned
 
-- **O(1) sprite lookup.** `AppState.spriteRelFor` and the apply/zoom/edit/paint
-  group selectors all do `scan.groups.firstWhereOrNull((g) => g.base == base)` —
-  **O(groups)** each, and it's called **per emote row** on every list build, so a
-  big cast is effectively **O(N²)** (list scrolling, button thumbnails, the export
-  plan). *Fix:* index `scan.groups` by base into a `Map<String, SpriteGroup>` once
-  per scan (e.g. behind a `scan` setter) and look up in O(1). **Effort: low-medium.**
 - **Move "apply to all" bakes off the UI isolate.** `applyPipeline` (recolour),
   `applyEdit`, `applyZoom` and `applyPaint` decode → apply → **encode** on the UI
   isolate, only yielding *between* sprite groups. The WebP/APNG encode is the
@@ -246,11 +252,10 @@ from the code, not measured — treat the impact ratings as estimates.
   corners does it in a single pass. Also, the flood fill **pushes neighbours
   before checking `seen`**, so the stack can hold up to ~4×N entries — checking
   `seen` before pushing cuts that churn. **Effort: low.**
-- **Skip the redundant clone in `previewWithPipeline`.** It does `src.clone()`
-  *then* `copyResize` — when the sprite is larger than the preview edge (the
-  common case) `copyResize` already allocates a fresh image, so the clone is a
-  wasted full-image copy on every live preview. *Fix:* only clone when applying a
-  pipeline at full size. **Effort: low.**
+- **Apply the same clone-avoidance to `previewEdit` / `previewPaint`.** Same
+  pattern as the now-fixed `previewWithPipeline` — they still `clone()` then
+  downscale. (Their mutating op means the *non*-downscale branch must still clone.)
+  **Effort: low.**
 - **Spatial-op clones.** Each spatial op (`blur`/`sharpen`/`outline`/`glow`/
   `dropShadow`/`chromaShift`) clones the whole frame; stacking several clones
   repeatedly. A shared read-only snapshot per pipeline would avoid the repeats.
