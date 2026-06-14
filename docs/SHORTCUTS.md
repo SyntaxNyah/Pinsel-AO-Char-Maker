@@ -32,8 +32,9 @@ toolbar** (undo / redo / import / export / **Start over ↻**).
 1. Home · 2. Character · 3. Emotes · 4. Colour Lab · 5. Animate · 6. Buttons ·
 7. Edit · 8. Mixer · 9. Bulk
 
-> Screens past the 9th — **Plugins**, **Ripper** and **Theme** — have no number
-> shortcut (there are only nine digits); click them in the rail.
+> Screens past the 9th — **Plugins**, **Ripper**, **Theme**, **Paint** and
+> **Zoom** — have no number shortcut (there are only nine digits); click them in
+> the rail.
 
 ## Direct manipulation (mouse + arrow keys)
 
@@ -84,6 +85,20 @@ speed, then fine-tune with the keyboard:
   sprite) **carries your current box** onto the next sprite if it hasn't been
   framed yet — so the box doesn't reset to that sprite's auto face. Already-framed
   sprites keep their own box; press `R` to snap one back to auto.
+
+- **Zoom Studio → the canvas.** Click the canvas to focus it, then frame the
+  character with the mouse + keys (these are fixed, plain keys — the canvas is its
+  own focused area, so they never clash with anything global):
+
+  | Key / input | Action |
+  |-------------|--------|
+  | **Mouse wheel** | Zoom toward the cursor |
+  | **Drag** | Pan the camera |
+  | `+` / `-` | Zoom in / out |
+  | `←/→/↑/↓` | Recenter (nudge the focus point) |
+  | `R` or `0` | Reset the camera |
+  | `G` | Toggle the rule-of-thirds grid |
+  | `F` | Auto-frame the character |
 
 These are **contextual** — they act on the focused/selected widget, not globally.
 

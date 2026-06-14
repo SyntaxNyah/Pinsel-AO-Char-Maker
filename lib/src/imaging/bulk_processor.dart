@@ -42,10 +42,14 @@ class BulkProcessor {
     String nameSuffix = '',
     bool deleteOriginalOnConvert = false,
     BulkProgress? onProgress,
+    bool Function()? shouldCancel,
   }) async {
     final List<BulkResult> results = <BulkResult>[];
     int done = 0;
     for (final String rel in files) {
+      // Cooperative cancellation: stop cleanly between files (everything already
+      // written stays written; nothing is rolled back).
+      if (shouldCancel != null && shouldCancel()) break;
       try {
         final BulkResult r = await _one(
           rel,

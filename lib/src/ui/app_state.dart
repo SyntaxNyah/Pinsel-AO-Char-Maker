@@ -32,6 +32,7 @@ import '../imaging/parallel.dart';
 import '../imaging/region_edit.dart';
 import '../imaging/sprite_edit.dart';
 import '../imaging/sprite_sheet.dart';
+import '../imaging/sprite_zoom.dart';
 import '../imaging/webp_codec.dart';
 import '../platform/cpu.dart';
 import '../platform/error_log.dart';
@@ -124,6 +125,52 @@ class AppState extends ChangeNotifier {
   int selectedEmote = -1;
   String status = 'Import a folder of sprites to begin.';
   bool busy = false;
+
+  // ---- Cancellable bulk jobs + numeric progress -----------------------------
+  // Long bulk bakes (animate/jiggle/mouth all, recolour/convert all, apply
+  // zoom/edit/paint) are **cooperatively cancellable**: they check [_cancelled]
+  // at each chunk / group boundary and stop cleanly. Work already written to the
+  // workspace stays — nothing is rolled back — so a cancel is the safety valve
+  // for a job heading toward an out-of-memory kill on a huge cast.
+  bool _cancelRequested = false;
+  int _progressDone = 0;
+  int _progressTotal = 0;
+
+  /// 0..1 progress of the running bulk job, or `null` when no measured job is in
+  /// flight (the UI then shows an indeterminate spinner). Drives the status-bar
+  /// progress bar.
+  double? get progress => _progressTotal > 0
+      ? (_progressDone / _progressTotal).clamp(0.0, 1.0)
+      : null;
+
+  /// True while a cancellable job is running and hasn't already been asked to
+  /// stop — gates the status-bar **Cancel** button.
+  bool get canCancel => busy && _progressTotal > 0 && !_cancelRequested;
+
+  /// Whether the user has asked the current job to stop.
+  bool get cancelRequested => _cancelRequested;
+
+  /// Ask the running bulk job to stop at the next chunk/group boundary. The job
+  /// finishes the in-flight batch (those isolates are already dispatched) and
+  /// then reports how far it got; nothing already saved is undone.
+  void requestCancel() {
+    if (!busy || _cancelRequested) return;
+    _cancelRequested = true;
+    status = 'Cancelling…';
+    notifyListeners();
+  }
+
+  /// Begin a measured, cancellable job: reset the cancel flag + seed the total
+  /// so [canCancel]/[progress] are live from the first frame.
+  void _beginProgress(int total) {
+    _cancelRequested = false;
+    _progressDone = 0;
+    _progressTotal = total;
+    notifyListeners();
+  }
+
+  /// Checked inside bulk loops; true once the user has hit Cancel.
+  bool get _cancelled => _cancelRequested;
 
   /// The live colour-op pipeline edited in the Colour Lab.
   final List<ColorOp> livePipeline = <ColorOp>[];
@@ -1132,8 +1179,11 @@ class AppState extends ChangeNotifier {
       if (g != null) groups.add(g);
     }
 
+    _beginProgress(groups.length);
     int edited = 0;
+    int doneGroups = 0;
     for (final SpriteGroup g in groups) {
+      if (_cancelled) break; // stop cleanly between sprite groups
       final List<SpriteFile> files =
           <SpriteFile?>[g.idle, g.talk, g.post, ...g.statics].whereType<SpriteFile>().toList();
       final Map<String, img.Image> decoded = <String, img.Image>{};
@@ -1142,7 +1192,10 @@ class AppState extends ChangeNotifier {
         final img.Image? im = Codecs.decode(await workspace.readBytes(f.relPath), ext: f.ext);
         if (im != null) decoded[f.relPath] = im;
       }
-      if (decoded.isEmpty) continue;
+      if (decoded.isEmpty) {
+        _progress(++doneGroups, groups.length, 'Edit');
+        continue;
+      }
 
       // Remove background first, then compute one shared crop rect.
       for (final img.Image im in decoded.values) {
@@ -1156,13 +1209,108 @@ class AppState extends ChangeNotifier {
         await _writeSpriteInPlace(e.key, out);
         edited++;
       }
+      _progress(++doneGroups, groups.length, 'Edit');
       // Keep the UI responsive between (heavy) sprite groups.
       await Future<void>.delayed(Duration.zero);
     }
     _invalidateImageCaches();
     scan = _scanner.fromPaths(await _projectFiles());
-    _setBusy(false, 'Edited $edited sprite file(s).');
+    _setBusy(false,
+        '${_cancelled ? 'Cancelled — edited' : 'Edited'} $edited sprite file(s).');
     return edited;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Zoom Studio — a normalized "camera" over the sprites (zoom in / out / pan).
+  // The live canvas transforms the sprite at the widget layer (instant, no
+  // re-bake); only [applyZoom] touches pixels. See imaging/sprite_zoom.dart.
+  // ---------------------------------------------------------------------------
+
+  /// The sprite groups a Zoom action targets: just the selected emote's, or the
+  /// whole cast. Mirrors [applyEdit]'s selection.
+  List<SpriteGroup> _zoomTargetGroups(bool allSprites) {
+    final List<SpriteGroup> groups = <SpriteGroup>[];
+    if (scan == null) return groups;
+    if (allSprites) {
+      groups.addAll(scan!.groups);
+    } else if (current != null) {
+      final SpriteGroup? g = scan!.groups
+          .firstWhereOrNull((SpriteGroup g) => g.base == current!.sprite);
+      if (g != null) groups.add(g);
+    }
+    return groups;
+  }
+
+  /// Bake the camera [spec] into the selected emote's sprite files, or every
+  /// sprite when [allSprites]. The same normalized transform hits every file
+  /// (every frame), so (a)/(b)/(c) and the whole cast stay aligned in-game.
+  /// Re-encodes in place via [_writeSpriteInPlace] (WebP stays lossless WebP,
+  /// APNG fallback). Returns the number of files changed.
+  Future<int> applyZoom(SpriteZoomSpec spec, {required bool allSprites}) async {
+    if (scan == null || spec.isNoop) return 0;
+    _setBusy(true, 'Zooming sprites…');
+    final List<SpriteGroup> groups = _zoomTargetGroups(allSprites);
+    _beginProgress(groups.length);
+    int edited = 0;
+    int doneGroups = 0;
+    for (final SpriteGroup g in groups) {
+      if (_cancelled) break; // stop cleanly between sprite groups
+      final List<SpriteFile> files = <SpriteFile?>[
+        g.idle,
+        g.talk,
+        g.post,
+        ...g.statics
+      ].whereType<SpriteFile>().toList();
+      for (final SpriteFile f in files) {
+        if (!await workspace.exists(f.relPath)) continue;
+        final img.Image? im =
+            Codecs.decode(await workspace.readBytes(f.relPath), ext: f.ext);
+        if (im == null) continue;
+        final img.Image out = SpriteZoom.apply(im, spec);
+        await _writeSpriteInPlace(f.relPath, out);
+        edited++;
+      }
+      _progress(++doneGroups, groups.length, 'Zoom');
+      // Keep the UI responsive between (heavy) sprite groups.
+      await Future<void>.delayed(Duration.zero);
+    }
+    _invalidateImageCaches();
+    scan = _scanner.fromPaths(await _projectFiles());
+    _setBusy(false,
+        '${_cancelled ? 'Cancelled — zoomed' : 'Zoomed'} $edited sprite file(s).');
+    return edited;
+  }
+
+  /// Auto-frame: decode the targeted sprites (frame 0 each) and compute ONE
+  /// camera that frames the **union** of their visible content, leaving a small
+  /// margin. Because it's a single transform derived from all targeted sprites,
+  /// applying it keeps the cast aligned. The Zoom Studio uses this only to
+  /// *seed* its sliders — it bakes nothing here. Returns null if there's no
+  /// content to frame.
+  Future<SpriteZoomSpec?> computeAutoFrame(
+      {required bool allSprites,
+      double coverage = ZoomLimits.autoFrameCoverage}) async {
+    if (scan == null) return null;
+    _setBusy(true, 'Finding the character…');
+    final List<SpriteGroup> groups = _zoomTargetGroups(allSprites);
+    final List<img.Image> images = <img.Image>[];
+    for (final SpriteGroup g in groups) {
+      final List<SpriteFile> files = <SpriteFile?>[
+        g.idle,
+        g.talk,
+        g.post,
+        ...g.statics
+      ].whereType<SpriteFile>().toList();
+      for (final SpriteFile f in files) {
+        if (!await workspace.exists(f.relPath)) continue;
+        final img.Image? im = await decodeFirstFrame(f.relPath);
+        if (im != null) images.add(im);
+      }
+      await Future<void>.delayed(Duration.zero);
+    }
+    _setBusy(false, images.isEmpty ? 'Nothing to frame.' : 'Auto-framed.');
+    if (images.isEmpty) return null;
+    return SpriteZoom.fitToContent(images, coverage: coverage);
   }
 
   /// Re-encode [image] and write it back over the sprite at [rel], preserving
@@ -1320,9 +1468,11 @@ class AppState extends ChangeNotifier {
           f.relPath,
     ];
 
+    _beginProgress(targets.length);
     int ok = 0;
     int done = 0;
     for (final String rel in targets) {
+      if (_cancelled) break; // stop cleanly between sprite files
       if (await workspace.exists(rel)) {
         final img.Image? im = Codecs.decode(await workspace.readBytes(rel),
             ext: p.extension(rel).replaceFirst('.', ''));
@@ -1343,10 +1493,13 @@ class AppState extends ChangeNotifier {
       _progress(++done, targets.length, 'Paint');
       await Future<void>.delayed(Duration.zero);
     }
-    paintOps.clear();
+    // Only discard the journal if we finished — a cancelled paint keeps the ops
+    // so the user can resume or adjust rather than losing their work.
+    if (!_cancelled) paintOps.clear();
     _invalidateImageCaches();
     scan = _scanner.fromPaths(await _projectFiles());
-    _setBusy(false, 'Painted $ok sprite file(s).');
+    _setBusy(false,
+        '${_cancelled ? 'Cancelled — painted' : 'Painted'} $ok sprite file(s).');
     return ok;
   }
 
@@ -1397,9 +1550,11 @@ class AppState extends ChangeNotifier {
           f.relPath,
     ];
 
+    _beginProgress(targets.length);
     int ok = 0;
     int done = 0;
     for (final String rel in targets) {
+      if (_cancelled) break; // stop cleanly between sprite files
       if (await workspace.exists(rel)) {
         final img.Image? im = Codecs.decode(await workspace.readBytes(rel),
             ext: p.extension(rel).replaceFirst('.', ''));
@@ -1418,7 +1573,8 @@ class AppState extends ChangeNotifier {
     _invalidateImageCaches();
     // Paths can shift on fallback (webp → apng), so refresh the scan.
     scan = _scanner.fromPaths(await _projectFiles());
-    _setBusy(false, 'Recoloured $ok sprite(s).');
+    _setBusy(false,
+        '${_cancelled ? 'Cancelled — recoloured' : 'Recoloured'} $ok sprite(s).');
     return ok;
   }
 
@@ -1629,6 +1785,7 @@ class AppState extends ChangeNotifier {
         targets.add(f.relPath);
       }
     }
+    _beginProgress(targets.length);
     final List<BulkResult> res = await BulkProcessor(workspace).run(
       files: targets,
       output: format,
@@ -1636,12 +1793,16 @@ class AppState extends ChangeNotifier {
       webpQuality: webpQuality,
       deleteOriginalOnConvert: deleteOriginal,
       onProgress: (int d, int t, String l) => _progress(d, t, 'Convert'),
+      shouldCancel: () => _cancelled,
     );
     _invalidateImageCaches();
     if (deleteOriginal) await _rebuild();
     final int ok = res.where((BulkResult r) => r.ok).length;
     final int fail = res.length - ok;
-    _setBusy(false, 'Converted $ok sprite(s)${fail > 0 ? ', $fail failed' : ''}.');
+    _setBusy(
+        false,
+        '${_cancelled ? 'Cancelled — converted' : 'Converted'} $ok sprite(s)'
+        '${fail > 0 ? ', $fail failed' : ''}.');
     return ok;
   }
 
@@ -1771,6 +1932,7 @@ class AppState extends ChangeNotifier {
       jobRels.add(rel);
     }
 
+    _beginProgress(jobRels.length);
     int ok = 0;
     int webp = 0;
     String? lastError;
@@ -1779,6 +1941,7 @@ class AppState extends ChangeNotifier {
     // on web / on error so the bake still completes; order preserved per chunk.
     final int chunk = _bulkChunk;
     for (int start = 0; start < jobRels.length; start += chunk) {
+      if (_cancelled) break; // stop cleanly at the chunk boundary
       final int end =
           start + chunk < jobRels.length ? start + chunk : jobRels.length;
       final List<SpriteGroup> chunkGroups = <SpriteGroup>[];
@@ -1843,7 +2006,7 @@ class AppState extends ChangeNotifier {
             ? '$ok sprite(s) as animated WebP'
             : '$ok sprite(s) — $webp WebP, ${ok - webp} APNG '
                 '(${lastError ?? 'native WebP unavailable'})';
-    _setBusy(false, 'Animated $note.');
+    _setBusy(false, '${_cancelled ? 'Cancelled — animated' : 'Animated'} $note.');
     return ok;
   }
 
@@ -1956,6 +2119,7 @@ class AppState extends ChangeNotifier {
       jobRels.add(rel);
     }
 
+    _beginProgress(jobRels.length);
     int ok = 0;
     // Render + write in **chunks**, freeing each batch before the next. Without
     // this a big cast held every source byte AND every encoded clip in RAM at
@@ -1963,6 +2127,7 @@ class AppState extends ChangeNotifier {
     // the batch; [maxConcurrency] caps in-flight renders (1 on mobile).
     final int chunk = _bulkChunk;
     for (int start = 0; start < jobRels.length; start += chunk) {
+      if (_cancelled) break; // stop cleanly at the chunk boundary
       final int end =
           start + chunk < jobRels.length ? start + chunk : jobRels.length;
       final List<SpriteGroup> chunkGroups = <SpriteGroup>[];
@@ -2022,10 +2187,12 @@ class AppState extends ChangeNotifier {
       await Future<void>.delayed(Duration.zero); // let the batch GC + UI breathe
     }
 
-    await logCrash('bulkJiggle finished: $ok sprite(s)');
+    await logCrash(
+        'bulkJiggle finished: $ok sprite(s)${_cancelled ? ' (cancelled)' : ''}');
     _invalidateImageCaches();
     scan = _scanner.fromPaths(await _projectFiles());
-    _setBusy(false, 'Jiggled $ok sprite(s).');
+    _setBusy(false,
+        '${_cancelled ? 'Cancelled — jiggled' : 'Jiggled'} $ok sprite(s).');
     return ok;
   }
 
@@ -2220,12 +2387,14 @@ class AppState extends ChangeNotifier {
       jobRels.add(rel);
     }
 
+    _beginProgress(jobRels.length);
     int ok = 0;
     int webp = 0;
     String? lastError;
     // Chunk it (see [bulkJiggleAll]) so a big cast doesn't OOM on mobile.
     final int chunk = _bulkChunk;
     for (int start = 0; start < jobRels.length; start += chunk) {
+      if (_cancelled) break; // stop cleanly at the chunk boundary
       final int end =
           start + chunk < jobRels.length ? start + chunk : jobRels.length;
       final List<SpriteGroup> chunkGroups = <SpriteGroup>[];
@@ -2280,7 +2449,10 @@ class AppState extends ChangeNotifier {
             ? '$ok sprite(s) as animated WebP'
             : '$ok sprite(s) — $webp WebP, ${ok - webp} APNG '
                 '(${lastError ?? 'native WebP unavailable'})';
-    _setBusy(false, 'Added talking mouths to $note.');
+    _setBusy(
+        false,
+        '${_cancelled ? 'Cancelled — added' : 'Added'} talking mouths to '
+        '$note.');
     return ok;
   }
 
@@ -2979,6 +3151,7 @@ class AppState extends ChangeNotifier {
       return 0;
     }
     _setBusy(true, 'Bulk-building ${chars.length} character(s)…');
+    _beginProgress(chars.length);
 
     final Organizer organizer = _studioOrganizer();
     final MemoryWorkspace out = MemoryWorkspace();
@@ -2987,6 +3160,7 @@ class AppState extends ChangeNotifier {
     int failed = 0; // sub-folders that threw while building
     String? lastError;
     for (final FolderCharacter fc in chars) {
+      if (_cancelled) break; // stop cleanly between characters
       // Each character is isolated: a bad sprite or a malformed sub-folder must
       // NOT abort the whole batch (the old code had no try/catch, so a single
       // odd folder silently killed every character + the .zip).
@@ -3033,10 +3207,12 @@ class AppState extends ChangeNotifier {
 
     if (built == 0) {
       // Be specific so an empty result is diagnosable, not a black box.
-      final String why = failed > 0
-          ? '$failed folder(s) failed to build (${lastError ?? 'unknown error'})'
-          : 'detected ${chars.length} folder(s) but none had sprites or a char.ini'
-              ' — make sure each character\'s sprites are *inside* its sub-folder';
+      final String why = _cancelled
+          ? 'cancelled before any character finished'
+          : failed > 0
+              ? '$failed folder(s) failed to build (${lastError ?? 'unknown error'})'
+              : 'detected ${chars.length} folder(s) but none had sprites or a char.ini'
+                  ' — make sure each character\'s sprites are *inside* its sub-folder';
       _setBusy(false, 'Bulk build produced nothing: $why.');
       return 0;
     }
@@ -3050,6 +3226,7 @@ class AppState extends ChangeNotifier {
     final String extra = <String>[
       if (skipped > 0) '$skipped skipped (empty)',
       if (failed > 0) '$failed failed',
+      if (_cancelled) 'cancelled',
     ].join(', ');
     _setBusy(
         false,
@@ -3132,10 +3309,19 @@ class AppState extends ChangeNotifier {
   void _setBusy(bool b, String msg) {
     busy = b;
     status = msg;
+    // A finished/failed job clears progress + the cancel flag so the status-bar
+    // bar + Cancel button disappear and the next job starts clean.
+    if (!b) {
+      _progressTotal = 0;
+      _progressDone = 0;
+      _cancelRequested = false;
+    }
     notifyListeners();
   }
 
   void _progress(int done, int total, String label) {
+    _progressDone = done;
+    _progressTotal = total;
     status = '$label  $done/$total';
     notifyListeners();
   }

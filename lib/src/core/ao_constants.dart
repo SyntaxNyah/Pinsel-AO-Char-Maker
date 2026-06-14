@@ -365,6 +365,37 @@ class CropLimits {
   static const double stepFraction = 0.01;
 }
 
+/// Limits + defaults for the **Zoom Studio** — a WYSIWYG "camera" over a sprite
+/// (zoom in to make a too-small character fill the AO viewport, or zoom out to
+/// add breathing room). The camera is normalized (zoom + 0..1 focus point), so
+/// the same transform applied to every sprite keeps the cast aligned in-game.
+class ZoomLimits {
+  const ZoomLimits._();
+
+  /// Smallest / largest camera zoom. < 1 zooms out (shrinks the character,
+  /// transparent margin appears); > 1 zooms in (crops to the focus and scales
+  /// up). 16× is plenty for even a tiny character on a big canvas.
+  static const double minZoom = 0.1;
+  static const double maxZoom = 16.0;
+
+  /// Default camera (whole sprite, centred, unchanged).
+  static const double defaultZoom = 1.0;
+  static const double defaultFocus = 0.5;
+
+  /// One mouse-wheel notch multiplies/divides the zoom by this.
+  static const double wheelStep = 1.12;
+
+  /// One `−` / `+` button or arrow-key nudge.
+  static const double zoomStep = 1.08;
+
+  /// How far an arrow-key tap pans the focus point (fraction of the sprite).
+  static const double focusStep = 0.02;
+
+  /// Auto-frame leaves this fraction of the canvas filled by the content's
+  /// bounding box (the rest is breathing room).
+  static const double autoFrameCoverage = 0.92;
+}
+
 /// Project identity + attribution. Kept here (pure Dart) so the exporter can
 /// stamp every character with credits without depending on the Flutter UI.
 /// **Keep in sync with `ui/credits.dart`** (`kAppName`/`kMaintainer`/`kRepoUrl`).

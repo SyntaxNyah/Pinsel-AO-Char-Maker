@@ -67,6 +67,16 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ✅ Crop, **grow**, **resize** (width/height — slider + −/+ + typeable px box,
   lock-aspect; `SpriteEditSpec.scaleX/scaleY` → `SpriteEdit.resize`), auto-trim &
   background removal (frame-aware; uniform across (a)/(b))
+- ✅ **Zoom Studio** (`imaging/sprite_zoom.dart` + Zoom screen, see
+  docs/ZOOM_STUDIO.md) — pull a too-small / zoomed-out character in so it fills
+  the AO viewport via a **normalized camera** (`SpriteZoomSpec`: zoom / focus /
+  output-scale). WYSIWYG canvas with **mouse-wheel zoom-to-cursor + drag pan**
+  (a widget-layer transform — instant, no re-bake), rule-of-thirds grid, a pose
+  strip, **Auto-frame** (`fitToContent` — frames the **union** of the cast's
+  content so poses stay aligned), and Apply to the whole cast (default) or one
+  sprite. Bakes into every frame + (a)/(b)/(c) losslessly (`applyZoom` →
+  `_writeSpriteInPlace`); reuses the frame-aware `SpriteEdit.cropTo`/`resize`
+  primitives. Tested in `test/sprite_zoom_test.dart`
 - ✅ Sprite compositor / mixer (snip + stack layers; head-on-body) with a
   two-folder workflow (load a 2nd character's folder to graft parts from),
   **multiple snips at once**, **mouse drag/scale/rotate**, and a **Layers mode**
@@ -162,6 +172,12 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ✅ **Mobile crash/lag fix** — bulk render concurrency capped to 2 on Android/iOS
   (`maxConcurrency`) so a big bulk job (e.g. ~500 sprites) doesn't OOM-kill the app
   or starve the UI on a phone/tablet.
+- ✅ **Cancellable bulk jobs + live progress** — every long bake (animate/jiggle/
+  mouth all, recolour/convert all, apply zoom/edit/paint, bulk-build characters)
+  is cooperatively cancellable (`requestCancel`/`_cancelled`, stops cleanly at the
+  next chunk/group boundary, nothing rolled back) with a 0..1 `progress` bar + a
+  **Cancel** button in the status bar — the safety valve for a job heading toward
+  an OOM kill on a huge cast. `BulkProcessor.run` takes a `shouldCancel` (tested).
 - ✅ **Ripper zoom** — `InteractiveViewer` pinch/wheel zoom + pan on the sheet
   canvas (pan off in Manual mode where drag draws boxes).
 - ✅ **Button/icon crop shapes (engine)** — `imaging/crop_shape.dart`: circle /

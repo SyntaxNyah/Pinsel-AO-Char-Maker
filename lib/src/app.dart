@@ -18,6 +18,7 @@ import 'ui/screens/paint_studio_screen.dart';
 import 'ui/screens/plugins_screen.dart';
 import 'ui/screens/sprite_ripper_screen.dart';
 import 'ui/screens/theme_maker_screen.dart';
+import 'ui/screens/zoom_studio_screen.dart';
 import 'ui/theme.dart';
 import 'ui/widgets/confirm_replace.dart';
 import 'ui/widgets/key_capture.dart';
@@ -51,6 +52,7 @@ const List<({IconData icon, String label})> _dests =
   (icon: Icons.grid_on_rounded, label: 'Ripper'),
   (icon: Icons.brush_rounded, label: 'Theme'),
   (icon: Icons.format_paint_rounded, label: 'Paint'),
+  (icon: Icons.zoom_in_rounded, label: 'Zoom'),
 ];
 
 /// Screens that work without a loaded character: Home, Plugins, the Sprite
@@ -102,6 +104,8 @@ class _HomeShellState extends State<HomeShell> {
         return const ThemeMakerScreen();
       case 12:
         return const PaintStudioScreen();
+      case 13:
+        return const ZoomStudioScreen();
       case 0:
       default:
         return const HomeScreen();
@@ -571,36 +575,68 @@ class _StatusBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: PinselTheme.surface,
-      child: SizedBox(
-        height: 30,
-        child: Consumer<AppState>(
-          builder: (BuildContext context, AppState app, _) => Row(
+      child: Consumer<AppState>(
+        builder: (BuildContext context, AppState app, _) {
+          final double? progress = app.progress;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              const SizedBox(width: 12),
+              // A thin per-job progress bar: determinate when the job reports a
+              // count, otherwise an indeterminate sweep while busy.
               if (app.busy)
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                LinearProgressIndicator(
+                  minHeight: 2,
+                  value: progress,
                 ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  app.status,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12),
+              SizedBox(
+                height: 30,
+                child: Row(
+                  children: <Widget>[
+                    const SizedBox(width: 12),
+                    if (app.busy)
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        progress != null
+                            ? '${app.status}  ·  ${(progress * 100).round()}%'
+                            : app.status,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                    // Cancel a long bulk job mid-run (stops at the next
+                    // chunk/group boundary; nothing already saved is undone).
+                    if (app.canCancel)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: TextButton.icon(
+                          onPressed: app.requestCancel,
+                          icon: const Icon(Icons.stop_circle_outlined, size: 16),
+                          label: const Text('Cancel'),
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            foregroundColor: Colors.redAccent,
+                          ),
+                        ),
+                      ),
+                    if (app.character != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Text('${app.character!.emotes.length} emotes',
+                            style: const TextStyle(fontSize: 12)),
+                      ),
+                  ],
                 ),
               ),
-              if (app.character != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Text('${app.character!.emotes.length} emotes',
-                      style: const TextStyle(fontSize: 12)),
-                ),
             ],
-          ),
-        ),
+          );
+        },
       ),
     );
   }

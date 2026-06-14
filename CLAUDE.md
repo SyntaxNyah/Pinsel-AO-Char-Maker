@@ -66,7 +66,8 @@ lib/src/
   discovery/   folder → character (scanner, builder, organizer, bulk rename,
                bulk folders → many characters)
   imaging/     codecs, colour ops, region edit, sprite edit (crop/trim/bg),
-               compositor, buttons, bulk, webp, sprite sheet ripper,
+               **sprite zoom (normalized camera)**, compositor, buttons, bulk,
+               webp, sprite sheet ripper,
                **paint (gradients / brushes / blend modes)**
   animation/   clip, easing, recipe engine, keyframe timeline, lipsync, jiggle
   theme/       **AO2 client theme model + defaults catalogue + randomizer**
@@ -113,6 +114,9 @@ Constants + enums. Key items:
 - `kAudioExtensions` (opus/ogg/wav/mp3) — feeds the Emotes-tab **sound picker**.
 - `CropLimits` — `maxCropFraction`=0.45, `maxPadFraction`=0.5, `stepFraction`=0.01
   for the Edit screen's bidirectional crop/grow sliders + their −/+ steppers.
+- `ZoomLimits` — `minZoom`=0.1, `maxZoom`=16, `defaultZoom`=1, `defaultFocus`=0.5,
+  `wheelStep`=1.12, `zoomStep`=1.08, `focusStep`=0.02, `autoFrameCoverage`=0.92
+  for the **Zoom Studio**'s normalized camera (wheel/keys/auto-frame).
 
 ### core/ao_ini.dart
 Low-level tolerant INI.
@@ -348,6 +352,26 @@ small preview == the full-res + every-frame bake), mirroring `OpPipeline`/
   frames and across an emote's (a)/(b)/(c) so animations/idle-talk stay aligned.
   See `test/sprite_edit_test.dart`.
 
+### imaging/sprite_zoom.dart  ← normalized "camera" zoom (see docs/ZOOM_STUDIO.md)
+The engine behind the **Zoom Studio** — pull a too-small/zoomed-out character in
+so it fills the AO viewport. A **normalized camera**, so the same transform on
+every sprite keeps the cast aligned in-game.
+- `class SpriteZoomSpec({zoom, focusX, focusY, outputScale})` — `zoom` >1 zooms
+  in / <1 out; `focusX/Y` (0..1) is the point that lands in the centre;
+  `outputScale` multiplies the **output** px dims (1.0 = keep AO size; 2.0 bakes
+  at 2× for HD themes). `.isNoop` (zoom==1 && outputScale==1 — focus is
+  irrelevant then), `.copyWith` (clamps), `.toJson/fromJson`.
+- `class SpriteZoom` — `cameraRect(w,h,spec)`→`IntRect` (the source region the
+  camera sees; **may be negative/oversize** when zoomed out, like a grow box),
+  **`apply(image,spec)`** = `SpriteEdit.cropTo(cameraRect)` → `SpriteEdit.resize`
+  back to the original size × `outputScale` (frame-aware, preserves frame count +
+  durations; reuses the tested Edit primitives rather than a new resampler),
+  **`fitToContent(images, {coverage})`**→`SpriteZoomSpec` = auto-frame from the
+  **union** of every image's non-transparent content (one shared transform so
+  the cast stays aligned — *not* per-sprite), **only ever zooms in** (lower bound
+  1.0; full/blank content → identity). Pure Dart, tested in
+  `test/sprite_zoom_test.dart`. Driven by `AppState.applyZoom`/`computeAutoFrame`.
+
 ### imaging/sprite_sheet.dart  ← rip a sheet into sprites
 - `enum SheetMode { auto, grid }`; `class SheetCell(rect,{enabled,name})`.
 - `class GridSpec({cols,rows,offsetX,offsetY,gutterX,gutterY,cellW,cellH})` (0
@@ -451,8 +475,11 @@ small preview == the full-res + every-frame bake), mirroring `OpPipeline`/
 - `enum OutputFormat { keep, png, apng, gif, webp }`.
 - `class BulkResult(sourceRel,{ok,outRel,error})`.
 - `class BulkProcessor(workspace)` — `.run({files,pipeline,output,webpLossless,
-  webpQuality,inPlace,nameSuffix,deleteOriginalOnConvert,onProgress})`. WebP
-  output uses `encodeAnimation` for multi-frame images.
+  webpQuality,inPlace,nameSuffix,deleteOriginalOnConvert,onProgress,
+  **shouldCancel**})`. WebP output uses `encodeAnimation` for multi-frame images.
+  **`shouldCancel`** (a `bool Function()?`) is checked **before each file** so a
+  long convert stops cleanly between files (nothing already written is rolled
+  back) — `AppState.bulkConvert` passes `() => _cancelled`.
 
 ### imaging/webp_codec.dart (+ _io / _web)
 - `class WebpResult.ok(bytes)` / `.fail(reason)`.
@@ -750,6 +777,21 @@ small preview == the full-res + every-frame bake), mirroring `OpPipeline`/
     (`min(cores,8)`, or 1). `bulkAnimateAll`/`bulkMouthTalkAll` fan out via
     `mapParallel` (one `compute` per in-flight sprite). `liveColorMatrix(pipeline)`
     → GPU `ColorFilter` for the Colour Lab. See docs/PERFORMANCE.md.
+  - **Cancellable bulk jobs + progress**: every long bake (`bulkAnimateAll`/
+    `bulkJiggleAll`/`bulkMouthTalkAll`/`bulkConvert`/`bulkBuildCharacters`,
+    `applyPipeline`/`applyPaint`/`applyEdit`/`applyZoom`) is **cooperatively
+    cancellable**. Each calls **`_beginProgress(total)`** (resets the cancel flag,
+    seeds the count) and checks **`_cancelled`** at the chunk/group/file boundary
+    (`if (_cancelled) break;`) — work already written to the workspace stays
+    (nothing rolled back), so Cancel is the safety valve for a job heading toward
+    an OOM kill. UI: **`requestCancel()`**, **`canCancel`** (busy + measured +
+    not already cancelling), **`progress`** (0..1 or null), `cancelRequested`;
+    `_progress`/`_setBusy` keep them in sync (a finished job clears them). The
+    `_StatusBar` (app.dart) shows a thin `LinearProgressIndicator(value: progress)`
+    + a **Cancel** button when `canCancel`. (Cancelled `applyPaint` keeps its
+    journal so you can resume.) Note: cancel lands at the **next chunk boundary**,
+    so on desktop (`_bulkChunk`=100) the current batch finishes first; mobile
+    (16) is snappier.
   - **Fresh import / reset / multi-delete**: `importFiles({projectName})` now
     **clears the workspace first** (`_clearWorkspaceFiles`) so a second import
     doesn't accumulate the previous character's sprites (the "Ebina emotes
@@ -779,6 +821,15 @@ small preview == the full-res + every-frame bake), mirroring `OpPipeline`/
     `_writeSpriteInPlace`, lossless; clears the journal), `pickColorAt(nx,ny)`
     (eyedropper), and persisted `userGradients`/`saveGradient`/`deleteGradient`.
     `paintOps` cleared on reset/import.
+  - **Zoom Studio** (see docs/ZOOM_STUDIO.md + `imaging/sprite_zoom.dart`): a
+    normalized "camera" to pull a too-small character in so it fills the AO
+    viewport. **`applyZoom(spec, {allSprites})`** bakes a `SpriteZoomSpec` into
+    every frame + every (a)/(b)/(c) (mirrors `applyEdit`; `_writeSpriteInPlace`,
+    lossless), **`computeAutoFrame({allSprites, coverage})`** decodes the targeted
+    sprites (frame 0) and returns ONE camera framing the **union** of their
+    content (so the cast stays aligned — only seeds the UI sliders, bakes
+    nothing). The live canvas is a **widget-layer transform** of the plain sprite
+    (instant wheel/drag, no re-bake) — pixels only change on `applyZoom`.
   - **Frame-by-frame**: `spriteFiles()` lists project frames; `renderFrameSequence`
     (preview) / `saveFrameSequence(rels,{fps,reverse,pingPong,align,prefix,name})`
     assemble chosen sprites into ONE animation (normalise to a shared canvas →
@@ -874,7 +925,8 @@ small preview == the full-res + every-frame bake), mirroring `OpPipeline`/
 - `screens/` — home, **ini_builder** (the `[Options]`/char.ini editor), editor,
   color_lab, animation_studio, button_studio, edit, mixer, bulk, plugins,
   **sprite_ripper** (sheet → sprites), **theme_maker** (AO2 theme editor),
-  **paint_studio** (gradient/brush/region painting).
+  **paint_studio** (gradient/brush/region painting), **zoom_studio**
+  (camera zoom / framing).
   `widgets/` — `CheckerImage` (**perf**: the transparency checker is **one**
   GPU-tiled rect — a cached 2×2 `ui.Image` tile via `ImageShader` — NOT a
   `drawRect` per cell, and the whole thing is `RepaintBoundary`-wrapped, so a big
@@ -1126,6 +1178,17 @@ small preview == the full-res + every-frame bake), mirroring `OpPipeline`/
     `AppState.paintOps` entry (per-op **Undo**/**Clear**); **nothing touches the
     sprite until Apply** (`applyPaint` bakes the journal into every frame,
     lossless, then clears it). Non-destructive, project-gated nav screen.
+  - `zoom_studio`: **Zoom Studio** — a WYSIWYG camera over the sprite to pull a
+    too-small character in. A big canvas (`_ZoomStage`) shows exactly what AO
+    renders via a **widget-layer transform** (no re-bake): **mouse-wheel zooms
+    toward the cursor**, **drag pans**, with a rule-of-thirds grid overlay
+    (`_GridPainter`), a floating zoom bar, and a bottom **`_SpriteStrip`** of all
+    poses to pick from. Sidebar: zoom slider + typeable `_ZoomField` + quick
+    `1/1.5/2/3/4×`, **Auto-frame** (`computeAutoFrame`), a focus D-pad, export
+    resolution (½/1/2×), and an Apply target (**Whole cast** default → aligned,
+    or **This sprite**). Bare-key shortcuts on the focused canvas (wheel `±`,
+    arrows recenter, R/0 reset, G grid, F auto-frame). Project-gated (it edits
+    sprites — appended at nav index 13, **not** in `_projectFreeIndices`).
 - `app.dart` (`HomeShell`) hosts a global `CallbackShortcuts` map (undo/redo,
   import, export `.zip` `Ctrl/⌘+S`, **save-as-folder `Ctrl/⌘+Shift+S` →
   `exportFolder`**, export `char.ini` `Ctrl/⌘+E`, add emote, prev/next emote,
@@ -1140,11 +1203,11 @@ small preview == the full-res + every-frame bake), mirroring `OpPipeline`/
   and per Theme-Maker nudge direction, each via the shared `captureKey`; rebinds
   persist (see `settings_store`). Reset buttons restore the plain defaults. The nav
   now has a **Character** destination at index 1 (the ini builder), plus
-  **Ripper** and **Theme** (project-independent) then **Paint** (project-gated)
-  at the end. The no-project guard uses the `_projectFreeIndices` set (`{Home,
-  Plugins, Ripper, Theme}` — note **Paint is *not* in it**, so it's gated like the
-  other editors) instead of a hard-coded index, so adding destinations won't
-  silently break it.
+  **Ripper** and **Theme** (project-independent) then **Paint** and **Zoom**
+  (project-gated) at the end. The no-project guard uses the `_projectFreeIndices`
+  set (`{Home, Plugins, Ripper, Theme}` — note **Paint and Zoom are *not* in
+  it**, so they're gated like the other editors) instead of a hard-coded index,
+  so adding destinations won't silently break it.
   Document new keys in `docs/SHORTCUTS.md`.
 
 ---
