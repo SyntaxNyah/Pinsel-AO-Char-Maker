@@ -30,6 +30,7 @@ class _EditScreenState extends State<EditScreen> {
   double _l = 0, _t = 0, _r = 0, _b = 0;
   bool _autoTrim = false;
   bool _removeBg = false;
+  bool _despill = false;
   double _tol = 40;
 
   /// Resize: per-axis scale factors (1.0 = unchanged), whether width/height are
@@ -59,6 +60,7 @@ class _EditScreenState extends State<EditScreen> {
         padBottom: _pad(_b),
         autoTrim: _autoTrim,
         removeBgCorners: _removeBg,
+        despillEdges: _removeBg && _despill,
         bgTolerance: _tol,
         scaleX: _scaleX,
         scaleY: _scaleY,
@@ -108,6 +110,7 @@ class _EditScreenState extends State<EditScreen> {
       _l = _t = _r = _b = 0;
       _autoTrim = false;
       _removeBg = false;
+      _despill = false;
       _scaleX = 1.0;
       _scaleY = 1.0;
     });
@@ -196,6 +199,19 @@ class _EditScreenState extends State<EditScreen> {
         if (_removeBg)
           _simpleSlider('BG tolerance', _tol, 0, 120,
               (double v) => _tol = v, label: _tol.round().toString()),
+        if (_removeBg)
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Despill soft edges'),
+            subtitle: const Text(
+                'un-tint hair/edge pixels so they keep no background halo'),
+            value: _despill,
+            onChanged: (bool v) {
+              setState(() => _despill = v);
+              _schedule();
+            },
+          ),
         const Divider(height: 24),
         Text('Crop / grow each side', style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 2),

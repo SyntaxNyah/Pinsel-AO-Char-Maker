@@ -20,6 +20,7 @@ class SpriteEditSpec {
     this.padBottom = 0,
     this.autoTrim = false,
     this.removeBgCorners = false,
+    this.despillEdges = false,
     this.eraseColorEnabled = false,
     this.eraseColorValue = 0xFFFFFFFF,
     this.bgTolerance = 40,
@@ -49,6 +50,12 @@ class SpriteEditSpec {
 
   /// Flood-fill the background from the corners and make it transparent.
   final bool removeBgCorners;
+
+  /// After [removeBgCorners], **despill** the soft edge fringe — recover the true
+  /// foreground colour on semi-transparent hair/edge pixels so they don't keep a
+  /// coloured halo of the removed background (see
+  /// [RegionEditor.despillBackground]). Only meaningful with [removeBgCorners].
+  final bool despillEdges;
 
   /// Knock out a specific colour anywhere in the image.
   final bool eraseColorEnabled;
@@ -143,7 +150,11 @@ class SpriteEdit {
     for (final img.Image f
         in image.frames.isEmpty ? <img.Image>[image] : image.frames) {
       if (spec.removeBgCorners) {
-        RegionEditor.removeBackgroundFromCorners(f, tolerance: spec.bgTolerance);
+        RegionEditor.removeBackgroundFromCorners(f,
+            tolerance: spec.bgTolerance,
+            // A slightly wider feather gives despill a soft band to clean.
+            feather: spec.despillEdges ? 2 : 1,
+            despill: spec.despillEdges);
       }
       if (spec.eraseColorEnabled) {
         RegionEditor.eraseColor(f, spec.eraseColorValue, tolerance: spec.bgTolerance);

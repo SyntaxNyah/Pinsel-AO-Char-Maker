@@ -73,7 +73,8 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
   region, or paint a fill.
 - **Crop, auto-trim & background removal** — crop sprites (uniform across all
   frames + (a)/(b)), trim transparent margins, or knock out a flat background by
-  flood-filling from the corners.
+  flood-filling from the corners — with an optional **despill** that un-tints the
+  soft hair/edge fringe so it keeps no coloured halo of the old background.
 - **Zoom Studio** — is a character drawn tiny in a big empty frame so it looks
   lost in-game? Pull it in with a **virtual camera**: **mouse-wheel to zoom,
   drag to pan** on a WYSIWYG canvas that shows exactly what AO will render, or hit

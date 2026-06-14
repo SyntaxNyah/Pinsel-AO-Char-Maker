@@ -170,6 +170,14 @@ from the code, not measured — treat the impact ratings as estimates.
 
 ### ✅ Done this session
 
+- **Bounded (LRU) decode/preview/thumbnail caches.** `_decodeCache`,
+  `_buttonSrcCache`, `_previewCache` and `_thumbCache` were unbounded `Map`s — a
+  big cast filled them with full decoded frames until the OS OOM-killed the app.
+  Each is now a capacity-bounded `LruCache` (`core/lru_cache.dart`; decode 32 /
+  buttonSrc 48 / preview 96 / thumb 256), so resident memory has a hard ceiling
+  (a cold key just re-decodes). Consumers treat cached frames read-only, so
+  eviction is safe. Tested in `test/lru_cache_test.dart`. **Impact: high** for
+  memory stability on big casts; **effort: low-medium.**
 - **No `pow`/`sqrt` in per-pixel colour-distance loops.** `math.pow(x, 2)` goes
   through the general power function (log/exp) and is far slower than `x*x`, and
   where the distance only feeds a threshold the `sqrt` is needless (compare
@@ -205,12 +213,20 @@ from the code, not measured — treat the impact ratings as estimates.
   `mapParallel` + `compute` (`ButtonMaker.renderFramed` is pure → isolate-safe),
   and **dedupe the decode** when several emotes share one sprite. **Impact: high**
   on exporting a big cast; **effort: medium.**
-- **Bound the decode/preview caches (memory ceiling).** `_decodeCache`,
-  `_buttonSrcCache`, `_previewCache`, `_thumbCache` and `_headSquareCache` are
-  **unbounded** `Map`s — browsing a 200+ cast fills them with full decoded frames
-  and grows memory until the OS kills the app. *Fix:* a small **LRU cap** per
-  cache (a miss just re-decodes). **Impact: high** for memory stability on big
-  casts; **effort: low-medium.** *(This is the agreed next stability chunk.)*
+- **True isolate pool for bakes (vs `compute`-per-sprite).** The bulk bakes
+  already run off the UI isolate (`compute` spawns one short-lived isolate per
+  in-flight sprite) and stream to disk in chunks, so the OOM ceiling is mostly
+  addressed by the chunking + the bounded caches (now done). A *persistent*
+  isolate pool would cut the per-call spawn overhead, but the win is marginal next
+  to the memory work and the risk (sendable-payload + lifecycle bugs) is high — so
+  it's the **last** item, after the cheaper wins land and a profiler can prove it.
+  **Effort: high.**
+- **On-disk thumbnail cache.** The in-memory caches already avoid re-decoding
+  *across screens within a session* (they live on `AppState`), and they're now
+  memory-bounded. A persistent on-disk cache would additionally survive an app
+  restart and free RAM — but it needs a platform seam (no filesystem on the web →
+  IndexedDB) and content-hash keying/invalidation. Lower priority than the
+  in-session wins above. **Effort: medium.**
 
 ### 🟡 Medium
 

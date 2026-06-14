@@ -48,6 +48,42 @@ void main() {
     });
   });
 
+  group('despillBackground (un-mix the edge fringe)', () {
+    test('recovers the foreground colour on a 50% over-white edge pixel', () {
+      // A red (255,0,0) hair edge that the source blended 50% over white bg
+      // reads as (255,128,128) @ alpha 128. Un-mixing white should give ~red.
+      final img.Image im = _row(<List<int>>[
+        <int>[255, 128, 128, 128],
+      ]);
+      RegionEditor.despillBackground(im, 0xFFFFFFFF); // white bg
+      final img.Pixel p = im.getPixel(0, 0);
+      expect(p.r, 255);
+      expect(p.g, lessThanOrEqualTo(5)); // ~0
+      expect(p.b, lessThanOrEqualTo(5));
+      expect(p.a, 128); // alpha is untouched
+    });
+
+    test('leaves fully-opaque and fully-transparent pixels untouched', () {
+      final img.Image im = _row(<List<int>>[
+        <int>[100, 50, 50, 255], // solid
+        <int>[10, 20, 30, 0], // transparent
+      ]);
+      RegionEditor.despillBackground(im, 0xFF00FF00); // green bg
+      expect(im.getPixel(0, 0).r, 100);
+      expect(im.getPixel(0, 0).g, 50);
+      expect(im.getPixel(0, 0).b, 50);
+      expect(im.getPixel(1, 0).a, 0);
+    });
+
+    test('strength 0 is a no-op', () {
+      final img.Image im = _row(<List<int>>[
+        <int>[255, 128, 128, 128],
+      ]);
+      RegionEditor.despillBackground(im, 0xFFFFFFFF, strength: 0);
+      expect(im.getPixel(0, 0).g, 128); // unchanged
+    });
+  });
+
   group('selectByColor (squared-distance flood fill)', () {
     test('contiguous wand selects the connected blob only', () {
       final img.Image im = _row(<List<int>>[

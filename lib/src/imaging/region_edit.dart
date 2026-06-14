@@ -224,22 +224,42 @@ class RegionEditor {
 
   /// Remove a (roughly solid) background by flood-filling inward from all four
   /// corners and erasing the matched region. Great for sprites on a flat colour.
+  ///
+  /// When [despill] is set, the edge fringe is **un-tinted** afterwards (see
+  /// [despillBackground]) using the averaged corner colour — so soft hair/edge
+  /// pixels don't keep a coloured halo of the removed background. A wider
+  /// [feather] gives the despill a softer band to clean.
   static void removeBackgroundFromCorners(img.Image image,
-      {double tolerance = 40, int feather = 1}) {
+      {double tolerance = 40, int feather = 1, bool despill = false}) {
     final int w = image.width, h = image.height;
     if (w == 0 || h == 0) return;
-    SelectionMask mask = SelectionMask(w, h);
-    for (final List<int> c in <List<int>>[
+    final List<List<int>> corners = <List<int>>[
       <int>[0, 0],
       <int>[w - 1, 0],
       <int>[0, h - 1],
       <int>[w - 1, h - 1],
-    ]) {
+    ];
+    // Average the corners up front (before we erase them) as the background
+    // colour to un-mix during despill.
+    int sr = 0, sg = 0, sb = 0;
+    for (final List<int> c in corners) {
+      final img.Pixel p = image.getPixel(c[0], c[1]);
+      sr += p.r.toInt();
+      sg += p.g.toInt();
+      sb += p.b.toInt();
+    }
+    final int bgArgb = (0xFF << 24) |
+        ((sr ~/ 4) << 16) |
+        ((sg ~/ 4) << 8) |
+        (sb ~/ 4);
+    SelectionMask mask = SelectionMask(w, h);
+    for (final List<int> c in corners) {
       final SelectionMask m = selectByColor(image, c[0], c[1],
           tolerance: tolerance, contiguous: true);
       mask = mask.combine(m, _MaskCombine.union);
     }
     erase(image, feather > 0 ? RegionEditor.feather(mask, radius: feather) : mask);
+    if (despill) despillBackground(image, bgArgb);
   }
 
   /// Make every pixel within [tolerance] of [argb] transparent (e.g. knock out
@@ -253,6 +273,41 @@ class RegionEditor {
       if (dr * dr + dg * dg + db * db <= tolSq) {
         p.a = 0;
       }
+    }
+  }
+
+  /// **Despill** soft edges: recover the true foreground colour on
+  /// semi-transparent pixels by *un-mixing* the background colour they bled into.
+  ///
+  /// A feathered background cut leaves hair/edge pixels partly transparent but
+  /// still tinted by the old background (a coloured "halo"/fringe). A pixel's
+  /// observed colour is the matte equation `observed = a·fg + (1-a)·bg`, so the
+  /// real foreground is `fg = (observed - (1-a)·bg) / a`. We solve that per soft
+  /// pixel and blend toward it by [strength]. Fully-opaque (`a==255`) and fully-
+  /// transparent (`a==0`) pixels are untouched (the formula is a no-op / skipped),
+  /// so this is safe to run over a whole frame. This is the cheap, deterministic
+  /// alternative to a full alpha-matting solver — it cleans the fringe without
+  /// per-target solving and is identical on every platform.
+  static void despillBackground(img.Image image, int bgArgb,
+      {double strength = 1.0}) {
+    final int br = (bgArgb >> 16) & 0xFF;
+    final int bg = (bgArgb >> 8) & 0xFF;
+    final int bb = bgArgb & 0xFF;
+    final double s = strength.clamp(0.0, 1.0);
+    if (s <= 0) return;
+    for (final img.Pixel p in image) {
+      final int a = p.a.toInt();
+      if (a == 0 || a >= 255) continue; // only the soft edge band
+      final double af = a / 255.0;
+      final double inv = (1 - af) / af;
+      // Un-mix: fg = observed/af - (1-af)/af · bg.
+      final double nr = p.r / af - inv * br;
+      final double ng = p.g / af - inv * bg;
+      final double nb = p.b / af - inv * bb;
+      p
+        ..r = (p.r + (nr - p.r) * s).round().clamp(0, 255)
+        ..g = (p.g + (ng - p.g) * s).round().clamp(0, 255)
+        ..b = (p.b + (nb - p.b) * s).round().clamp(0, 255);
     }
   }
 

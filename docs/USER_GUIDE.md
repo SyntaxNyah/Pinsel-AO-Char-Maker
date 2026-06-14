@@ -510,6 +510,11 @@ Open the **Edit** tab (pick an emote first).
 - **Remove background** — flood-fills from the four corners and makes a flat/near-
   flat background transparent. Use the **BG tolerance** slider if it removes too
   little or too much.
+  - **Despill soft edges** (toggle, appears under Remove background) — after the
+    cut, **un-tints** the semi-transparent hair/edge pixels so they don't keep a
+    coloured halo of the old background. Turn it on for soft-edged art (hair,
+    fur, feathered outlines) on a coloured background; it's a quick, automatic
+    clean-up, not a full green-screen matte.
 - **Crop *or* grow each side** — each of **Left / Top / Right / Bottom** is one
   **bidirectional** slider: **drag right to crop** that edge inward, **drag left
   to grow** the canvas outward (adding transparent margin — handy for giving a

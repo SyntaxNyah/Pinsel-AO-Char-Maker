@@ -67,6 +67,12 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ✅ Crop, **grow**, **resize** (width/height — slider + −/+ + typeable px box,
   lock-aspect; `SpriteEditSpec.scaleX/scaleY` → `SpriteEdit.resize`), auto-trim &
   background removal (frame-aware; uniform across (a)/(b))
+- ✅ **Despill soft edges** (`RegionEditor.despillBackground`) — after a feathered
+  background removal, un-mix the background colour out of the semi-transparent
+  hair/edge fringe (`fg = (observed − (1−a)·bg)/a`) so soft edges keep no coloured
+  halo. Opt-in "Despill soft edges" toggle on the Edit screen
+  (`SpriteEditSpec.despillEdges`); a cheap, deterministic alternative to a full
+  alpha-matting solver. Tested (`test/region_edit_test.dart`)
 - ✅ **Zoom Studio** (`imaging/sprite_zoom.dart` + Zoom screen, see
   docs/ZOOM_STUDIO.md) — pull a too-small / zoomed-out character in so it fills
   the AO viewport via a **normalized camera** (`SpriteZoomSpec`: zoom / focus /
@@ -179,6 +185,14 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   next chunk/group boundary, nothing rolled back) with a 0..1 `progress` bar + a
   **Cancel** button in the status bar — the safety valve for a job heading toward
   an OOM kill on a huge cast. `BulkProcessor.run` takes a `shouldCancel` (tested).
+- ✅ **Memory ceiling: bounded (LRU) image caches** — the decode / button-source /
+  preview / thumbnail caches are now capacity-bounded (`core/lru_cache.dart`),
+  so browsing a 200+ cast can't grow resident memory without bound (the OOM
+  cause). A cold key just re-decodes. Tested (`test/lru_cache_test.dart`)
+- ✅ **Per-pixel speed-ups** — dropped `math.pow`/`sqrt` from the colour-distance
+  hot loops (magic-wand, colour-erase, replace-colour, vignette); see
+  docs/PERFORMANCE.md → "Audit" for the tracked remaining wins (O(1) sprite
+  lookup, off-isolate apply-to-all bakes, parallel export buttons, op fusion)
 - ✅ **Ripper zoom** — `InteractiveViewer` pinch/wheel zoom + pan on the sheet
   canvas (pan off in Manual mode where drag draws boxes).
 - ✅ **Button/icon crop shapes (engine)** — `imaging/crop_shape.dart`: circle /

@@ -14,6 +14,7 @@ import '../core/ao_constants.dart';
 import '../core/character.dart';
 import '../core/emote.dart';
 import '../core/history.dart';
+import '../core/lru_cache.dart';
 import '../core/validator.dart';
 import '../discovery/bulk_folders.dart';
 import '../discovery/bulk_rename.dart';
@@ -175,20 +176,30 @@ class AppState extends ChangeNotifier {
   /// The live colour-op pipeline edited in the Colour Lab.
   final List<ColorOp> livePipeline = <ColorOp>[];
 
-  /// Decoded first-frame cache (rel -> image) to keep previews snappy.
-  final Map<String, img.Image?> _decodeCache = <String, img.Image?>{};
+  // The image caches are **capacity-bounded** ([LruCache]) so browsing a big
+  // cast (hundreds of sprites) can't grow resident memory without bound and
+  // OOM-kill the app — the cost is a re-decode on a cold key. Full-res frames
+  // are the heaviest, so the decode cache is the tightest; the tiny rendered
+  // thumbnails can afford a generous cap for smooth scroll-back.
+
+  /// Decoded first-frame cache (rel -> image) to keep previews snappy. Full-res,
+  /// so the smallest cap.
+  final LruCache<String, img.Image?> _decodeCache =
+      LruCache<String, img.Image?>(32);
 
   /// A **downscaled** (≤640px) first-frame cache used only for rendering the
   /// on-screen button **previews + list thumbnails** — cropping/resizing a small
   /// image instead of a full-res sprite makes a manual-crop drag commit + the
   /// 100+ list thumbnails an order of magnitude cheaper. The export path decodes
   /// full-res separately, so output quality is unaffected.
-  final Map<String, img.Image?> _buttonSrcCache = <String, img.Image?>{};
+  final LruCache<String, img.Image?> _buttonSrcCache =
+      LruCache<String, img.Image?>(48);
 
   /// Encoded plain-sprite preview cache (`rel@maxEdge` -> PNG). Lets the Emotes
   /// screen show a sprite without re-decoding/re-encoding on every rebuild — so
   /// typing in a field never re-bakes the preview.
-  final Map<String, Uint8List?> _previewCache = <String, Uint8List?>{};
+  final LruCache<String, Uint8List?> _previewCache =
+      LruCache<String, Uint8List?>(96);
 
   /// Memoised auto head-square (per sprite `rel`, as resolution-independent
   /// fractions). The silhouette scan is a per-pixel hotspot during rapid framing
@@ -1623,9 +1634,11 @@ class AppState extends ChangeNotifier {
   /// recycles rows, so without this each thumbnail re-decodes + re-renders the
   /// framed button every time it scrolls back into view. With it, a re-appearing
   /// row is an instant cache hit; a row only actually renders when ITS framing
-  /// inputs change ([buttonThumbKey] mismatches). One entry per sprite (bounded).
-  final Map<String, ({int key, Uint8List bytes})> _thumbCache =
-      <String, ({int key, Uint8List bytes})>{};
+  /// inputs change ([buttonThumbKey] mismatches). LRU-bounded — the rendered
+  /// thumbnails are tiny (~96px PNG ≈ a few KB), so a generous cap keeps a large
+  /// cast scrolling smoothly without unbounded growth.
+  final LruCache<String, ({int key, Uint8List bytes})> _thumbCache =
+      LruCache<String, ({int key, Uint8List bytes})>(256);
 
   /// **Synchronous** cache lookup — returns [e]'s thumbnail PNG instantly if it's
   /// current, else null. Lets a recycled list row paint immediately on scroll

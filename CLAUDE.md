@@ -164,6 +164,15 @@ The central model.
   `.redo()`→Character?, `.canUndo`, `.canRedo`, `.depth`, **`.clear()`** (reset).
   Snapshot-based (stores serialised ini strings).
 
+### core/lru_cache.dart
+- **`class LruCache<K,V>(capacity)`** — a capacity-bounded LRU map (`containsKey`,
+  `[]`/`[]=` both mark most-recently-used, `remove`, `clear`, `length`). A plain
+  insertion-ordered `Map` backs it (`keys.first` = oldest); supports `null` values
+  (the decode cache stores `null` to remember a failed decode). **The memory
+  ceiling** behind `AppState`'s image caches (`_decodeCache` 32 / `_buttonSrcCache`
+  48 / `_previewCache` 96 / `_thumbCache` 256) so browsing a big cast can't grow
+  resident memory without bound (the OOM cause). Tested (`test/lru_cache_test.dart`).
+
 ### discovery/sprite_scanner.dart
 - `enum SpriteState { idle, talk, post, staticImage }`.
 - `class SpriteFile{relPath,ext,state,base,isAnimated}`.
@@ -295,11 +304,18 @@ The central model.
 - `class SelectionMask(w,h)` / `.full(w,h)` — `.get/.set`, `.invert`,
   `.combine(other,mode)`, `.selectedCount`.
 - `class RegionEditor` — `rectangle`, `ellipse`, `selectByColor(image,x,y,{
-  tolerance,contiguous,ignoreTransparent})` (magic wand/flood fill),
+  tolerance,contiguous,ignoreTransparent})` (magic wand/flood fill; **squared**
+  colour-distance compare — no per-pixel `sqrt`/`pow`),
   `selectByLuminance`, `feather`, `grow`, `shrink`, `applyOps(image,mask,ops)`,
   `erase(image,mask)`, `fill(image,mask,argb)`,
-  `removeBackgroundFromCorners(image,{tolerance,feather})`,
-  `eraseColor(image,argb,{tolerance})`.
+  `removeBackgroundFromCorners(image,{tolerance,feather,**despill**})`,
+  `eraseColor(image,argb,{tolerance})`,
+  **`despillBackground(image,bgArgb,{strength})`** — un-mix the background colour
+  out of semi-transparent edge pixels (`fg=(observed−(1−a)·bg)/a`) to kill the
+  soft-edge halo after a feathered cut; no-op on fully opaque/transparent pixels
+  (safe to run over a whole frame). The cheap, deterministic stand-in for an alpha
+  matting solver. Driven by `SpriteEditSpec.despillEdges` + the Edit screen's
+  "Despill soft edges" toggle. Tested in `test/region_edit_test.dart`.
 
 ### imaging/paint.dart  ← gradient fills / brushes / blend modes (see docs/PAINT.md)
 Pure Dart; the engine behind the **Paint Studio**. A paint edit is a
