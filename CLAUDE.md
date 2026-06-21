@@ -11,10 +11,11 @@ public functions**, the gotchas, and step-by-step "how to add X" recipes.
 ## 0. Principles (follow these)
 
 1. **Engine vs UI split.** Everything under `lib/src/{core,discovery,imaging,
-   animation,presets,plugins,platform}` is **pure Dart with no `package:flutter`
-   import** (platform files may use `dart:io`/`dart:html`/`dart:ffi` behind
-   conditional imports). Only `lib/src/ui/**` and `lib/main.dart` import Flutter.
-   Keep it that way so the engine stays testable and identical on every target.
+   animation,puppet,presets,plugins,platform}` is **pure Dart with no
+   `package:flutter` import** (platform files may use `dart:io`/`dart:html`/
+   `dart:ffi` behind conditional imports). Only `lib/src/ui/**` and
+   `lib/main.dart` import Flutter. Keep it that way so the engine stays testable
+   and identical on every target.
 2. **No magic numbers / strings.** AO constants live in
    `lib/src/core/ao_constants.dart`. Add new ones there; don't inline them.
 3. **One model, many features.** Recolour = `ColorOp`/`OpPipeline`. Animation =
@@ -70,6 +71,8 @@ lib/src/
                webp, sprite sheet ripper,
                **paint (gradients / brushes / blend modes)**
   animation/   clip, easing, recipe engine, keyframe timeline, lipsync, jiggle
+  puppet/      **Live2D-style cut-out puppet** — assemble part layers → animated
+               AO sprite (idle + talk). Its own section (future 3D joins here)
   theme/       **AO2 client theme model + defaults catalogue + randomizer**
   presets/     built-in preset library
   plugins/     JSON pack model + extension registry
@@ -567,8 +570,12 @@ every sprite keeps the cast aligned in-game.
 - `class AnimEngine` — `recipeTypes`, `register(id,fn)` (plugin hook),
   `render(base,recipes,{frames,fps,loop})`→AnimClip (global recipes sum; region
   recipes composite as layers), `renderSpec(base,specAt,{frames,fps})` (used by
-  Timeline).
-- Built-in recipe ids (~88): sway, bob, bounce, float, breathe, shake, spin,
+  Timeline). **`frameSpec(t, recipes)`** (sum recipes → one `FrameSpec`) +
+  **`renderLayer(src, spec,{canvasW,canvasH,anchorX,anchorY})`** (the exposed
+  per-layer transform/composite) are public so the **puppet** engine reuses the
+  same motion maths (see `puppet/`).
+- Built-in recipe ids (~89): sway, bob, bounce, float, breathe, **blink** (eye
+  squash, used by the Puppet eyes layer), shake, spin,
   tilt, wiggle, zoomPulse, jump, glow, flash, pulse, rainbow, tintPulse, fadeIn,
   fadeOut, throb, nod, headShake, swing, drift, orbit, heartbeat, strobe,
   flicker, neon, hologram, glitch, colorCycle, wave, pendulum, vibrate, pop,
@@ -685,6 +692,49 @@ every sprite keeps the cast aligned in-game.
   and `AppState` (`previewMouthTalk`/`saveMouthTalk`/`bulkMouthTalkAll` take
   `style`/`shape`/`mesh`; `setMeshSprite`/`hasMeshSprite`/`meshOpenSprite`;
   `_buildTalkClip` dispatches cavity/shape/mesh; `defaultMouthRegionFor`).
+
+### puppet/  ← Live2D-style cut-out puppet (its own section; see docs/PUPPET.md)
+The dedicated home for "Live2D / 3D for AO". AO can't render a Cubism model or a
+3D mesh live, so this **bakes** a layered puppet down to ordinary animated AO
+sprites. **Future 3D-model support belongs in this directory**, not under
+`animation/` or `imaging/`.
+
+**puppet/puppet.dart** — pure Dart, isolate-safe (mirrors `animation/jiggle.dart`).
+- `enum PuppetRole { body, head, hair, eyes, mouth, accessory }` — `.label`,
+  `.fromName`; drives the **auto-seeded** idle motion + default pivot, and marks
+  which layer opens on talk.
+- `class PuppetLayer(image,{name,role,x,y,scale,angle,opacity,pivotX,pivotY,phase,
+  visible,motion})` — one stacked part. Geometry is **normalized** to the canvas
+  (0..1) so preview == bake; `x`/`y` is where the part's pivot sits on the canvas;
+  `motion` is a `List<AnimRecipe>` (the **same** recipe library as the Animation
+  Studio). `PuppetLayer.withRoleDefaults(...)` seeds pivot/motion/phase from the
+  role (the "auto-animate" path). Static `defaultPivot`/`defaultMotion`/
+  `defaultPhase(role)`.
+- `class PuppetRig({width,height,layers})` — fixed AO canvas + back-to-front
+  layers; `.animates({talk})` (lets a static rig collapse to 1 frame).
+- `class PuppetEngine` — **`render(rig,{frames,fps,talk,talkOpen,talkSyllables})`**
+  → `AnimClip`. Per frame, per visible layer: evaluate `motion` via
+  **`AnimEngine.frameSpec((t+phase)%1, motion)`** (phase-shifted clock, still
+  seamless), fold the layer's static placement into the spec, and place the part
+  **by its pivot** with **`AnimEngine.renderLayer`** (the verified
+  scaleX/scaleY/rotate/opacity transform `render` uses) — pivot handled by
+  `_centerOnPivot` (pad the part so its pivot is the image centre, so a symmetric
+  scale + rotate-about-centre keep it fixed). `talk` adds a vertical mouth
+  open/close cadence (`_talkOpenness`) to every `mouth` layer; idle + talk always
+  render at the **same canvas size** so AO never jumps between `(a)`/`(b)`. Tested
+  (`test/puppet_test.dart`: placement/pivot pixel checks, idle≡talk dims, static
+  collapse, talk-moves-mouth, seamless loop). NB **cut-out** animation (move/
+  rotate/scale/squash whole parts), not mesh warp — flat art doesn't truly deform.
+- Built on the **Ripper** (slice the atlas into parts) + the **animation** engine;
+  speaks no custom format. Two new `animation/anim_engine.dart` primitives back
+  it: the public **`AnimEngine.frameSpec(t, recipes)`** (sum recipes → `FrameSpec`)
+  + **`AnimEngine.renderLayer(...)`** (exposed `_renderLayer`), and the **`blink`**
+  recipe (periodic `scaleY` squash). Driven by `AppState` (`puppetRig`,
+  `addPuppetParts`, `puppetFromSheetCells` (Ripper "Send to Puppet" handoff),
+  `previewPuppet({talk})` (downscaled animated PNG frames), `bakePuppet({name})`
+  → idle `(a)` + talk `(b)` lossless WebP added as one emote via `addSprites`) and
+  the **Puppet Studio** screen (nav index 14, project-**free** — it *builds* a
+  character). See docs/PUPPET.md.
 
 ### theme/ao2_theme.dart  ← AO2 client theme model
 - The real AO2 theme format (Qt `QSettings` flat INIs): design = `name = x,y,w,h`,
@@ -987,7 +1037,8 @@ every sprite keeps the cast aligned in-game.
   color_lab, animation_studio, button_studio, edit, mixer, bulk, plugins,
   **sprite_ripper** (sheet → sprites), **theme_maker** (AO2 theme editor),
   **paint_studio** (gradient/brush/region painting), **zoom_studio**
-  (camera zoom / framing).
+  (camera zoom / framing), **puppet_studio** (Live2D-style parts → animated AO
+  sprite; see docs/PUPPET.md).
   `widgets/` — `CheckerImage` (**perf**: the transparency checker is **one**
   GPU-tiled rect — a cached 2×2 `ui.Image` tile via `ImageShader` — NOT a
   `drawRect` per cell, and the whole thing is `RepaintBoundary`-wrapped, so a big
@@ -1250,6 +1301,18 @@ every sprite keeps the cast aligned in-game.
     or **This sprite**). Bare-key shortcuts on the focused canvas (wheel `±`,
     arrows recenter, R/0 reset, G grid, F auto-frame). Project-gated (it edits
     sprites — appended at nav index 13, **not** in `_projectFreeIndices`).
+  - `puppet_studio`: **Puppet Studio** — the Live2D-style parts → animated AO
+    sprite path (nav index 14; **project-free**, it builds a character). A
+    `ListenableBuilder(app)` 3-pane layout: a **layers** `ReorderableListView`
+    (z-order, role, visibility, remove), a centre **animated preview** (idle⇄talk
+    `SegmentedButton`; frames played via a `ValueNotifier`+`Timer` so the ticker
+    doesn't `setState` the whole screen) with a name field + **Bake → emote**, and
+    a right **controls** panel (per-layer role/position/scale/rotate/pivot/opacity/
+    phase + idle-motion picker; global frames/fps/mouth-open + canvas size). Get
+    parts via **"Slice a sheet"** (file-pick → `SpriteSheet.autoDetect` →
+    `puppetFromSheetCells`), **"Add part files"**, or the **Ripper**'s "Send to
+    Puppet". Preview render is **debounced** (220 ms) + downscaled (`previewPuppet`).
+    Engine in `puppet/puppet.dart`; see docs/PUPPET.md.
 - `app.dart` (`HomeShell`) hosts a global `CallbackShortcuts` map (undo/redo,
   import, export `.zip` `Ctrl/⌘+S`, **save-as-folder `Ctrl/⌘+Shift+S` →
   `exportFolder`**, export `char.ini` `Ctrl/⌘+E`, add emote, prev/next emote,
@@ -1265,8 +1328,9 @@ every sprite keeps the cast aligned in-game.
   persist (see `settings_store`). Reset buttons restore the plain defaults. The nav
   now has a **Character** destination at index 1 (the ini builder), plus
   **Ripper** and **Theme** (project-independent) then **Paint** and **Zoom**
-  (project-gated) at the end. The no-project guard uses the `_projectFreeIndices`
-  set (`{Home, Plugins, Ripper, Theme}` — note **Paint and Zoom are *not* in
+  (project-gated) and **Puppet** (project-**free** — it builds a character) at the
+  end. The no-project guard uses the `_projectFreeIndices` set
+  (`{Home, Plugins, Ripper, Theme, Puppet}` — note **Paint and Zoom are *not* in
   it**, so they're gated like the other editors) instead of a hard-coded index,
   so adding destinations won't silently break it.
   Document new keys in `docs/SHORTCUTS.md`.

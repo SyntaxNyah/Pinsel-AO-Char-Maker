@@ -50,6 +50,10 @@ lib/
       timeline.dart             manual keyframe interpolation
       lipsync.dart              talking-sprite generation
 
+    puppet/                     ── Live2D-style cut-out puppet (bakes to sprites) ──
+      puppet.dart               assemble part layers → animated AO sprite (idle +
+                                talk); reuses the ripper + animation engine
+
     theme/                      ── AO2 client theme maker ──
       ao2_theme.dart            theme model + parse/serialise (lossless) + export
       ao2_theme_defaults.dart   widget/colour/font/scalar/image catalogues
@@ -80,7 +84,8 @@ lib/
                                 editor, color_lab, animation_studio,
                                 button_studio, edit, mixer, bulk, plugins,
                                 sprite_ripper (sheet → sprites),
-                                theme_maker (AO2 theme editor, draggable layout)
+                                theme_maker (AO2 theme editor, draggable layout),
+                                puppet_studio (parts → animated AO sprite)
     app.dart                    HomeShell: nav rail + global keyboard shortcuts
                                 (CallbackShortcuts) + undo/redo + About toolbar + status
 ```

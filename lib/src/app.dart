@@ -16,6 +16,7 @@ import 'ui/screens/ini_builder_screen.dart';
 import 'ui/screens/mixer_screen.dart';
 import 'ui/screens/paint_studio_screen.dart';
 import 'ui/screens/plugins_screen.dart';
+import 'ui/screens/puppet_studio_screen.dart';
 import 'ui/screens/sprite_ripper_screen.dart';
 import 'ui/screens/theme_maker_screen.dart';
 import 'ui/screens/zoom_studio_screen.dart';
@@ -53,15 +54,24 @@ const List<({IconData icon, String label})> _dests =
   (icon: Icons.brush_rounded, label: 'Theme'),
   (icon: Icons.format_paint_rounded, label: 'Paint'),
   (icon: Icons.zoom_in_rounded, label: 'Zoom'),
+  (icon: Icons.accessibility_new_rounded, label: 'Puppet'),
 ];
 
 /// Screens that work without a loaded character: Home, Plugins, the Sprite
-/// Sheet Ripper and the AO2 Theme Maker. Kept as named constants + a set so the
-/// no-project guard doesn't go stale when destinations are reordered.
+/// Sheet Ripper, the AO2 Theme Maker and the Puppet Studio (it *builds* a
+/// character from parts). Kept as named constants + a set so the no-project
+/// guard doesn't go stale when destinations are reordered.
 const int _pluginsIndex = 9;
 const int _ripperIndex = 10;
 const int _themeIndex = 11;
-const Set<int> _projectFreeIndices = <int>{0, _pluginsIndex, _ripperIndex, _themeIndex};
+const int _puppetIndex = 14;
+const Set<int> _projectFreeIndices = <int>{
+  0,
+  _pluginsIndex,
+  _ripperIndex,
+  _themeIndex,
+  _puppetIndex,
+};
 
 /// Persistent navigation rail + status bar around the active screen.
 ///
@@ -106,6 +116,8 @@ class _HomeShellState extends State<HomeShell> {
         return const PaintStudioScreen();
       case 13:
         return const ZoomStudioScreen();
+      case 14:
+        return const PuppetStudioScreen();
       case 0:
       default:
         return const HomeScreen();

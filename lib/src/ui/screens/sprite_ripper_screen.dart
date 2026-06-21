@@ -499,9 +499,31 @@ class _SpriteRipperScreenState extends State<SpriteRipperScreen> {
           icon: const Icon(Icons.archive_outlined),
           label: const Text('Download as .zip'),
         ),
+        const SizedBox(height: 6),
+        OutlinedButton.icon(
+          onPressed: _enabled == 0 ? null : _sendToPuppet,
+          icon: const Icon(Icons.accessibility_new_rounded),
+          label: const Text('Send to Puppet'),
+        ),
         const SizedBox(height: 24),
       ],
     );
+  }
+
+  /// Hand the boxed cells to the Puppet Studio as layers (each placed at its cell
+  /// centre), then nudge the user to the Puppet tab.
+  void _sendToPuppet() {
+    final img.Image? s = _sheet;
+    if (s == null) return;
+    context.read<AppState>().puppetFromSheetCells(
+          s,
+          _cells,
+          removeBg: _removeBg,
+          tolerance: _bgTolerance,
+        );
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Parts sent to the Puppet Studio — open the Puppet tab to '
+            'assemble & animate them.')));
   }
 
   List<Widget> _autoControls() {

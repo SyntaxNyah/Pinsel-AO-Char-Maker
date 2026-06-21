@@ -22,6 +22,9 @@ If you just want to try it with nothing installed, use the **website build** (se
 10. [Mixer — snip & combine sprites](#10-mixer--snip--combine-sprites)
 11. [Bulk — do everything at once](#11-bulk--do-everything-at-once)
 12. [Plugins — add more content](#12-plugins--add-more-content)
+    - [12a. Ripper — slice a sprite sheet](#12a-ripper--slice-a-sprite-sheet)
+    - [12b. Theme — design an AO2 client theme](#12b-theme--design-an-ao2-client-theme)
+    - [12c. Puppet — Live2D-style animated characters](#12c-puppet--live2d-style-animated-characters)
 13. [Common workflows](#13-common-workflows)
 14. [Using your character in AO](#14-using-your-character-in-ao)
 15. [Tips & troubleshooting](#15-tips--troubleshooting)
@@ -719,6 +722,33 @@ The **Theme** tab is a complete **Attorney Online 2 / webAO** theme editor.
   `base/themes/`.
 
 Full details: **[THEME_MAKER.md](THEME_MAKER.md)**.
+
+---
+
+## 12c. Puppet — Live2D-style animated characters
+
+Got a character that comes as **separate parts** (head, hair, eyes, mouth, body —
+the way Live2D / gacha sprites ship)? The **Puppet** tab assembles them into one
+**animated** AO character: an idle that **breathes, sways and blinks**, and a
+talking version — with **no hand-animation**.
+
+1. **Get the parts in.** *Slice a sheet of parts* (auto-detects them from an
+   atlas) or *Add part files*. For a tightly-packed atlas, box each part in the
+   **Ripper** first, then **Send to Puppet**.
+2. **Assemble.** Each part is a **layer**. Pick a layer and use the sliders to set
+   its **position / scale / rotate** so the parts line up into a character; drag
+   layers in the list to set what's **in front**.
+3. **Pick roles.** Each layer has a **role** (Body / Hair / Eyes / Mouth / …),
+   guessed from its name. The role auto-chooses how it moves (body breathes, hair
+   sways, eyes blink) and where it pivots. Change a role and the motion re-seeds.
+4. **Preview & bake.** Flip between **Idle (a)** and **Talk (b)**, name it, and
+   **Bake → animated emote**. It's added to your character like any other emote —
+   recolour it, frame its button, export from Home.
+
+> AO can't run a real Live2D/Cubism model, so Pinsel **bakes** the puppet into a
+> normal animated AO sprite (which is why it just works in-client). It moves whole
+> parts (cut-out animation), so keep the motion subtle — the defaults are. 3D
+> models aren't supported yet. Full details: **[PUPPET.md](PUPPET.md)**.
 
 ---
 

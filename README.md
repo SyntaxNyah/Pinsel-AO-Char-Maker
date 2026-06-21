@@ -132,6 +132,21 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
   and the status line tells you *why* it fell back, so a stray APNG is fixable
   rather than a mystery.
 
+### Live2D-style characters (Puppet Studio)
+- **Parts → an animated character.** Got a character that ships as **separate
+  parts** (the way Live2D / gacha sprites do — head, hair, eyes, mouth, body)?
+  The **Puppet** tab assembles them into a layered "puppet" and bakes a gently
+  **animated** AO sprite — an idle `(a)` that **breathes, sways and blinks** and a
+  talking `(b)` — with **no hand-animation**. Each layer gets a **role** that
+  auto-picks sensible motion and a pivot (hair swings from the scalp, the jaw
+  drops from the upper lip…), and the talk clip opens any **mouth** layer.
+- **Slice a sheet, or drop in layers.** Auto-detect parts from an atlas (or box
+  them in the **Ripper** → *Send to Puppet*), then arrange the pose and bake.
+- AO can't run a real Live2D/Cubism or 3D model — so Pinsel **bakes** the puppet
+  down to ordinary AO sprites (and that's why it Just Works in-client). It's
+  cut-out animation (move/rotate/scale/squash whole parts), not mesh warp. See
+  [docs/PUPPET.md](docs/PUPPET.md).
+
 ### Rip & theme everything
 - **Sprite sheet ripper** — drop in a sheet/collage of VN sprites and it slices
   out each one as a transparent sprite. **Auto-detect** any layout (it flood-fills
@@ -239,6 +254,7 @@ platform via [`.github/workflows/build.yml`](.github/workflows/build.yml).
 | [docs/ANIMATION.md](docs/ANIMATION.md) | Recipes, easing, timeline, lip-sync, regions |
 | [docs/LIPSYNC.md](docs/LIPSYNC.md) | Talking mouths from one drawing (preview + adjust) |
 | [docs/JIGGLE.md](docs/JIGGLE.md) | Jiggle physics — soft-body bounce for any region |
+| [docs/PUPPET.md](docs/PUPPET.md) | Puppet Studio — Live2D-style parts → an animated AO character |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | GPU previews, multi-core baking + cancellable jobs |
 | [docs/MIXER.md](docs/MIXER.md) | Snip, stack & link sprites (mouse-driven; multi-snip + layers) |
 | [docs/SPRITE_RIPPER.md](docs/SPRITE_RIPPER.md) | Slice sprite sheets into sprites (auto-detect / grid) |

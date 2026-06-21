@@ -10,6 +10,7 @@ import '../animation/anim_clip.dart';
 import '../animation/anim_engine.dart';
 import '../animation/jiggle.dart';
 import '../animation/lipsync.dart';
+import '../puppet/puppet.dart';
 import '../core/ao_constants.dart';
 import '../core/character.dart';
 import '../core/emote.dart';
@@ -651,6 +652,8 @@ class AppState extends ChangeNotifier {
     selectedEmote = -1;
     livePipeline.clear();
     ripperSheetBytes = null;
+    puppetRig = null;
+    selectedPuppetLayer = null;
     _invalidateImageCaches();
     _setBusy(false, 'Project reset — import sprites to begin.');
   }
@@ -2856,6 +2859,205 @@ class AppState extends ChangeNotifier {
     _setBusy(false,
         'Saved $outRel — ${ordered.length} frames as ${_animNote(ext, webpError)}.');
     return saveBytes('$prefix$safe.$ext', bytes);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Puppet Studio — assemble parts into a Live2D-style rig, bake animated AO
+  // sprites (idle + talk). See puppet/puppet.dart + docs/PUPPET.md.
+  // ---------------------------------------------------------------------------
+
+  /// The current puppet rig (null until parts are added). Held on the hub so the
+  /// Puppet screen survives navigation.
+  PuppetRig? puppetRig;
+
+  /// Which layer the Puppet screen is editing (index into `puppetRig.layers`).
+  int? selectedPuppetLayer;
+
+  /// Bake settings (also drive the preview, so preview == bake).
+  int puppetFrames = 16;
+  int puppetFps = 12;
+  double puppetTalkOpen = PuppetEngine.defaultTalkOpen;
+
+  bool get hasPuppet => (puppetRig?.layers.isNotEmpty) ?? false;
+
+  /// Guess a part's [PuppetRole] from its file/cell name, so the auto-animate
+  /// defaults (and the talk mouth) land on the right layers.
+  PuppetRole _guessRole(String name) {
+    final String n = name.toLowerCase();
+    if (n.contains('hair') || n.contains('bang') || n.contains('ponytail')) {
+      return PuppetRole.hair;
+    }
+    if (n.contains('eye') || n.contains('blink') || n.contains('pupil')) {
+      return PuppetRole.eyes;
+    }
+    if (n.contains('mouth') || n.contains('lip') || n.contains('jaw')) {
+      return PuppetRole.mouth;
+    }
+    if (n.contains('body') || n.contains('torso') || n.contains('chest') ||
+        n.contains('breast')) {
+      return PuppetRole.body;
+    }
+    if (n.contains('head') || n.contains('face')) return PuppetRole.head;
+    return PuppetRole.accessory;
+  }
+
+  /// Add part images as new puppet layers (centred). Roles are guessed from the
+  /// file names so the idle motion auto-seeds sensibly.
+  void addPuppetParts(List<PickedFile> files) {
+    if (files.isEmpty) return;
+    final bool fresh = puppetRig == null;
+    final PuppetRig rig = puppetRig ?? PuppetRig(width: 256, height: 256);
+    for (final PickedFile f in files) {
+      final img.Image? im = Codecs.decodeFirstFrame(f.bytes,
+          ext: p.extension(f.name).replaceFirst('.', ''));
+      if (im == null) continue;
+      rig.layers.add(PuppetLayer.withRoleDefaults(im,
+          name: p.basenameWithoutExtension(f.name), role: _guessRole(f.name)));
+    }
+    if (fresh && rig.layers.isNotEmpty) {
+      // Size the canvas to the biggest part (parts dropped in as separate files
+      // are usually pre-aligned full-frame layers).
+      int w = 0, h = 0;
+      for (final PuppetLayer l in rig.layers) {
+        if (l.image.width > w) w = l.image.width;
+        if (l.image.height > h) h = l.image.height;
+      }
+      rig.width = w < 64 ? 64 : w;
+      rig.height = h < 64 ? 64 : h;
+    }
+    puppetRig = rig;
+    selectedPuppetLayer = rig.layers.isEmpty ? null : rig.layers.length - 1;
+    status = 'Puppet: ${rig.layers.length} layer(s).';
+    notifyListeners();
+  }
+
+  /// **Send a ripped sheet's cells to the Puppet Studio.** Each enabled cell
+  /// becomes a layer, placed at the cell's centre in the sheet (so a sheet laid
+  /// out roughly in-position assembles itself; a tightly-packed atlas still needs
+  /// hand-arranging). The sheet's size becomes the rig canvas.
+  void puppetFromSheetCells(
+    img.Image sheet,
+    List<SheetCell> cells, {
+    bool removeBg = true,
+    int? bgColor,
+    int tolerance = 24,
+  }) {
+    final List<SheetCell> enabled =
+        cells.where((SheetCell c) => c.enabled).toList();
+    if (enabled.isEmpty) return;
+    final PuppetRig rig = PuppetRig(width: sheet.width, height: sheet.height);
+    for (final SheetCell c in enabled) {
+      final img.Image piece = SpriteSheet.extract(sheet, c.rect,
+          removeBg: removeBg, bgColor: bgColor, tolerance: tolerance);
+      rig.layers.add(PuppetLayer.withRoleDefaults(
+        piece,
+        name: c.name,
+        role: _guessRole(c.name),
+        x: (c.rect.x + c.rect.w / 2) / sheet.width,
+        y: (c.rect.y + c.rect.h / 2) / sheet.height,
+      ));
+    }
+    puppetRig = rig;
+    selectedPuppetLayer = 0;
+    status = 'Loaded ${enabled.length} parts into the Puppet Studio.';
+    notifyListeners();
+  }
+
+  void selectPuppetLayer(int? i) {
+    selectedPuppetLayer = i;
+    notifyListeners();
+  }
+
+  void removePuppetLayer(int i) {
+    final PuppetRig? rig = puppetRig;
+    if (rig == null || i < 0 || i >= rig.layers.length) return;
+    rig.layers.removeAt(i);
+    if (rig.layers.isEmpty) {
+      selectedPuppetLayer = null;
+    } else if ((selectedPuppetLayer ?? 0) >= rig.layers.length) {
+      selectedPuppetLayer = rig.layers.length - 1;
+    }
+    notifyListeners();
+  }
+
+  /// Reorder a layer (z-order: later in the list = drawn on top).
+  void movePuppetLayer(int from, int to) {
+    final PuppetRig? rig = puppetRig;
+    if (rig == null) return;
+    if (from < 0 || from >= rig.layers.length) return;
+    final int dst = to.clamp(0, rig.layers.length - 1);
+    final PuppetLayer l = rig.layers.removeAt(from);
+    rig.layers.insert(dst, l);
+    selectedPuppetLayer = dst;
+    notifyListeners();
+  }
+
+  void clearPuppet() {
+    puppetRig = null;
+    selectedPuppetLayer = null;
+    notifyListeners();
+  }
+
+  /// Live edits to the rig (from the screen's sliders) just need a repaint.
+  void notifyPuppet() => notifyListeners();
+
+  /// Render the rig to **downscaled PNG frames** for the animated preview (the
+  /// screen plays them on a ticker). Same render as the bake, just fit to
+  /// [maxEdge], so the preview matches the exported animation.
+  Future<List<Uint8List>> previewPuppet(
+      {bool talk = false, int maxEdge = 320}) async {
+    final PuppetRig? rig = puppetRig;
+    if (rig == null || rig.isEmpty) return const <Uint8List>[];
+    final AnimClip clip = PuppetEngine.render(rig,
+        frames: puppetFrames,
+        fps: puppetFps,
+        talk: talk,
+        talkOpen: puppetTalkOpen);
+    return <Uint8List>[
+      for (final AnimFrame f in clip.frames)
+        Codecs.encodePng(_fitEdge(f.image, maxEdge)),
+    ];
+  }
+
+  /// **Bake the puppet** into AO sprites: an idle `(a)` and a talking `(b)`
+  /// animated WebP (lossless; APNG fallback), added to the character as one new
+  /// emote (reuses [addSprites], so it also builds a fresh character if none is
+  /// loaded yet). Returns the sprite base name.
+  Future<String?> bakePuppet({String? name}) async {
+    final PuppetRig? rig = puppetRig;
+    if (rig == null || rig.isEmpty) {
+      _setBusy(false, 'Add some parts to the puppet first.');
+      return null;
+    }
+    final String safe = _cleanProjectName(name) ?? 'puppet';
+    _setBusy(true, 'Baking puppet animation…');
+    await logCrash('bakePuppet start: ${rig.layers.length} layer(s), '
+        '$puppetFrames frames');
+    // Single-emote bake on the UI isolate (like saveMouthTalk); yield between the
+    // two clips so the busy indicator paints.
+    final AnimClip idle = PuppetEngine.render(rig,
+        frames: puppetFrames, fps: puppetFps, talk: false);
+    await Future<void>.delayed(Duration.zero);
+    final AnimClip talk = PuppetEngine.render(rig,
+        frames: puppetFrames, fps: puppetFps, talk: true, talkOpen: puppetTalkOpen);
+    await Future<void>.delayed(Duration.zero);
+
+    final ({Uint8List bytes, String ext, String? webpError}) ri =
+        await idle.encodePreferWebp(lossless: true);
+    final ({Uint8List bytes, String ext, String? webpError}) rt =
+        await talk.encodePreferWebp(lossless: true);
+
+    // Route through addSprites: drops both sprites in, rescans, and appends one
+    // emote for the `safe` group (idle+talk) — identical to every other sprite
+    // add, and it builds a character if there isn't one yet.
+    await addSprites(<PickedFile>[
+      PickedFile('${SpritePrefix.idle}$safe.${ri.ext}', ri.bytes),
+      PickedFile('${SpritePrefix.talk}$safe.${rt.ext}', rt.bytes),
+    ]);
+    await logCrash('bakePuppet done: $safe (a)=${ri.ext} (b)=${rt.ext}');
+    _setBusy(false,
+        'Baked puppet "$safe" — animated (a)/(b) added as an emote.');
+    return safe;
   }
 
   // ---------------------------------------------------------------------------

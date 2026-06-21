@@ -110,6 +110,7 @@ class AnimEngine {
     'bounce': _bounce,
     'float': _float,
     'breathe': _breathe,
+    'blink': _blink,
     'shake': _shake,
     'spin': _spin,
     'tilt': _tilt,
@@ -195,6 +196,37 @@ class AnimEngine {
     final double et = Easing.apply(r.ease, t);
     return (_registry[r.type] ?? _registry['none']!)(et, r);
   }
+
+  /// Evaluate [recipes] (summed) into a single [FrameSpec] at animation phase
+  /// [t] (0..1). Public so other engines — e.g. the **puppet** compositor — can
+  /// drive their own per-layer transforms through the same recipe library +
+  /// easing, instead of re-implementing the motion maths.
+  static FrameSpec frameSpec(double t, List<AnimRecipe> recipes) {
+    final FrameSpec s = FrameSpec();
+    for (final AnimRecipe r in recipes) {
+      s.add(_spec(t, r));
+    }
+    return s;
+  }
+
+  /// Public wrapper over the verified per-layer transform-and-composite that
+  /// [render] uses, so the puppet compositor can place each part with the same
+  /// maths (handles `scaleX`/`scaleY`, rotate, opacity, colour ops; centres the
+  /// transformed [src] at `(anchorX+dx, anchorY+dy)` on a `canvasW×canvasH`
+  /// transparent canvas).
+  static img.Image renderLayer(
+    img.Image src,
+    FrameSpec spec, {
+    required int canvasW,
+    required int canvasH,
+    required double anchorX,
+    required double anchorY,
+  }) =>
+      _renderLayer(src, spec,
+          canvasW: canvasW,
+          canvasH: canvasH,
+          anchorX: anchorX,
+          anchorY: anchorY);
 
   /// Render [base] into a clip by stacking [recipes].
   ///
@@ -691,6 +723,23 @@ class AnimEngine {
 
   static FrameSpec _breathe(double t, AnimRecipe r) => FrameSpec()
     ..scale = 1 + r.n('intensity', 3) / 100.0 * (0.5 + 0.5 * math.sin(_tau(t, r.n('cycles', 1))));
+
+  /// A quick eye-blink: the layer squashes vertically (scaleY dips toward
+  /// `1-depth`) for a brief window, [count] times per loop, fully open the rest
+  /// of the time. Pair with a centre/eye pivot. Seamless when [count] is an
+  /// integer (scaleY == 1 at t==0 and t==1). Used by the **puppet** eyes layer.
+  static FrameSpec _blink(double t, AnimRecipe r) {
+    final double count = math.max(1, r.n('count', 1));
+    final double width = r.n('width', 0.10).clamp(0.02, 0.5); // closed fraction
+    final double depth = r.n('depth', 0.9).clamp(0.0, 1.0); // 1 = shut fully
+    final double local = (t * count) % 1.0; // 0..1 within one blink cycle
+    double sy = 1.0;
+    if (local > 1 - width) {
+      final double bp = (local - (1 - width)) / width; // 0..1 across the blink
+      sy = 1.0 - depth * math.sin(math.pi * bp); // 1 → (1-depth) → 1
+    }
+    return FrameSpec()..scaleY = sy;
+  }
 
   static FrameSpec _shake(double t, AnimRecipe r) {
     final double i = r.n('intensity', 4);

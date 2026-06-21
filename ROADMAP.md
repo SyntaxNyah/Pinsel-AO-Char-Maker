@@ -218,6 +218,28 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
 - ⬜ Onion-skinning + scrubbable timeline UI
 - ⬜ Per-frame SFX/realization/screenshake authoring UI (model supports it)
 
+## Live2D / 3D (cut-out puppet)
+Its **own dedicated section** (engine in `lib/src/puppet/`). AO renders sprites,
+not Cubism/3D models, so everything here **bakes** down to animated AO sprites.
+- ✅ **Puppet Studio** (`puppet/puppet.dart` + Puppet screen, see docs/PUPPET.md)
+  — assemble a character from separate **part layers** (head/hair/eyes/mouth/body/
+  accessories, sliced from a sprite-sheet atlas with the Ripper or dropped in as
+  PNGs) and bake a gently animated AO sprite: an idle `(a)` (breathe / sway /
+  blink) + a talking `(b)`, **no hand-animation**. Each layer carries its own
+  `AnimRecipe` motion (the shared animation engine) and is composited around its
+  own **pivot** (hair from the scalp, jaw from the upper lip, body from the hips);
+  a **role** per layer auto-seeds sensible motion/pivot, and the talk clip opens
+  any `mouth` layer. Idle + talk always share canvas size (AO never jumps). Reuses
+  the **Ripper** (slice) + **Compositor/AnimEngine** (composite); pure + tested
+  (`test/puppet_test.dart`). Ripper has a **"Send to Puppet"** handoff.
+- 🟡 Auto-assembly of a *packed* atlas (right now auto-detect finds the parts but
+  you arrange the pose by hand)
+- ⬜ Mesh/soft-body **warp** per part (true deform, not just move/rotate/scale —
+  the jiggle warp is the seed for this)
+- ⬜ Per-part **layer recolour / outfit swaps** baked into the puppet
+- ⬜ **3D model → sprite angles** (`.glb`/`.gltf`): an in-engine 3D render to
+  baked sprite frames — would live alongside the puppet in `lib/src/puppet/`
+
 ## Plugins & sharing
 - ✅ JSON content packs (presets/palettes/gradients/animations/name sets)
 - ✅ Pack install/remove (works on web)
