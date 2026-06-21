@@ -75,11 +75,13 @@ class _PuppetStudioScreenState extends State<PuppetStudioScreen> {
       if (mounted) setState(() => _frames = <Uint8List>[]);
       return;
     }
-    _rendering = true;
+    setState(() => _rendering = true); // tell the user it's working, not frozen
     final List<Uint8List> frames = await app.previewPuppet(talk: _talk);
-    _rendering = false;
     if (!mounted) return;
-    setState(() => _frames = frames);
+    setState(() {
+      _frames = frames;
+      _rendering = false;
+    });
     if (_frameVN.value >= frames.length) _frameVN.value = 0;
     _startTicker(app.puppetFps);
   }
@@ -323,14 +325,16 @@ class _PuppetStudioScreenState extends State<PuppetStudioScreen> {
                 },
               ),
               const Spacer(),
-              if (_rendering)
-                const Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2)),
-                ),
+              if (_rendering) ...<Widget>[
+                const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2)),
+                const SizedBox(width: 6),
+                Text('Rendering…',
+                    style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(width: 12),
+              ],
               Text('${_frames.length} frames',
                   style: Theme.of(context).textTheme.bodySmall),
             ],
@@ -394,10 +398,10 @@ class _PuppetStudioScreenState extends State<PuppetStudioScreen> {
         Text('Animation', style: Theme.of(context).textTheme.titleSmall),
         _slider('Frames', app.puppetFrames.toDouble(), 2, 32,
             (double v) => app.puppetFrames = v.round(),
-            divisions: 30, valueLabel: '${app.puppetFrames}'),
+            divisions: 30),
         _slider('Speed (fps)', app.puppetFps.toDouble(), 4, 24,
             (double v) => app.puppetFps = v.round(),
-            divisions: 20, valueLabel: '${app.puppetFps}'),
+            divisions: 20),
         _slider('Mouth open', app.puppetTalkOpen, 0.1, 1.2,
             (double v) => app.puppetTalkOpen = v),
         _sizeRow(app, rig),
@@ -533,6 +537,15 @@ class _PuppetStudioScreenState extends State<PuppetStudioScreen> {
   }
 
   // ---- Small reusable controls ----
+
+  /// One notify after a slider drag ends (keeps the rest of the UI in sync).
+  void _commit() => context.read<AppState>().notifyPuppet();
+
+  /// A slider that, **while dragging**, mutates the model + re-renders the
+  /// (debounced, downscaled) preview but does **not** `notifyListeners` — so a
+  /// drag repaints only itself, not the whole 3-pane screen. One notify lands on
+  /// release. This is the other half of the lag fix (the first is the scaled
+  /// preview render).
   Widget _slider(
     String label,
     double value,
@@ -540,39 +553,17 @@ class _PuppetStudioScreenState extends State<PuppetStudioScreen> {
     double max,
     void Function(double) onChanged, {
     int? divisions,
-    String? valueLabel,
-  }) {
-    final double v = value.clamp(min, max);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(
-                  child: Text(label,
-                      style: Theme.of(context).textTheme.bodySmall)),
-              Text(
-                  valueLabel ??
-                      v.toStringAsFixed(v.truncateToDouble() == v ? 0 : 2),
-                  style: Theme.of(context).textTheme.bodySmall),
-            ],
-          ),
-          Slider(
-            value: v,
-            min: min,
-            max: max,
-            divisions: divisions,
-            onChanged: (double nv) {
-              onChanged(nv);
-              _changed();
-            },
-          ),
-        ],
-      ),
-    );
-  }
+  }) =>
+      _PuppetSlider(
+        label: label,
+        value: value,
+        min: min,
+        max: max,
+        divisions: divisions,
+        onChanged: onChanged,
+        onLive: _scheduleRender,
+        onCommit: _commit,
+      );
 
   Widget _miniField(String label, int value, void Function(int) onChanged) {
     return TextFormField(
@@ -584,6 +575,87 @@ class _PuppetStudioScreenState extends State<PuppetStudioScreen> {
         final int? v = int.tryParse(s.trim());
         if (v != null) onChanged(v);
       },
+    );
+  }
+}
+
+/// A slider whose drag is cheap: it holds the live value locally (so only it
+/// repaints while you drag), pushes the value into the model + schedules a
+/// preview render via [onLive], and fires a single [onCommit] (a `notifyListeners`)
+/// when the drag ends. See `_PuppetStudioScreenState._slider`.
+class _PuppetSlider extends StatefulWidget {
+  const _PuppetSlider({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+    required this.onLive,
+    required this.onCommit,
+    this.divisions,
+  });
+
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final int? divisions;
+  final ValueChanged<double> onChanged; // mutate the model
+  final VoidCallback onLive; // schedule the debounced preview render
+  final VoidCallback onCommit; // one notify after the drag
+
+  @override
+  State<_PuppetSlider> createState() => _PuppetSliderState();
+}
+
+class _PuppetSliderState extends State<_PuppetSlider> {
+  late double _v = widget.value.clamp(widget.min, widget.max).toDouble();
+  bool _dragging = false;
+
+  @override
+  void didUpdateWidget(covariant _PuppetSlider old) {
+    super.didUpdateWidget(old);
+    // Reflect external changes (e.g. a role-reset) when we're not mid-drag.
+    if (!_dragging && widget.value != old.value) {
+      _v = widget.value.clamp(widget.min, widget.max).toDouble();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final double v = _v.clamp(widget.min, widget.max).toDouble();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                  child: Text(widget.label,
+                      style: Theme.of(context).textTheme.bodySmall)),
+              Text(v.toStringAsFixed(v.truncateToDouble() == v ? 0 : 2),
+                  style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
+          Slider(
+            value: v,
+            min: widget.min,
+            max: widget.max,
+            divisions: widget.divisions,
+            onChangeStart: (_) => _dragging = true,
+            onChanged: (double nv) {
+              setState(() => _v = nv);
+              widget.onChanged(nv);
+              widget.onLive();
+            },
+            onChangeEnd: (_) {
+              _dragging = false;
+              widget.onCommit();
+            },
+          ),
+        ],
+      ),
     );
   }
 }

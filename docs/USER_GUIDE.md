@@ -240,6 +240,12 @@ There's an **Export char.ini** button right here, too.
   - **Delay ticks** — wait before the sound plays (1 tick = 60 ms).
   - **Loop sound** — repeat the sound.
 
+> **Adding your own sound effect (e.g. a jumpscare scream)?** Import the audio
+> first with **Home → Add sound (SFX)** so it ships with the character and appears
+> in the ▾ picker, then set the emote's **Sound** to its name (and give the emote
+> a preanim + the *Play preanim + sound* modifier so AO plays it). Full
+> walkthrough: **[SFX.md](SFX.md)**.
+
 Edits save into your project automatically; use **Undo/Redo** freely.
 
 ---

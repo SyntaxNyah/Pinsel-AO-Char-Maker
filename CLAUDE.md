@@ -712,8 +712,11 @@ sprites. **Future 3D-model support belongs in this directory**, not under
   `defaultPhase(role)`.
 - `class PuppetRig({width,height,layers})` — fixed AO canvas + back-to-front
   layers; `.animates({talk})` (lets a static rig collapse to 1 frame).
-- `class PuppetEngine` — **`render(rig,{frames,fps,talk,talkOpen,talkSyllables})`**
-  → `AnimClip`. Per frame, per visible layer: evaluate `motion` via
+- `class PuppetEngine` — **`render(rig,{frames,fps,talk,talkOpen,talkSyllables,
+  scale})`** → `AnimClip`. **`scale`<1 renders the whole rig smaller** (canvas +
+  pre-scaled parts + motion travel) = a proportionally-shrunk preview (the perf
+  path; a sheet-sourced rig's canvas can be 1024px+). Per frame, per visible
+  layer: evaluate `motion` via
   **`AnimEngine.frameSpec((t+phase)%1, motion)`** (phase-shifted clock, still
   seamless), fold the layer's static placement into the spec, and place the part
   **by its pivot** with **`AnimEngine.renderLayer`** (the verified
@@ -731,10 +734,14 @@ sprites. **Future 3D-model support belongs in this directory**, not under
   + **`AnimEngine.renderLayer(...)`** (exposed `_renderLayer`), and the **`blink`**
   recipe (periodic `scaleY` squash). Driven by `AppState` (`puppetRig`,
   `addPuppetParts`, `puppetFromSheetCells` (Ripper "Send to Puppet" handoff),
-  `previewPuppet({talk})` (downscaled animated PNG frames), `bakePuppet({name})`
-  → idle `(a)` + talk `(b)` lossless WebP added as one emote via `addSprites`) and
-  the **Puppet Studio** screen (nav index 14, project-**free** — it *builds* a
-  character). See docs/PUPPET.md.
+  `previewPuppet({talk})` (renders at a reduced `scale` ≤320px / ≤240 mobile),
+  `bakePuppet({name})` → idle `(a)` + talk `(b)` lossless WebP added as one emote
+  via `addSprites`) and the **Puppet Studio** screen (nav index 14, project-**free**
+  — it *builds* a character). **Mobile-safety:** both import paths **cap the rig
+  canvas** (`_puppetMaxCanvas` 384 mobile / 768 desktop, scaling canvas + parts by
+  one factor so the assembly is unchanged) because a sheet-sourced rig's full size
+  (1024–2048px) OOM-crashed Android; import/bake leave `logCrash` breadcrumbs.
+  See docs/PUPPET.md.
 
 ### theme/ao2_theme.dart  ← AO2 client theme model
 - The real AO2 theme format (Qt `QSettings` flat INIs): design = `name = x,y,w,h`,
@@ -837,7 +844,9 @@ sprites. **Future 3D-model support belongs in this directory**, not under
 ### ui/
 - `AppState extends ChangeNotifier` (`ui/app_state.dart`) — the hub the screens
   use: import (files/folder), **addSprites** (grow an existing character without
-  losing emotes/edits — appends an emote per *new* sprite group), scan/build,
+  losing emotes/edits — appends an emote per *new* sprite group), **addSoundFiles**
+  (import `.opus`/`.ogg`/`.wav`/`.mp3` SFX into the project → bundled on export +
+  offered in the Emotes Sound picker; see docs/SFX.md), scan/build,
   edit, undo/redo, previews, live pipeline, apply/bulk, **bulkRename**,
   **crop/grow/resize/trim/bg via previewEdit/applyEdit** (`SpriteEditSpec` now
   carries `scaleX/scaleY`; `currentSpriteSize()` feeds the Edit screen's px

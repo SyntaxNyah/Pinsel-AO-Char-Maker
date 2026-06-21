@@ -47,6 +47,11 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
   wrong art. The primary keeps the identity; whatever a single character can't
   carry (a second `[Shouts]`/alt-options) is **reported, never dropped silently**.
   See [docs/CHARACTER_MERGE.md](docs/CHARACTER_MERGE.md).
+- **Sound effects (SFX).** **Add sound (SFX)** imports your `.opus`/`.ogg`/`.wav`/
+  `.mp3` into the character so it ships with the export and shows up in the Emotes
+  **Sound** picker — then point an emote's `SoundN` at it (with a preanim + the
+  "play preanim + sound" modifier) to make it play, e.g. a jumpscare scream. See
+  [docs/SFX.md](docs/SFX.md).
 - **Auto folders + file moving.** Builds the character folder, an `emotions/`
   folder, and lays everything out the way AO expects.
 - **Auto buttons + char_icon.** Generates `buttonN_off.png` for every emote
@@ -245,6 +250,7 @@ platform via [`.github/workflows/build.yml`](.github/workflows/build.yml).
 | [docs/BUILD_AND_RUN.md](docs/BUILD_AND_RUN.md) | Build & run on every platform + the web |
 | [docs/WEBSITE.md](docs/WEBSITE.md) | Host it as a website (GitHub Pages, Netlify, …) |
 | [docs/CHAR_INI_FORMAT.md](docs/CHAR_INI_FORMAT.md) | Complete AO `char.ini` reference |
+| [docs/SFX.md](docs/SFX.md) | Add a sound effect (SFX) to an emote — import, attach, play |
 | [docs/AUTO_BUILD.md](docs/AUTO_BUILD.md) | How folder → character works |
 | [docs/CHARACTER_MERGE.md](docs/CHARACTER_MERGE.md) | Merge two+ characters into one (renumber buttons, dodge name clashes) |
 | [docs/ONE_CLICK.md](docs/ONE_CLICK.md) | ⚡ One-click: folder → finished, exported character |

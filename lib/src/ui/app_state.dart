@@ -716,6 +716,38 @@ class AppState extends ChangeNotifier {
     return added;
   }
 
+  /// **Import sound / SFX files** (opus/ogg/wav/mp3) into the project so they
+  /// ship inside the exported character folder and show up in the Emotes tab's
+  /// **Sound (SoundN)** picker. AO references a sound by *name* (no extension),
+  /// so after importing `scream.opus`, set an emote's Sound to `scream` — and
+  /// give that emote a preanim + the **"Play preanim + sound"** modifier — for it
+  /// to play (e.g. a jumpscare). Non-audio files in the selection are ignored.
+  /// Returns how many sounds were added. (Add these *after* importing your
+  /// sprites — a fresh sprite import clears the project.)
+  Future<int> addSoundFiles(List<PickedFile> files) async {
+    final List<PickedFile> audio = <PickedFile>[
+      for (final PickedFile f in files)
+        if (kAudioExtensions
+            .contains(p.extension(f.name).replaceFirst('.', '').toLowerCase()))
+          f,
+    ];
+    if (audio.isEmpty) {
+      _setBusy(false, 'No sound files (opus/ogg/wav/mp3) in that selection.');
+      return 0;
+    }
+    for (final PickedFile f in audio) {
+      workspace.put(Workspace.norm(f.name), f.bytes);
+    }
+    await logCrash('addSounds: ${audio.length} file(s)');
+    final String names =
+        audio.map((PickedFile f) => p.basenameWithoutExtension(f.name)).join(', ');
+    _setBusy(
+        false,
+        'Added ${audio.length} sound(s): $names. Set an emote\'s Sound to its '
+        'name in the Emotes tab.');
+    return audio.length;
+  }
+
   /// **Repair every char.ini in a picked folder** (and its subfolders): find
   /// each `char.ini`, scan its sibling sprites, and rebuild its emote list from
   /// what's actually on disk — drop emotes whose sprite is gone, add an emote for
@@ -2901,8 +2933,28 @@ class AppState extends ChangeNotifier {
     return PuppetRole.accessory;
   }
 
+  /// The largest rig-canvas edge a puppet import allows before it scales the
+  /// whole rig down to fit. **Mobile is RAM-constrained**, so a big sheet
+  /// (1024–2048 px) must NOT become the bake canvas — rendering that × frames ×
+  /// layers is what OOM-crashed the app on Android. AO sprites are ~256–512 px
+  /// anyway, so capping costs no real quality.
+  int get _puppetMaxCanvas => isMobile ? 384 : 768;
+
+  /// Downscale [im] so its longest edge ≤ [_puppetMaxCanvas] (identity if already
+  /// small), keeping each puppet part from being a phone-killing buffer.
+  img.Image _capImage(img.Image im) {
+    final int maxDim = im.width > im.height ? im.width : im.height;
+    if (maxDim <= _puppetMaxCanvas) return im;
+    final double f = _puppetMaxCanvas / maxDim;
+    return img.copyResize(im,
+        width: (im.width * f).round(),
+        height: (im.height * f).round(),
+        interpolation: img.Interpolation.average);
+  }
+
   /// Add part images as new puppet layers (centred). Roles are guessed from the
-  /// file names so the idle motion auto-seeds sensibly.
+  /// file names so the idle motion auto-seeds sensibly. Each part is capped to a
+  /// mobile-safe size ([_capImage]).
   void addPuppetParts(List<PickedFile> files) {
     if (files.isEmpty) return;
     final bool fresh = puppetRig == null;
@@ -2911,12 +2963,12 @@ class AppState extends ChangeNotifier {
       final img.Image? im = Codecs.decodeFirstFrame(f.bytes,
           ext: p.extension(f.name).replaceFirst('.', ''));
       if (im == null) continue;
-      rig.layers.add(PuppetLayer.withRoleDefaults(im,
+      rig.layers.add(PuppetLayer.withRoleDefaults(_capImage(im),
           name: p.basenameWithoutExtension(f.name), role: _guessRole(f.name)));
     }
     if (fresh && rig.layers.isNotEmpty) {
-      // Size the canvas to the biggest part (parts dropped in as separate files
-      // are usually pre-aligned full-frame layers).
+      // Size the canvas to the biggest (already-capped) part (parts dropped in as
+      // separate files are usually pre-aligned full-frame layers).
       int w = 0, h = 0;
       for (final PuppetLayer l in rig.layers) {
         if (l.image.width > w) w = l.image.width;
@@ -2927,6 +2979,8 @@ class AppState extends ChangeNotifier {
     }
     puppetRig = rig;
     selectedPuppetLayer = rig.layers.isEmpty ? null : rig.layers.length - 1;
+    logCrash('puppet addParts: ${rig.width}x${rig.height}, '
+        '${rig.layers.length} layers, mobile=$isMobile');
     status = 'Puppet: ${rig.layers.length} layer(s).';
     notifyListeners();
   }
@@ -2945,10 +2999,25 @@ class AppState extends ChangeNotifier {
     final List<SheetCell> enabled =
         cells.where((SheetCell c) => c.enabled).toList();
     if (enabled.isEmpty) return;
-    final PuppetRig rig = PuppetRig(width: sheet.width, height: sheet.height);
+    // Scale the WHOLE rig (canvas + every part) by one factor so a huge sheet
+    // (the mobile-OOM cause) becomes a memory-safe canvas without distorting the
+    // assembly — cell positions are normalized, so they're unaffected.
+    final int maxDim = sheet.width > sheet.height ? sheet.width : sheet.height;
+    final double f =
+        maxDim <= _puppetMaxCanvas ? 1.0 : _puppetMaxCanvas / maxDim;
+    final int cw = (sheet.width * f).round();
+    final int ch = (sheet.height * f).round();
+    final PuppetRig rig =
+        PuppetRig(width: cw < 64 ? 64 : cw, height: ch < 64 ? 64 : ch);
     for (final SheetCell c in enabled) {
-      final img.Image piece = SpriteSheet.extract(sheet, c.rect,
+      img.Image piece = SpriteSheet.extract(sheet, c.rect,
           removeBg: removeBg, bgColor: bgColor, tolerance: tolerance);
+      if (f < 1.0) {
+        piece = img.copyResize(piece,
+            width: (piece.width * f).round().clamp(1, 1 << 14),
+            height: (piece.height * f).round().clamp(1, 1 << 14),
+            interpolation: img.Interpolation.average);
+      }
       rig.layers.add(PuppetLayer.withRoleDefaults(
         piece,
         name: c.name,
@@ -2959,7 +3028,10 @@ class AppState extends ChangeNotifier {
     }
     puppetRig = rig;
     selectedPuppetLayer = 0;
-    status = 'Loaded ${enabled.length} parts into the Puppet Studio.';
+    logCrash('puppet fromSheet: sheet ${sheet.width}x${sheet.height} → rig '
+        '${rig.width}x${rig.height}, ${enabled.length} parts, mobile=$isMobile');
+    status = 'Loaded ${enabled.length} parts into the Puppet Studio '
+        '(canvas ${rig.width}×${rig.height}).';
     notifyListeners();
   }
 
@@ -3008,14 +3080,21 @@ class AppState extends ChangeNotifier {
       {bool talk = false, int maxEdge = 320}) async {
     final PuppetRig? rig = puppetRig;
     if (rig == null || rig.isEmpty) return const <Uint8List>[];
+    // Render the preview at a reduced scale (≤ edge) rather than rendering the
+    // full canvas then shrinking — a sheet-sourced rig's canvas is often 1024px+,
+    // so this is the difference between a laggy and a snappy preview. Mobile gets
+    // an even smaller edge (less RAM/CPU).
+    final int edge = isMobile ? 240 : maxEdge;
+    final int maxDim = rig.width > rig.height ? rig.width : rig.height;
+    final double scale = maxDim <= edge ? 1.0 : edge / maxDim;
     final AnimClip clip = PuppetEngine.render(rig,
         frames: puppetFrames,
         fps: puppetFps,
         talk: talk,
-        talkOpen: puppetTalkOpen);
+        talkOpen: puppetTalkOpen,
+        scale: scale);
     return <Uint8List>[
-      for (final AnimFrame f in clip.frames)
-        Codecs.encodePng(_fitEdge(f.image, maxEdge)),
+      for (final AnimFrame f in clip.frames) Codecs.encodePng(f.image),
     ];
   }
 
@@ -3032,7 +3111,7 @@ class AppState extends ChangeNotifier {
     final String safe = _cleanProjectName(name) ?? 'puppet';
     _setBusy(true, 'Baking puppet animation…');
     await logCrash('bakePuppet start: ${rig.layers.length} layer(s), '
-        '$puppetFrames frames');
+        '${rig.width}x${rig.height} canvas, $puppetFrames frames, mobile=$isMobile');
     // Single-emote bake on the UI isolate (like saveMouthTalk); yield between the
     // two clips so the busy indicator paints.
     final AnimClip idle = PuppetEngine.render(rig,

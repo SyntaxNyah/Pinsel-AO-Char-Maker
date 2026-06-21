@@ -68,6 +68,30 @@ class HomeScreen extends StatelessWidget {
     ]);
   }
 
+  /// **Add a sound effect (SFX)** to the character: import audio files so they
+  /// ship with the export and appear in the Emotes Sound picker. AO plays a sound
+  /// by name — set the emote's Sound (SoundN) to the file's base name.
+  Future<void> _addSounds(BuildContext context) async {
+    final AppState app = context.read<AppState>();
+    final FilePickerResult? res = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: true,
+      type: FileType.custom,
+      allowedExtensions: kAudioExtensions,
+    );
+    if (res == null) return;
+    final int n = await app.addSoundFiles(<PickedFile>[
+      for (final PlatformFile f in res.files)
+        if (f.bytes != null) PickedFile(f.name, f.bytes!),
+    ]);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text(n > 0 ? app.status : 'No sound files added.'),
+      ));
+    }
+  }
+
   /// Bulk-build many characters from one **parent** folder: each sub-folder of
   /// sprites becomes its own AO-ready character folder (char.ini, sprites,
   /// emotions/ buttons, char_icon), all packed into a single .zip. Uses the
@@ -269,6 +293,11 @@ class HomeScreen extends StatelessWidget {
                 onPressed: () => _addSpriteFolder(context),
                 icon: const Icon(Icons.create_new_folder_outlined),
                 label: const Text('Add sprite folder'),
+              ),
+              FilledButton.tonalIcon(
+                onPressed: () => _addSounds(context),
+                icon: const Icon(Icons.music_note_rounded),
+                label: const Text('Add sound (SFX)'),
               ),
               OutlinedButton.icon(
                 onPressed: () => app.exportZip(),

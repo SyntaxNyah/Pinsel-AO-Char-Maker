@@ -182,6 +182,10 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   `[Shouts]`/`[Options2-5]`/…) is **reported, not dropped silently**. Downloads
   `<name>_merged.zip`, project untouched (`discovery/character_merge.dart`, tested;
   see [docs/CHARACTER_MERGE.md](docs/CHARACTER_MERGE.md)).
+- ✅ **Sound effects (SFX) import** — Home "Add sound (SFX)"
+  (`AppState.addSoundFiles`) imports `.opus`/`.ogg`/`.wav`/`.mp3` into the project
+  so they bundle in the export + appear in the Emotes Sound picker; attach via the
+  existing `SoundN`/`SoundT`/`SoundL` fields. See [docs/SFX.md](docs/SFX.md).
 - ✅ **More jiggle presets** — a **Lifelike** category (Heave/Sultry/Quiver/Sashay/
   Drop Settle/Flutter/Pillowy) tuned with the realism knobs; zero perf cost (data).
 - ✅ **Crash breadcrumbs** — every heavy op (`import`/`addSprites`/`bulkAnimate`/
@@ -232,6 +236,14 @@ not Cubism/3D models, so everything here **bakes** down to animated AO sprites.
   any `mouth` layer. Idle + talk always share canvas size (AO never jumps). Reuses
   the **Ripper** (slice) + **Compositor/AnimEngine** (composite); pure + tested
   (`test/puppet_test.dart`). Ripper has a **"Send to Puppet"** handoff.
+- ✅ **Puppet mobile/perf hardening** — a sheet-sourced rig inherited the whole
+  sheet's size (1024–2048 px) and OOM-crashed Android. Fixed: the rig **canvas is
+  capped on import** (≈384 px mobile / 768 desktop, scaling canvas + parts by one
+  factor so the assembly is unchanged), the preview renders at a **reduced scale**
+  (`PuppetEngine.render(scale:)`, ≤240 px on mobile) + debounced, slider drags
+  repaint only themselves (one notify on release), a **"Rendering…"** indicator
+  shows it's working, and import/bake leave **crash breadcrumbs** (canvas size +
+  `mobile=`).
 - 🟡 Auto-assembly of a *packed* atlas (right now auto-detect finds the parts but
   you arrange the pose by hand)
 - ⬜ Mesh/soft-body **warp** per part (true deform, not just move/rotate/scale —

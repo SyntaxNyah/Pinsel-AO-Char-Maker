@@ -93,4 +93,18 @@ void main() {
     expect(clip.frames.length, 12);
     expect(clip.frames.map((f) => f.delayCentis).toSet().length, 1);
   });
+
+  test('scale renders a proportionally smaller clip (the preview perf path)', () {
+    final PuppetRig rig = PuppetRig(width: 200, height: 100, layers: <PuppetLayer>[
+      PuppetLayer.withRoleDefaults(_solid(40, 40),
+          name: 'hair', role: PuppetRole.hair),
+    ]);
+    final full = PuppetEngine.render(rig, frames: 4);
+    final half = PuppetEngine.render(rig, frames: 4, scale: 0.5);
+    expect(full.width, 200);
+    expect(full.height, 100);
+    expect(half.width, 100); // canvas halved
+    expect(half.height, 50);
+    expect(half.frames.length, full.frames.length); // same frame count
+  });
 }

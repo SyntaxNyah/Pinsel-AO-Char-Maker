@@ -212,16 +212,23 @@ class PuppetEngine {
     bool talk = false,
     double talkOpen = defaultTalkOpen,
     double talkSyllables = 3,
+    double scale = 1.0,
   }) {
-    final int w = math.max(1, rig.width);
-    final int h = math.max(1, rig.height);
+    // [scale] < 1 renders the WHOLE rig smaller (canvas + parts + motion travel),
+    // so a fast preview is a proportionally-shrunk version of the full-res bake —
+    // the big perf win, since a sheet-sourced rig's canvas can be 1024px+.
+    final double s = scale <= 0 ? 1.0 : scale;
+    final int w = math.max(1, (rig.width * s).round());
+    final int h = math.max(1, (rig.height * s).round());
     final int n = rig.animates(talk: talk) ? math.max(1, frames) : 1;
     final int delayCentis = math.max(1, (100 / math.max(1, fps)).round());
 
-    // Pivot is constant per layer, so centre each part on its pivot ONCE.
+    // Pivot is constant per layer, so pre-scale (cheap preview) + centre each
+    // part on its pivot ONCE — the expensive copyResize/copyRotate then run on
+    // small images, not per frame at full res.
     final List<img.Image> centered = <img.Image>[
       for (final PuppetLayer l in rig.layers)
-        _centerOnPivot(l.image, l.pivotX, l.pivotY),
+        _centerOnPivot(_scalePart(l.image, s), l.pivotX, l.pivotY),
     ];
 
     final List<AnimFrame> out = <AnimFrame>[];
@@ -238,7 +245,11 @@ class PuppetEngine {
         final FrameSpec spec = AnimEngine.frameSpec(lt, l.motion);
 
         // Fold the layer's static placement into the spec so the shared
-        // renderLayer maths handles everything in one transform.
+        // renderLayer maths handles everything in one transform. Motion
+        // *translation* scales with the canvas; scale/rotate/opacity are
+        // resolution-independent already.
+        spec.dx *= s;
+        spec.dy *= s;
         spec.scale *= l.scale;
         spec.angle += l.angle;
         spec.opacity *= l.opacity;
@@ -259,6 +270,16 @@ class PuppetEngine {
       out.add(AnimFrame(canvas, delayCentis: delayCentis));
     }
     return AnimClip(out);
+  }
+
+  /// Pre-scale a part for a reduced-resolution (preview) render. `average`
+  /// downscale is fast + clean; identity at s≈1 (the bake path).
+  static img.Image _scalePart(img.Image part, double s) {
+    if (s >= 0.999) return part;
+    return img.copyResize(part,
+        width: math.max(1, (part.width * s).round()),
+        height: math.max(1, (part.height * s).round()),
+        interpolation: img.Interpolation.average);
   }
 
   /// Pad [part] so its [px]/[py] pivot sits at the centre of the returned image

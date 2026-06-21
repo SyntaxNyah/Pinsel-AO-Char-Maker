@@ -79,6 +79,22 @@ They're added to the character as one new **emote** (lossless WebP; APNG
 fallback). A perfectly static rig collapses to a single idle frame. From there
 it's a normal emote — recolour it, frame its button, export from Home.
 
+## Performance (it has to run on a phone)
+
+A puppet is the heaviest thing the app renders (every layer, every frame), so:
+
+- **The rig canvas is capped on import** (≈384 px on mobile, 768 px on desktop) —
+  a sheet-sourced rig would otherwise inherit the *whole sheet's* size (often
+  1024–2048 px), and rendering that × frames × layers **OOM-crashed the app on
+  Android**. The whole rig (canvas + every part) is scaled by one factor, so the
+  assembly is unchanged — just memory-safe. AO sprites are ~256–512 px anyway, so
+  there's no real quality cost; nudge **Canvas W/H** up if you want a bigger bake.
+- **The live preview renders at a reduced scale** (≤320 px, ≤240 on mobile),
+  debounced, and a drag only repaints the slider — so editing stays smooth even
+  though the final bake is full-res.
+- The **bake** runs on the UI isolate like the other single-emote saves
+  (`saveMouthTalk`); a heavy multi-layer bake briefly shows a busy indicator.
+
 ## Limitations (be honest)
 
 - **Flat parts don't truly deform.** This is *cut-out* puppet animation (move /
