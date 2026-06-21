@@ -39,6 +39,14 @@ Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
   turns each new sprite into a new emote — keeping your existing `char.ini`,
   emotes and edits. Grow a character instead of rebuilding it. Trim a big cast
   fast with **multi-select** in the Emotes tab (tick rows → delete many at once).
+- **Merge two characters into one.** Got two correct characters and want them as
+  one big cast? **Merge characters into one** (Home) fuses every `char.ini` in a
+  picked folder into a single character — emote lists joined, **buttons
+  renumbered** to stay with their emote, and any **clashing sprite/preanim/sound
+  names restructured** with the `char.ini` updated to match, so nothing shows the
+  wrong art. The primary keeps the identity; whatever a single character can't
+  carry (a second `[Shouts]`/alt-options) is **reported, never dropped silently**.
+  See [docs/CHARACTER_MERGE.md](docs/CHARACTER_MERGE.md).
 - **Auto folders + file moving.** Builds the character folder, an `emotions/`
   folder, and lays everything out the way AO expects.
 - **Auto buttons + char_icon.** Generates `buttonN_off.png` for every emote
@@ -223,6 +231,7 @@ platform via [`.github/workflows/build.yml`](.github/workflows/build.yml).
 | [docs/WEBSITE.md](docs/WEBSITE.md) | Host it as a website (GitHub Pages, Netlify, …) |
 | [docs/CHAR_INI_FORMAT.md](docs/CHAR_INI_FORMAT.md) | Complete AO `char.ini` reference |
 | [docs/AUTO_BUILD.md](docs/AUTO_BUILD.md) | How folder → character works |
+| [docs/CHARACTER_MERGE.md](docs/CHARACTER_MERGE.md) | Merge two+ characters into one (renumber buttons, dodge name clashes) |
 | [docs/ONE_CLICK.md](docs/ONE_CLICK.md) | ⚡ One-click: folder → finished, exported character |
 | [docs/COLOR_OPS.md](docs/COLOR_OPS.md) | Every colour operation + parameters |
 | [docs/PAINT.md](docs/PAINT.md) | Paint Studio — brushes, gradient/region fills, blend modes |

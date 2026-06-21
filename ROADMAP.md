@@ -170,6 +170,18 @@ Legend: ✅ done · 🟡 partial · ⬜ planned
   (and subfolders) for every `char.ini` and rebuilds each emote list from the
   sprites actually present (drops dangling refs, adds orphan sprites, keeps
   `[Options]`), downloading `repaired_inis.zip` (`discovery/ini_repair.dart`, tested).
+- ✅ **Character merge** — Home "Merge characters into one": fuses every `char.ini`
+  in a picked folder into a **single** character. Emote lists are concatenated
+  (`serialize()` renumbers `[Emotions]`/`SoundN/T/L/B`/`Videos`/`OptionsN`),
+  buttons are **renumbered positionally** so they stay glued to their emote, and
+  colliding **sprite/preanim/sound** file names are **restructured** (`normal` →
+  `normal_2`, all `(a)/(b)/(c)/static` in lockstep) with the `char.ini` references
+  rewritten to match; byte-identical files de-dupe. The alphabetically-first
+  character is the primary and keeps the identity (`[Options]`/shouts/timing +
+  `char_icon`); every secondary section a single character can't carry (a second
+  `[Shouts]`/`[Options2-5]`/…) is **reported, not dropped silently**. Downloads
+  `<name>_merged.zip`, project untouched (`discovery/character_merge.dart`, tested;
+  see [docs/CHARACTER_MERGE.md](docs/CHARACTER_MERGE.md)).
 - ✅ **More jiggle presets** — a **Lifelike** category (Heave/Sultry/Quiver/Sashay/
   Drop Settle/Flutter/Pillowy) tuned with the realism knobs; zero perf cost (data).
 - ✅ **Crash breadcrumbs** — every heavy op (`import`/`addSprites`/`bulkAnimate`/

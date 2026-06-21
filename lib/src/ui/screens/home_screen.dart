@@ -110,6 +110,26 @@ class HomeScreen extends StatelessWidget {
     }
   }
 
+  /// **Merge characters into one:** pick a parent folder that holds two (or more)
+  /// complete character sub-folders and fuse them into a single character — emote
+  /// lists joined, buttons renumbered to their emote, colliding file names
+  /// restructured + the ini updated to match. Downloads `<name>_merged.zip`;
+  /// doesn't touch the open project.
+  Future<void> _mergeCharacters(BuildContext context) async {
+    final AppState app = context.read<AppState>();
+    final PickedFolder? picked = await pickFolderFiles();
+    if (picked == null || picked.files.isEmpty) return;
+    final String summary = await app.mergeCharactersInFolder(<PickedFile>[
+      for (final PickedFolderFile f in picked.files) PickedFile(f.name, f.bytes),
+    ]);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Text(summary),
+      ));
+    }
+  }
+
   /// **One-click: a folder of sprites → a finished, exported character.** Picks
   /// a folder, imports it (auto char.ini + emotes), converts sprites to WebP,
   /// generates buttons + char_icon, and downloads the ready-to-drop `.zip` — the
@@ -228,6 +248,11 @@ class HomeScreen extends StatelessWidget {
               onPressed: () => _repairInis(context),
               icon: const Icon(Icons.healing_rounded),
               label: const Text('Repair char.inis in a folder'),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: () => _mergeCharacters(context),
+              icon: const Icon(Icons.merge_type),
+              label: const Text('Merge characters into one'),
             ),
             if (app.hasProject) ...<Widget>[
               FilledButton.icon(

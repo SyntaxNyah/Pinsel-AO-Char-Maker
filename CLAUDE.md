@@ -64,7 +64,7 @@ lib/src/
   core/        AO data model (constants, ini, emote, character, frame effects,
                validator, history)
   discovery/   folder → character (scanner, builder, organizer, bulk rename,
-               bulk folders → many characters)
+               bulk folders → many characters, ini repair, merge many → one)
   imaging/     codecs, colour ops, region edit, sprite edit (crop/trim/bg),
                **sprite zoom (normalized camera)**, compositor, buttons, bulk,
                webp, sprite sheet ripper,
@@ -215,6 +215,35 @@ The central model.
   (`test/ini_repair_test.dart`). Drives `AppState.repairInisInFolder(files)` (find
   → repair each → download `repaired_inis.zip`; project untouched), surfaced as the
   Home **"Repair char.inis in a folder"** button.
+
+### discovery/character_merge.dart  ← fuse many characters into one
+- `class MergeSource(label, Character, Map<relWithinFolder, bytes>)` — one complete
+  character to merge. `class MergeResult(character, files, report)` — the merged
+  `Character` + the merged folder (`relPath→bytes`, **incl. the rewritten
+  `char.ini`**). `class MergeReport` — counts + `notes` (renames) + **`losses`**
+  (secondary sections not carried) + `summary`.
+- **`CharacterMerge.merge(List<MergeSource>)`** — pure, the engine behind "combine
+  two characters into one": concatenates emote lists (so `serialize()` renumbers
+  `[Emotions]`/`SoundN/T/L/B`/`Videos`/`OptionsN` for free), **renumbers buttons
+  positionally** (`emotions/buttonK` → `button{offset+K}` — buttons are keyed by
+  emote index, not sprite name), and **resolves name clashes**: a sprite **base**
+  whose files would overwrite an existing file with *different* bytes is renamed
+  (`normal`→`normal_2`, all `(a)/(b)/(c)/static` in lockstep) and the emote
+  `sprite` + frame-effect `spriteRef` are updated to match; byte-identical files
+  de-dupe (kept once). Same byte-collision rename for `anim/` **preanims**
+  (→ `preanim` field) and bundled **audio** (→ `SoundN`). The **primary**
+  (`sources.first`) keeps the identity — `[Options]`/`[Options2-5]`/`[Shouts]`/
+  `[Time]`/unknown sections + its `char_icon.png`; every non-empty secondary
+  section it can't carry is recorded in `report.losses` (**never dropped
+  silently**) and a secondary emote's `OptionsN` ref is cleared. Reuses
+  `SpriteScanner` to partition each source's files (groups / preanims / chrome);
+  leaf renames go through `_renameRel`/`_replaceTrailingLeaf`, frame-effect remap
+  is keyed by the **full base** (not the leaf, so `arm`≠`forearm`). Pure + tested
+  (`test/character_merge_test.dart`). Drives `AppState.mergeCharactersInFolder(
+  files)` (find char folders via `IniRepair.findCharFolders` → sort alphabetically
+  for a deterministic primary → merge → download `<name>_merged.zip`; project
+  untouched), surfaced as the Home **"Merge characters into one"** button. See
+  docs/CHARACTER_MERGE.md.
 
 ### discovery/organizer.dart
 - `typedef ButtonRenderer = Future<Uint8List?> Function(bytes, ext, size,
@@ -779,8 +808,10 @@ every sprite keeps the cast aligned in-game.
   zip/ini, and
   **bulkBuildCharacters** (parent folder → many characters in one `.zip` — groups
   via `BulkFolders.split`, builds/organises each in a throwaway workspace using
-  the studio settings, never touching the open project). Read it before adding a
-  screen.
+  the studio settings, never touching the open project), and
+  **mergeCharactersInFolder** (the *opposite* — many character folders → **one**
+  merged character `.zip` via `CharacterMerge.merge`; project untouched). Read it
+  before adding a screen.
   - **Talking mouths**: `previewMouthTalk(mouth,…)` (live loop), `saveMouthTalk(mouth,
     {prefix,…})` (one sprite), **`bulkMouthTalkAll({…})`** (every sprite, auto mouth
     per face), `defaultMouthRegionFor(rel)` + `currentSpriteAspect()` seed the Mouth

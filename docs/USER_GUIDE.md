@@ -114,6 +114,16 @@ count. A spinner there means it's working.
   → `Name/char.ini` + sprites + `emotions/` + `char_icon.png`). Great for making
   10 characters in one click; uses your current Button Studio settings and leaves
   your open project alone. See [Auto-build → Bulk folders](AUTO_BUILD.md).
+- **Merge characters into one** — the *opposite* of bulk folders: point at a
+  folder holding two (or more) **complete** character sub-folders and fuse them
+  into **one** character. The emote lists are joined, the **buttons are
+  renumbered** to stay on the right emote, and any **clashing sprite/preanim/sound
+  names are restructured** (`normal` → `normal_2`) with the `char.ini` updated so
+  nothing shows the wrong art. The first folder (alphabetically) keeps the
+  identity; anything a single character can't carry (a second `[Shouts]`/
+  alternate options) is **reported, not lost quietly**. Downloads
+  `<name>_merged.zip`; your open project is untouched. See
+  [Merge characters](CHARACTER_MERGE.md).
 
 **Update an existing character** (these appear once a project is loaded)
 - **Add sprites** / **Add sprite folder** — drop *more* images into the

@@ -19,6 +19,7 @@ import '../core/validator.dart';
 import '../discovery/bulk_folders.dart';
 import '../discovery/bulk_rename.dart';
 import '../discovery/character_builder.dart';
+import '../discovery/character_merge.dart';
 import '../discovery/ini_repair.dart';
 import '../discovery/organizer.dart';
 import '../discovery/sprite_scanner.dart';
@@ -753,6 +754,78 @@ class AppState extends ChangeNotifier {
         '($changed changed; +$addedTotal emote(s), −$droppedTotal dangling). '
         'Saved repaired_inis.zip.';
     await logCrash('repairInis done: $summary');
+    _setBusy(false, summary);
+    return summary;
+  }
+
+  /// **Merge every character in a picked folder into one.** Finds each `char.ini`
+  /// (in the folder and its subfolders), and fuses them into a single character:
+  /// the emote lists are concatenated, the buttons are renumbered to stay glued
+  /// to their emote, and any colliding sprite / preanim / sound file names are
+  /// restructured (renamed) with the `char.ini` references updated to match — so
+  /// "two characters in one" works without anything clobbering anything.
+  ///
+  /// The **primary** (the alphabetically-first character folder) keeps the
+  /// identity — `[Options]`, shouts, timing and its `char_icon.png`; what a single
+  /// merged character can't carry from the others is reported, never dropped
+  /// silently. The merged character downloads as `<name>_merged.zip`; the project
+  /// you have open is **untouched** (import the zip if you want to keep editing).
+  Future<String> mergeCharactersInFolder(List<PickedFile> files) async {
+    _setBusy(true, 'Scanning for characters to merge…');
+    await logCrash('merge start: ${files.length} file(s)');
+    final Map<String, Uint8List> byPath = <String, Uint8List>{
+      for (final PickedFile f in files) Workspace.norm(f.name): f.bytes,
+    };
+    final List<RepairTarget> targets = IniRepair.findCharFolders(byPath.keys);
+    if (targets.length < 2) {
+      final String why = 'Need at least two char.ini folders to merge '
+          '(found ${targets.length}). Pick a folder that contains the character '
+          'sub-folders you want to combine.';
+      _setBusy(false, why);
+      return why;
+    }
+    // Deterministic primary: the alphabetically-first character folder keeps the
+    // identity (so the result is predictable, not picker-order-dependent).
+    targets.sort((RepairTarget a, RepairTarget b) =>
+        a.charDir.toLowerCase().compareTo(b.charDir.toLowerCase()));
+
+    final List<MergeSource> sources = <MergeSource>[];
+    for (final RepairTarget t in targets) {
+      final Uint8List? iniBytes = byPath[t.iniPath];
+      if (iniBytes == null) continue;
+      final Character c =
+          Character.parse(utf8.decode(iniBytes, allowMalformed: true));
+      final Map<String, Uint8List> fileMap = <String, Uint8List>{};
+      for (final String rel in t.spriteRelPaths) {
+        final String full = t.charDir.isEmpty ? rel : '${t.charDir}/$rel';
+        final Uint8List? b = byPath[full];
+        if (b != null) fileMap[Workspace.norm(rel)] = b;
+      }
+      final String label =
+          (t.charDir.isEmpty ? c.options.name : t.charDir.split('/').last)
+              .trim();
+      sources.add(MergeSource(label.isEmpty ? 'character' : label, c, fileMap));
+    }
+
+    _progress(1, 2, 'Merging ${sources.length} characters');
+    final MergeResult result = CharacterMerge.merge(sources);
+
+    final String name = _cleanProjectName(result.character.options.name) ??
+        _cleanProjectName(result.report.primary) ??
+        'merged';
+    final Archive archive = Archive();
+    result.files.forEach((String rel, Uint8List bytes) {
+      archive.addFile(ArchiveFile('$name/$rel', bytes.length, bytes));
+    });
+    final List<int>? zip = ZipEncoder().encode(archive);
+    if (zip != null) {
+      await saveBytes('${name}_merged.zip', Uint8List.fromList(zip));
+    }
+    _progress(2, 2, 'Merged');
+
+    final String summary = '${result.report.summary} Saved ${name}_merged.zip.';
+    await logCrash('merge done: $summary'
+        '${result.report.hasLosses ? ' | losses: ${result.report.losses.join(' · ')}' : ''}');
     _setBusy(false, summary);
     return summary;
   }
