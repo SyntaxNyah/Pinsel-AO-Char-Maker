@@ -184,6 +184,17 @@ The central model.
 - `class ScanResult` — `groups`, `preanimCandidates`, `ignored`, `.isEmpty`.
 - `class SpriteScanner` — `.scanDirectory(root)` (dart:io),
   **`.fromPaths(relPaths)`** (pure; the testable core, mirrors AO resolution).
+- **`class SpriteGroupIndex(groups)`** — the `emote.sprite → SpriteGroup` resolver.
+  `.resolve(base)` tries an **exact** match first (a correctly-built character is
+  byte-for-byte unaffected) then a **case/slash-folded** fallback
+  (`SpriteGroupIndex.foldBase` = trim → `\`→`/` → lower-case → drop a leading `/`).
+  AO resolves sprite files case-insensitively, so this must too — otherwise an
+  **imported** char.ini whose `sprite=` casing differs from the on-disk file names
+  silently loses **previews + button/char_icon generation** for every mismatched
+  emote (the "only one emotion exports / char data deleted" bug). Used by
+  `AppState._groupFor` (studio/preview), `Organizer.plan` (export buttons) and
+  `CharacterValidator.validate` (so its "no sprite file found" lint stops crying
+  wolf). Tested in `test/sprite_scanner_test.dart` + `test/organizer_test.dart`.
 
 ### discovery/character_builder.dart
 - `class BuildConfig({name,showname,side,blips,chat,scaling,defaultDeskMod,
@@ -1407,12 +1418,16 @@ round-trip test. Preserve anything you don't model in `unknownSections`/`extra`.
   `dr*dr+dg*dg+db*db` and compare against `tol*tol` (don't `sqrt`) — `pow` is much
   slower than a multiply. Already applied in `_replaceColor`/`_vignette` +
   `RegionEditor.selectByColor`/`eraseColor`; don't reintroduce them.
-- **Sprite lookup is O(1), not a scan:** `AppState.spriteRelFor`/`relForBase`/the
-  group selectors use the lazy `_groupFor(base)` index (a `base → SpriteGroup`
-  map), NOT `scan.groups.firstWhereOrNull(...)` (that was O(N) **per emote row** →
-  O(N²)). The index rebuilds via the **`scan` setter**; if you ever mutate
-  `scan.groups` **in place** (only `addCompositeSprite` does), null `_groupByBase`
-  to invalidate it.
+- **Sprite lookup is O(1) AND case-tolerant, not a scan:** `AppState.spriteRelFor`/
+  `relForBase`/the group selectors use the lazy `_groupFor(base)` index (a
+  `SpriteGroupIndex` over `scan.groups`), NOT `scan.groups.firstWhereOrNull(...)`
+  (that was O(N) **per emote row** → O(N²)). It resolves **exact-first, then
+  case/slash-folded** (see `SpriteGroupIndex`) so imported inis with mismatched
+  casing still find their sprites. The index rebuilds via the **`scan` setter**; if
+  you ever mutate `scan.groups` **in place** (only `addCompositeSprite` does), null
+  **`_groupIndex`** to invalidate it. The export (`Organizer.plan`) + the validator
+  build their own `SpriteGroupIndex` from `scan.groups` — keep all three on the
+  same resolver so studio previews, exported buttons and lint agree.
   **docs/PERFORMANCE.md → "Audit"** tracks the remaining performance wins
   (O(1) sprite lookup, off-isolate "apply to all" bakes, parallel export buttons,
   bounded LRU caches, op fusion) — check it before optimising.

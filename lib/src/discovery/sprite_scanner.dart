@@ -232,6 +232,48 @@ class _Classified {
   final String base;
 }
 
+/// Case- and slash-tolerant `emote.sprite → SpriteGroup` resolver.
+///
+/// An emote's `sprite` field is matched against [SpriteGroup.base]. For a
+/// character the app **auto-built**, this is always an exact match (the builder
+/// sets `emote.sprite = group.base`). But for an **imported** `char.ini` the
+/// `sprite` value is whatever the file's author typed, and the AO client resolves
+/// the matching image files **case-insensitively** (and tolerates the subfolder
+/// leading `/` being present or omitted). If resolution here required an exact
+/// string match, an imported character whose ini casing differs from its on-disk
+/// file names would silently lose **button generation and previews** for every
+/// mismatched emote — the "only one emotion exports / char data deleted" bug,
+/// because the exported `.zip` then contains a button for only the lone emote
+/// whose casing happened to match.
+///
+/// [resolve] tries an **exact** match first — so a correct character is
+/// byte-for-byte unaffected (no collisions, no behaviour change) — and only falls
+/// back to a normalised (trimmed, `\`→`/`, lower-cased, leading-`/`-folded) match
+/// when the exact lookup misses.
+class SpriteGroupIndex {
+  SpriteGroupIndex(Iterable<SpriteGroup> groups) {
+    for (final SpriteGroup g in groups) {
+      _exact[g.base] = g;
+      // First-wins keeps the fallback deterministic if two bases fold together
+      // (only possible on a case-sensitive filesystem — AO is ambiguous there too).
+      _folded.putIfAbsent(foldBase(g.base), () => g);
+    }
+  }
+
+  final Map<String, SpriteGroup> _exact = <String, SpriteGroup>{};
+  final Map<String, SpriteGroup> _folded = <String, SpriteGroup>{};
+
+  /// The group for [base], or null. Exact match first, then case/slash-folded.
+  SpriteGroup? resolve(String base) => _exact[base] ?? _folded[foldBase(base)];
+
+  /// Normalise a sprite base for tolerant matching: trim, `\`→`/`, lower-case,
+  /// and drop a single leading `/` (the optional AO subfolder marker).
+  static String foldBase(String base) {
+    final String b = base.trim().replaceAll(r'\', '/').toLowerCase();
+    return b.startsWith('/') ? b.substring(1) : b;
+  }
+}
+
 /// Title-case a `snake_case`/`camelCase`/`kebab` leaf into a friendly label.
 String _humanize(String raw) {
   final String spaced = raw

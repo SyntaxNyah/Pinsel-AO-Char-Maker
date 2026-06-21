@@ -44,6 +44,32 @@ void main() {
     expect(g.idle!.ext, 'webp');
   });
 
+  test('SpriteGroupIndex resolves exact first, then case/slash-folded', () {
+    // Files on disk are lower-case; an imported char.ini may reference them with
+    // different casing (and the subfolder leading `/` present or omitted).
+    final ScanResult r = scanner.fromPaths(<String>[
+      '(a)normal.png', '(b)normal.png',
+      '(a)happy.png',
+      '(a)/def/think.webp',
+    ]);
+    final SpriteGroupIndex index = SpriteGroupIndex(r.groups);
+
+    // Exact still works.
+    expect(index.resolve('normal')?.base, 'normal');
+    expect(index.resolve('/def/think')?.base, '/def/think');
+
+    // Case-insensitive fallback (the imported-ini bug): 'Normal' -> normal.
+    expect(index.resolve('Normal')?.base, 'normal');
+    expect(index.resolve('HAPPY')?.base, 'happy');
+
+    // Subfolder leading-`/` and casing both tolerated.
+    expect(index.resolve('Def/Think')?.base, '/def/think');
+    expect(index.resolve('/DEF/think')?.base, '/def/think');
+
+    // A genuinely absent sprite still returns null.
+    expect(index.resolve('missing'), isNull);
+  });
+
   test('auto-builder produces emotes with sensible defaults', () {
     final ScanResult r = scanner.fromPaths(<String>[
       '(a)normal.png', '(b)normal.png',

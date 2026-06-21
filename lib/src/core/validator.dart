@@ -44,9 +44,11 @@ class CharacterValidator {
     }
 
     final Set<String> seenComments = <String>{};
-    final Map<String, SpriteGroup>? byBase = scan == null
-        ? null
-        : <String, SpriteGroup>{for (final SpriteGroup g in scan.groups) g.base: g};
+    // Case/slash-tolerant (mirrors AO's own resolution + the organizer/preview
+    // path) so an imported char.ini whose `sprite=` casing differs from the file
+    // names isn't falsely flagged "no sprite file found" for emotes that work.
+    final SpriteGroupIndex? byBase =
+        scan == null ? null : SpriteGroupIndex(scan.groups);
 
     for (int i = 0; i < c.emotes.length; i++) {
       final Emote e = c.emotes[i];
@@ -84,7 +86,7 @@ class CharacterValidator {
       }
 
       if (byBase != null) {
-        final SpriteGroup? g = byBase[e.sprite];
+        final SpriteGroup? g = byBase.resolve(e.sprite);
         if (g == null || g.representative == null) {
           issues.add(LintIssue(LintSeverity.warning,
               'No sprite file found for "${e.sprite}".',

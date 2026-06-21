@@ -139,6 +139,23 @@ down-scales). If they still look soft:
 Buttons stay PNG because it's the most universally AO-compatible button format
 (lossless WebP buttons work in current AO2 but not everywhere).
 
+**Only one emote button (icon) shows up after export / my imported character
+lost its buttons / "the char data got deleted."**
+Fixed. The tool matched each emote's `sprite =` name against the actual sprite
+files **exactly**, but an imported `char.ini` often spells those names with
+**different capitalisation** than the files on disk (e.g. `sprite = Normal` while
+the file is `(a)normal.webp`). AO loads those files case-insensitively — so the
+character works in-game — but the button / `char_icon` generator skipped every
+emote whose casing didn't match, leaving only the one (if any) that happened to
+match exactly. With a button for just one emote, the exported `.zip` looked like
+"the emotions didn't save, only one did" or even "the character data was
+deleted." (Nothing is ever deleted: **Export .zip** and **One-Click → Finish &
+export everything** only ever *write* a fresh `.zip`; they don't touch your
+source folder.) Sprite-to-button matching is now **case-insensitive** and
+tolerates the optional subfolder leading `/`, exactly like AO, so **every** emote
+gets its button again. Re-export to regenerate them. (This also stops the
+**Character** lint from falsely warning "no sprite file found" on those emotes.)
+
 **Where do I set blips, chat, showname, or the side?**
 The **Character** tab — it's the full `char.ini` `[Options]` editor (name,
 showname, `needs_showname`, side, **blips**, **chat**, category, scaling,

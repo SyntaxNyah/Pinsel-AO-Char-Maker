@@ -127,7 +127,7 @@ class AppState extends ChangeNotifier {
   /// Setting the scan rebuilds the base→group index lazily (see [_groupFor]).
   set scan(ScanResult? v) {
     _scan = v;
-    _groupByBase = null;
+    _groupIndex = null;
   }
 
   /// Lazy `base → SpriteGroup` index over [scan]. `spriteRelFor` and the
@@ -136,14 +136,15 @@ class AppState extends ChangeNotifier {
   /// **O(N²)** on a big cast (list scroll, button thumbnails, the export plan).
   /// The index makes those lookups O(1). Built on first use after [scan] changes,
   /// and invalidated in place when a group is appended ([addCompositeSprite]).
-  Map<String, SpriteGroup>? _groupByBase;
+  /// Resolution is exact-first then case/slash-folded ([SpriteGroupIndex]) so an
+  /// imported char.ini whose `sprite=` casing differs from the file names still
+  /// resolves — otherwise its previews + buttons silently vanish.
+  SpriteGroupIndex? _groupIndex;
 
   SpriteGroup? _groupFor(String base) {
     final ScanResult? s = _scan;
     if (s == null) return null;
-    return (_groupByBase ??= <String, SpriteGroup>{
-      for (final SpriteGroup g in s.groups) g.base: g,
-    })[base];
+    return (_groupIndex ??= SpriteGroupIndex(s.groups)).resolve(base);
   }
 
   Character? character;
@@ -1267,7 +1268,7 @@ class AppState extends ChangeNotifier {
         base: safe,
       ));
     scan?.groups.add(group);
-    _groupByBase = null; // in-place append bypasses the scan setter — invalidate
+    _groupIndex = null; // in-place append bypasses the scan setter — invalidate
 
     character?.emotes.add(Emote(comment: safe, sprite: safe, deskMod: DeskModifier.show));
     selectedEmote = (character?.emotes.length ?? 1) - 1;

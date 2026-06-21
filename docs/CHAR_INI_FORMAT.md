@@ -27,6 +27,16 @@ For an emote whose `sprite` field is `foo`, the engine looks for, in order:
 Animated formats are tried before the static `.png`. Avoid having two formats
 with the same base name.
 
+**Case-insensitive matching.** AO resolves these files case-insensitively, and so
+does Pinsel: an emote whose `sprite` field is `Normal` still finds `(a)normal.webp`
+(and the optional subfolder leading `/` may be present or omitted). An **exact**
+match always wins first, so a correctly-cased character is unaffected; the folded
+match is only a fallback. This matters when **importing** an existing `char.ini`
+whose casing doesn't match the on-disk file names — without it, the previews,
+buttons and `char_icon` for every mismatched emote silently disappear (only the
+exactly-matching emote would export a button). See
+[FAQ.md](FAQ.md) → *"Only one emote button shows up after export."*
+
 ## Sections
 
 > Edit all of `[Options]` in the app's **Character** tab (the dedicated char.ini

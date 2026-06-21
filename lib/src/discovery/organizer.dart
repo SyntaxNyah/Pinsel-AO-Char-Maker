@@ -161,14 +161,16 @@ class Organizer {
     plan.iniRel = joinRel(charDir, CharFolder.iniName);
     plan.iniText = character.serialize();
 
-    final Map<String, SpriteGroup> byBase = <String, SpriteGroup>{
-      for (final SpriteGroup g in scan.groups) g.base: g,
-    };
+    // Case/slash-tolerant so an imported char.ini whose `sprite=` casing differs
+    // from the on-disk file names still finds its sprites (otherwise only the
+    // exactly-matching emote gets a button — the "only one emotion exports" bug).
+    final SpriteGroupIndex byBase = SpriteGroupIndex(scan.groups);
 
     /// The (target-relative) representative sprite for emote [i], or null.
     String? repRel(int i) {
       if (i < 0 || i >= character.emotes.length) return null;
-      final SpriteFile? rep = byBase[character.emotes[i].sprite]?.representative;
+      final SpriteFile? rep =
+          byBase.resolve(character.emotes[i].sprite)?.representative;
       return rep == null ? null : joinRel(charDir, rep.relPath);
     }
 
