@@ -434,7 +434,9 @@ and **Manual**.
   - **Reset this sprite to auto** (key **R**) snaps the current one back to its
     detected face; **Apply this box to all sprites** (key **A**) stamps the
     current box onto every sprite at once (handy when many poses share the same
-    framing).
+    framing). **Apply to sprites below** does the same but only from the current
+    sprite's position **down** to the end of the list — handy when just a run of
+    consecutive poses (not the whole cast) share a framing.
   - The **char_icon** keeps its own single Manual box (it's one image).
 - **Face zoom** (Face mode) — tighter or looser around the face (**0.25–4×**;
   >1 zooms in, <1 pulls back to head-and-shoulders).

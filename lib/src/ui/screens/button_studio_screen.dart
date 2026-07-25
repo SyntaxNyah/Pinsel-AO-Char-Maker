@@ -688,8 +688,9 @@ class _SpriteNav extends StatelessWidget {
 }
 
 /// Per-sprite Manual actions: snap the current sprite back to its auto face
-/// crop, or stamp the current box onto every sprite at once (when many poses
-/// share a framing).
+/// crop, stamp the current box onto every sprite at once (when many poses
+/// share a framing), or just onto the sprites **below** it in the list (when
+/// only a run of consecutive poses share it).
 class _ManualCropActions extends StatelessWidget {
   const _ManualCropActions(
       {required this.app, required this.emote, required this.onChanged});
@@ -700,6 +701,8 @@ class _ManualCropActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Emote? e = emote;
+    final int total = app.character?.emotes.length ?? 0;
+    final bool hasBelow = app.selectedEmote < total - 1;
     return Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Wrap(
@@ -725,6 +728,16 @@ class _ManualCropActions extends StatelessWidget {
                   },
             icon: const Icon(Icons.select_all_rounded, size: 16),
             label: const Text('Apply this box to all sprites'),
+          ),
+          OutlinedButton.icon(
+            onPressed: e == null || !hasBelow
+                ? null
+                : () {
+                    app.applyButtonCropToBelow(app.buttonCropFor(e.sprite));
+                    onChanged();
+                  },
+            icon: const Icon(Icons.south_rounded, size: 16),
+            label: const Text('Apply to sprites below'),
           ),
         ],
       ),

@@ -449,6 +449,19 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Copy [box] onto every sprite from the **current** emote's position to the
+  /// end of the list — the Manual "apply to sprites below" action, for a run
+  /// of consecutive poses (e.g. a walk/talk cycle) that share a framing
+  /// without stamping earlier poses that don't ([applyButtonCropToAll] is the
+  /// whole-cast version of this).
+  void applyButtonCropToBelow(CropBox box) {
+    final List<Emote> emotes = character?.emotes ?? const <Emote>[];
+    for (int i = selectedEmote.clamp(0, emotes.length); i < emotes.length; i++) {
+      final Emote e = emotes[i];
+      if (e.sprite.isNotEmpty) buttonCrops[e.sprite] = box;
+    }
+  }
+
   /// (customised, total) count of distinct non-empty sprite bases — the
   /// Manual-mode "k of N customised" caption.
   (int, int) get buttonCropCoverage {

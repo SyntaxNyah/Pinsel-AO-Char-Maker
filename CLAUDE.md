@@ -1031,7 +1031,10 @@ sprites. **Future 3D-model support belongs in this directory**, not under
     sprite's box onto the next unframed one instead of re-detecting its face — the
     "it resets when I press Enter" fix; callers pass `carryFrom` only when
     `target > selectedEmote`), `resetButtonCropFor(emote)`,
-    `applyButtonCropToAll(box)`, and `buttonCropCoverage` (→ `(customised,total)`
+    `applyButtonCropToAll(box)`, **`applyButtonCropToBelow(box)`** (same, but only
+    from the *current* sprite's position to the end of the list — for a run of
+    consecutive poses that share a framing without stamping earlier ones that
+    don't), and `buttonCropCoverage` (→ `(customised,total)`
     distinct sprite bases, for the caption). **`navigateButtonFraming(target)`**
     is the **single** framing-navigation entry point (selectEmote + carry-forward
     + notify) — the inline studio, the sprite list, AND the big editor all call it
@@ -1165,8 +1168,10 @@ sprites. **Future 3D-model support belongs in this directory**, not under
     advancing forward (Enter/→/▶/list) **carries your box** onto the next unframed
     sprite (`_gotoEmote`/`_selectSprite` compute `carryFrom` when `target >
     selectedEmote`, else `arriveButtonCrop` seeds its own face);
-    `_ManualCropActions` offers **Reset this sprite to auto** (`resetButtonCropFor`)
-    and **Apply this box to all sprites** (`applyButtonCropToAll`). The char_icon
+    `_ManualCropActions` offers **Reset this sprite to auto** (`resetButtonCropFor`),
+    **Apply this box to all sprites** (`applyButtonCropToAll`) and **Apply to
+    sprites below** (`applyButtonCropToBelow` — only this sprite's position
+    onward, for a run of similar poses lower in the list). The char_icon
     keeps its single
     `iconCrop`. In Manual the auto controls (face zoom, Move X/Y) are hidden —
     one positioning system at a time. `toPixels` clamps so a sloppy drag still
