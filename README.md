@@ -10,7 +10,7 @@ everything — or don't, because every powerful feature has a sensible default.
 Runs natively on **Windows, Linux, macOS, Android, iOS**, and as a **website**
 (Flutter Web) so people can use and share it straight from a browser.
 
-> Built from scratch with [KFO-CharMaker](https://github.com/Crystalwarrior/KFO-CharMaker) and
+> Pinsel was Built from scratch with [KFO-CharMaker](https://github.com/Crystalwarrior/KFO-CharMaker) and
 > [DROButtonMaker](https://github.com/Chrezm/DROButtonMaker) as inspiration —
 > aiming to be vastly more expansive than both. Format details were verified
 > against the official AO docs and the AO2 reference client. AGPL-3.0.
